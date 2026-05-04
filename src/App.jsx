@@ -7,20 +7,25 @@ import HUD from './components/HUD'
 
 export default function App() {
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#0a0a1a', position: 'relative' }}>
+    <div style={{ width: '100vw', height: '100vh', background: '#0a0e18', position: 'relative' }}>
       <Canvas
         shadows="soft"
         gl={{
-          antialias: true,
+          antialias: false,          // SMAA handles AA
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 0.85,
+          toneMappingExposure: 0.72, // slightly darker = less washed out
           outputColorSpace: THREE.SRGBColorSpace,
           powerPreference: 'high-performance',
           logarithmicDepthBuffer: true,
+          // Enable high-quality rendering
+          alpha: false,
+          stencil: false,
+          depth: true,
+          precision: 'highp',
         }}
-        camera={{ fov: 72, near: 0.5, far: 6000, position: [0, 80, 80] }}
+        camera={{ fov: 68, near: 0.5, far: 5000, position: [0, 30, 40] }}
         dpr={[1, 2]}
-        performance={{ min: 0.5 }}
+        performance={{ min: 0.7 }}
       >
         <Suspense fallback={null}>
           <Physics

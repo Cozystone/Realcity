@@ -7,38 +7,68 @@ import {
   SSAO,
   ChromaticAberration,
   DepthOfField,
+  HueSaturation,
+  BrightnessContrast,
 } from '@react-three/postprocessing'
 import { ToneMappingMode, BlendFunction } from 'postprocessing'
 import * as THREE from 'three'
 
+// RTX 5080 can handle all of this at full quality
 export default function PostProcessing() {
   return (
-    <EffectComposer multisampling={0}>
+    <EffectComposer multisampling={0} enableNormalPass>
+      {/* Anti-aliasing */}
       <SMAA />
+
+      {/* Ambient Occlusion — contact shadows, crevices */}
       <SSAO
         blendFunction={BlendFunction.MULTIPLY}
-        samples={24}
-        radius={0.12}
-        intensity={1.4}
-        luminanceInfluence={0.5}
+        samples={32}
+        rings={4}
+        radius={0.16}
+        intensity={1.8}
+        luminanceInfluence={0.4}
         color={new THREE.Color('#000000')}
-        worldDistanceThreshold={50}
-        worldDistanceFalloff={4}
-        worldProximityThreshold={0.4}
-        worldProximityFalloff={0.1}
+        worldDistanceThreshold={80}
+        worldDistanceFalloff={6}
+        worldProximityThreshold={0.5}
+        worldProximityFalloff={0.15}
+        bias={0.025}
       />
+
+      {/* HDR Bloom — emissive lights, sun glare */}
       <Bloom
-        luminanceThreshold={0.65}
-        luminanceSmoothing={0.08}
-        intensity={0.7}
-        radius={0.5}
+        luminanceThreshold={0.55}
+        luminanceSmoothing={0.06}
+        intensity={0.9}
+        radius={0.65}
         mipmapBlur
+        levels={7}
       />
+
+      {/* Depth of Field — subtle cinematic focus */}
+      <DepthOfField
+        focusDistance={0.01}
+        focalLength={0.04}
+        bokehScale={2.0}
+        height={480}
+      />
+
+      {/* Chromatic aberration — lens realism */}
       <ChromaticAberration
-        offset={new THREE.Vector2(0.0008, 0.0006)}
-        radialModulation={false}
+        offset={new THREE.Vector2(0.0006, 0.0005)}
+        radialModulation
+        modulationOffset={0.15}
       />
-      <Vignette offset={0.35} darkness={0.55} />
+
+      {/* Color grading — cinematic warm/cool balance */}
+      <HueSaturation saturation={0.12} hue={0} />
+      <BrightnessContrast brightness={-0.02} contrast={0.08} />
+
+      {/* Vignette */}
+      <Vignette offset={0.3} darkness={0.5} />
+
+      {/* ACES Filmic tone mapping */}
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
     </EffectComposer>
   )

@@ -3,65 +3,65 @@ import { useFrame } from '@react-three/fiber'
 import { Sky, Stars, Cloud, Environment as DreiEnv } from '@react-three/drei'
 import * as THREE from 'three'
 
-const DAY_SPEED = 1 / 240  // 1 real minute = 1 game hour cycle
+// 1 real second = 1 in-game minute
+const REAL_TO_GAME_MIN = 1
 
 export default function Environment() {
-  const dirLightRef = useRef()
-  const ambientRef  = useRef()
-  const skyRef = useRef()
-  const gameMinutes = useRef(12 * 60 + 45) // Start at 12:45 PM
+  const dirRef  = useRef()
+  const ambRef  = useRef()
+  const hemiRef = useRef()
+  const gameMin = useRef(11 * 60)  // Start at 11:00 AM
 
-  const sunPos = useRef(new THREE.Vector3(1, 1, -0.5).normalize())
+  // Sun position vector (normalized, for Sky component)
+  const sunPos = useRef(new THREE.Vector3())
 
   useFrame((_, delta) => {
-    gameMinutes.current = (gameMinutes.current + delta * 60) % (24 * 60)
-    const hour = gameMinutes.current / 60  // 0..24
+    gameMin.current = (gameMin.current + delta * REAL_TO_GAME_MIN) % (24 * 60)
+    const hour = gameMin.current / 60  // 0..24
 
-    // Sun angle: 12:00 = noon (top), 0:00 = midnight (bottom)
-    const sunAngle = ((hour - 6) / 12) * Math.PI  // 0 at 6am, π at 6pm
-    const sunX = Math.cos(sunAngle - Math.PI / 2)
-    const sunY = Math.sin(sunAngle - Math.PI / 2)
+    // Angle: 6 AM = sun at horizon, 12 PM = zenith
+    const angle = ((hour - 6) / 12) * Math.PI
+    const sunY  = Math.sin(angle)
+    const sunX  = -Math.cos(angle)
 
-    sunPos.current.set(sunX * 500, sunY * 300, -200)
+    sunPos.current.set(sunX, sunY, 0.4).normalize()
 
-    const dayFactor = Math.max(0, Math.sin(sunAngle))  // 0 at night, 1 at noon
-    const goldenHour = dayFactor < 0.15 ? dayFactor / 0.15 : 1 - Math.min(1, (dayFactor - 0.85) / 0.15)
-    const isNight = sunY < -0.08
+    const day      = Math.max(0, sunY)           // 0 night, 1 noon
+    const golden   = day < 0.18 ? day / 0.18 : 0 // golden hour factor
+    const isNight  = sunY < -0.05
 
-    if (dirLightRef.current) {
-      const l = dirLightRef.current
-      l.position.copy(sunPos.current)
-      l.intensity = isNight ? 0 : dayFactor * 3.8 + 0.05
-      if (goldenHour > 0.6) {
-        l.color.setRGB(1.0, 0.65, 0.25)
+    if (dirRef.current) {
+      const d = dirRef.current
+      d.position.set(sunX * 200, sunY * 200, 80)
+      d.intensity = isNight ? 0.0 : day * 4.0 + 0.1
+
+      if (golden > 0.1) {
+        d.color.setRGB(1.0, 0.55 + golden * 0.3, 0.20 + golden * 0.2)
       } else {
-        l.color.setRGB(1.0, 0.97, 0.9)
+        d.color.setRGB(1.0, 0.96 + day * 0.04, 0.88 + day * 0.12)
       }
     }
-    if (ambientRef.current) {
-      ambientRef.current.intensity = isNight ? 0.08 : 0.2 + dayFactor * 0.25
+    if (ambRef.current) {
+      ambRef.current.intensity = isNight ? 0.06 : 0.18 + day * 0.28
+    }
+    if (hemiRef.current) {
+      hemiRef.current.intensity = isNight ? 0.04 : 0.5 + day * 0.4
     }
   })
 
-  const cloudData = useMemo(() => {
-    const clouds = []
-    for (let i = 0; i < 28; i++) {
-      clouds.push({
-        x: (Math.random() - 0.5) * 3200,
-        y: 260 + Math.random() * 200,
-        z: (Math.random() - 0.5) * 3200,
-        sx: 70 + Math.random() * 130,
-        sy: 25 + Math.random() * 30,
-        sz: 55 + Math.random() * 100,
-        speed: 0.5 + Math.random() * 1.5,
-        opacity: 0.2 + Math.random() * 0.4,
-      })
-    }
-    return clouds
-  }, [])
+  // Cloud data — static positions, move in wind direction
+  const cloudData = useMemo(() => Array.from({ length: 22 }, () => ({
+    x: (Math.random() - 0.5) * 3000,
+    y: 280 + Math.random() * 220,
+    z: (Math.random() - 0.5) * 3000,
+    sx: 60 + Math.random() * 140,
+    sy: 20 + Math.random() * 35,
+    sz: 50 + Math.random() * 110,
+    speed: 0.6 + Math.random() * 1.4,
+    opacity: 0.18 + Math.random() * 0.38,
+  })), [])
 
   const cloudRefs = useRef([])
-
   useFrame((_, delta) => {
     cloudRefs.current.forEach((ref, i) => {
       if (!ref) return
@@ -72,59 +72,69 @@ export default function Environment() {
 
   return (
     <>
-      {/* Atmospheric sky */}
+      {/* Atmospheric scattering sky */}
       <Sky
-        ref={skyRef}
         sunPosition={sunPos.current}
         distance={4500}
-        turbidity={7}
-        rayleigh={0.8}
-        mieCoefficient={0.007}
-        mieDirectionalG={0.88}
+        turbidity={3.5}       // cleaner atmosphere
+        rayleigh={1.8}        // deeper blue
+        mieCoefficient={0.006}
+        mieDirectionalG={0.90}
+        inclination={0.45}
+        azimuth={0.25}
       />
 
-      <Stars radius={2200} depth={90} count={7000} factor={5} fade speed={0.3} />
+      {/* Stars — visible at night */}
+      <Stars radius={2000} depth={80} count={8000} factor={5} fade speed={0.3} />
 
-      {/* Sun / directional light */}
+      {/* Sun / key light */}
       <directionalLight
-        ref={dirLightRef}
-        position={[200, 200, -150]}
-        intensity={3.5}
-        color="#fff8e0"
+        ref={dirRef}
+        position={[200, 200, 80]}
+        intensity={4.0}
+        color="#fff8e8"
         castShadow
         shadow-mapSize-width={4096}
         shadow-mapSize-height={4096}
         shadow-camera-near={1}
-        shadow-camera-far={2800}
-        shadow-camera-left={-700}
-        shadow-camera-right={700}
-        shadow-camera-top={700}
-        shadow-camera-bottom={-700}
-        shadow-bias={-0.0002}
-        shadow-normalBias={0.04}
+        shadow-camera-far={2500}
+        shadow-camera-left={-650}
+        shadow-camera-right={650}
+        shadow-camera-top={650}
+        shadow-camera-bottom={-650}
+        shadow-bias={-0.00015}
+        shadow-normalBias={0.05}
+        shadow-radius={3}       /* PCF soft shadows */
       />
 
-      {/* Ambient / fill */}
-      <ambientLight ref={ambientRef} intensity={0.22} color="#9ab8d4" />
-      <hemisphereLight skyColor="#5a90d0" groundColor="#3a5030" intensity={0.75} />
+      {/* Ambient fill */}
+      <ambientLight ref={ambRef} intensity={0.2} color="#a0c0d8" />
 
-      {/* Fog for distance culling */}
-      <fog attach="fog" args={['#c8d8e8', 400, 2200]} />
+      {/* Sky / ground hemisphere */}
+      <hemisphereLight
+        ref={hemiRef}
+        skyColor="#6090cc"
+        groundColor="#3a4828"
+        intensity={0.7}
+      />
 
-      {/* HDR reflections */}
+      {/* Distance fog — hides far terrain edge naturally */}
+      <fog attach="fog" args={['#b8cce0', 500, 2400]} />
+
+      {/* HDRI for PBR reflections */}
       <DreiEnv preset="city" background={false} />
 
       {/* Clouds */}
       {cloudData.map((c, i) => (
         <Cloud
           key={i}
-          ref={(r) => { cloudRefs.current[i] = r }}
+          ref={r => { cloudRefs.current[i] = r }}
           position={[c.x, c.y, c.z]}
           speed={0}
           opacity={c.opacity}
           scale={[c.sx, c.sy, c.sz]}
-          segments={18}
-          color="#e8f0f8"
+          segments={16}
+          color="#eaf0f8"
         />
       ))}
     </>
