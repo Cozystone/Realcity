@@ -75,23 +75,27 @@ function Buildings({ buildings }) {
     return () => { try { world.removeRigidBody(rb) } catch {} }
   }, [buildings, rapier, world])
 
-  // ── Matrices: useLayoutEffect = runs before first paint ─────────────────
+  // ── Matrices + per-instance colors ─────────────────────────────────────
   useLayoutEffect(() => {
     const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
 
     Object.entries(grouped).forEach(([type, arr]) => {
       const mesh = meshRefs.current[type]
       if (!mesh || !arr.length) return
 
+      const palette = BUILDING_COLORS[type] || BUILDING_COLORS.office
       arr.forEach((b, i) => {
         dummy.position.set(b.x, b.terrainH + b.h / 2, b.z)
         dummy.rotation.set(0, b.rot || 0, 0)
         dummy.scale.set(b.w, b.h, b.d)
         dummy.updateMatrix()
         mesh.setMatrixAt(i, dummy.matrix)
+        mesh.setColorAt(i, color.set(palette[(b.colorIndex ?? i) % palette.length]))
       })
 
       mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     })
   }, [grouped])
 
@@ -113,7 +117,7 @@ function Buildings({ buildings }) {
               <boxGeometry args={[1, 1, 1]} />
               <meshStandardMaterial
                 map={getWinTex(type)}
-                color={pickColor(type, 0)}
+                color="#ffffff"
                 roughness={isGlass ? 0.25 : 0.80}
                 metalness={isGlass ? 0.45 : 0.05}
                 envMapIntensity={isGlass ? 0.8 : 0.2}

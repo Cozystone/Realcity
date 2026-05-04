@@ -38,9 +38,9 @@ export default function PostProcessing() {
 
       {/* HDR Bloom — emissive lights, sun glare */}
       <Bloom
-        luminanceThreshold={0.55}
+        luminanceThreshold={0.82}
         luminanceSmoothing={0.06}
-        intensity={0.9}
+        intensity={0.45}
         radius={0.65}
         mipmapBlur
         levels={7}

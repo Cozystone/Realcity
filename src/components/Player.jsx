@@ -3,10 +3,12 @@ import { useFrame } from '@react-three/fiber'
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier'
 import * as THREE from 'three'
 import { useKeyboard } from '../hooks/useKeyboard'
+import { getTerrainHeight } from '../utils/noise'
 
-const WALK  = 5.5
-const RUN   = 12
-const JUMP  = 8.5
+const WALK       = 5.5
+const RUN        = 12
+const JUMP       = 8.5
+const GAME_SPEED = 1  // game-minutes per real second (24 real min = 1 game day)
 const CAM_DIST   = 14
 const CAM_HEIGHT = 3.2
 
@@ -193,15 +195,15 @@ export default function Player() {
     const dt = Math.min(delta, 0.05)
 
     // Game time
-    gameMin.current = (gameMin.current + dt * 60) % (24 * 60)
+    gameMin.current = (gameMin.current + dt * GAME_SPEED) % (24 * 60)
     if (window.__updateGameTime) {
       window.__updateGameTime(Math.floor(gameMin.current / 60), Math.floor(gameMin.current % 60))
     }
 
     // Camera angles
     const rs = 1.9 * dt
-    if (keys.current.ArrowLeft)  camAz.current -= rs
-    if (keys.current.ArrowRight) camAz.current += rs
+    if (keys.current.ArrowLeft)  camAz.current += rs
+    if (keys.current.ArrowRight) camAz.current -= rs
     if (keys.current.ArrowUp)    camEl.current  = Math.min(camEl.current + rs, 1.35)
     if (keys.current.ArrowDown)  camEl.current  = Math.max(camEl.current - rs, -0.1)
 
@@ -281,7 +283,7 @@ export default function Player() {
       ref={rb}
       type="kinematicPosition"
       colliders={false}
-      position={[0, 8, 0]}
+      position={[0, getTerrainHeight(0, 0) + 4, 0]}
     >
       <CapsuleCollider args={[0.72, 0.38]} />
       <group ref={meshGrp}>

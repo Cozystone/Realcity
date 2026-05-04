@@ -1,26 +1,46 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { CITY_DATA } from '../utils/cityGenerator'
+
+const MINIMAP_SIZE = 180
+const WORLD_EXTENT = 1800
+
+function buildZoneBg() {
+  const c = document.createElement('canvas')
+  c.width = MINIMAP_SIZE; c.height = MINIMAP_SIZE
+  const ctx = c.getContext('2d')
+  const S = WORLD_EXTENT / MINIMAP_SIZE
+  for (let py = 0; py < MINIMAP_SIZE; py++) {
+    for (let px = 0; px < MINIMAP_SIZE; px++) {
+      const wx = (px - MINIMAP_SIZE / 2) * S
+      const wz = (py - MINIMAP_SIZE / 2) * S
+      const d = Math.sqrt(wx * wx + wz * wz)
+      ctx.fillStyle = d < 160 ? '#3a5a7a' : d < 380 ? '#4a5a3a' : d < 620 ? '#6a4a3a' : '#3a4a2a'
+      ctx.fillRect(px, py, 1, 1)
+    }
+  }
+  return c
+}
 
 // Minimap canvas renderer
 function MinimapCanvas({ playerPos, playerHeading }) {
   const canvasRef = useRef()
+  const bgCanvas = useMemo(() => buildZoneBg(), [])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
-    const SCALE = W / 1800  // city 1800m → canvas W px
+    const SCALE = W / WORLD_EXTENT
 
     ctx.clearRect(0, 0, W, H)
 
-    // Background
-    ctx.fillStyle = '#0d1117'
-    ctx.fillRect(0, 0, W, H)
+    // Zone-colored background
+    ctx.drawImage(bgCanvas, 0, 0)
 
     // Roads
-    ctx.strokeStyle = '#2a3a4a'
-    ctx.lineWidth = 1.2
+    ctx.strokeStyle = 'rgba(200,210,220,0.55)'
+    ctx.lineWidth = 1.0
     CITY_DATA.roads.forEach(road => {
       if (!road.isMain) return
       ctx.beginPath()
@@ -38,7 +58,7 @@ function MinimapCanvas({ playerPos, playerHeading }) {
       ctx.stroke()
     })
 
-    // Player dot
+    // Player position
     const px = (playerPos[0] + 900) * SCALE
     const pz = (playerPos[2] + 900) * SCALE
 
@@ -46,7 +66,7 @@ function MinimapCanvas({ playerPos, playerHeading }) {
     ctx.save()
     ctx.translate(px, pz)
     ctx.rotate(playerHeading)
-    ctx.fillStyle = 'rgba(80, 160, 255, 0.25)'
+    ctx.fillStyle = 'rgba(80, 160, 255, 0.3)'
     ctx.beginPath()
     ctx.moveTo(0, 0)
     ctx.arc(0, 0, 18, -0.5, 0.5)

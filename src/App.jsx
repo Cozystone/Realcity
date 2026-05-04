@@ -13,7 +13,7 @@ export default function App() {
         gl={{
           antialias: false,          // SMAA handles AA
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 0.72, // slightly darker = less washed out
+          toneMappingExposure: 0.55, // slightly darker = less washed out
           outputColorSpace: THREE.SRGBColorSpace,
           powerPreference: 'high-performance',
           logarithmicDepthBuffer: true,

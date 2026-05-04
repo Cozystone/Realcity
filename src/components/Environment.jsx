@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { Sky, Stars, Cloud, Environment as DreiEnv } from '@react-three/drei'
 import * as THREE from 'three'
 
-// 1 real second = 1 in-game minute
+// 1 real second = 1 in-game minute (24 real minutes per game day)
 const REAL_TO_GAME_MIN = 1
 
 export default function Environment() {
@@ -119,7 +119,7 @@ export default function Environment() {
       />
 
       {/* Distance fog — hides far terrain edge naturally */}
-      <fog attach="fog" args={['#b8cce0', 500, 2400]} />
+      <fog attach="fog" args={['#687888', 600, 2200]} />
 
       {/* HDRI for PBR reflections */}
       <DreiEnv preset="city" background={false} />

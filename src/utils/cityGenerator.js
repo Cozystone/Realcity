@@ -57,6 +57,7 @@ function buildingsForBlock(cx, cz, z) {
       terrainH,
       type: cfg.type,
       rot,
+      colorIndex: Math.floor(rng() * 5),
       id: `b_${cx.toFixed(0)}_${cz.toFixed(0)}_${i}`,
     })
   }

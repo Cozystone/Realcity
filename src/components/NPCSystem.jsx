@@ -166,11 +166,11 @@ export default function NPCSystem() {
 
   return (
     <>
-      <instancedMesh ref={bodyRef} args={[null, null, n]} castShadow frustumCulled>
+      <instancedMesh ref={bodyRef} args={[null, null, n]} castShadow frustumCulled={false}>
         <capsuleGeometry args={[1, 2, 3, 6]} />
         <meshStandardMaterial color="#445566" roughness={0.8} />
       </instancedMesh>
-      <instancedMesh ref={headRef} args={[null, null, n]} castShadow frustumCulled>
+      <instancedMesh ref={headRef} args={[null, null, n]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 8, 8]} />
         <meshStandardMaterial color="#f0c090" roughness={0.7} />
       </instancedMesh>
