@@ -1,44 +1,38 @@
+import { Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { Physics } from '@react-three/rapier'
 import * as THREE from 'three'
-import { Suspense } from 'react'
-import Scene from './Scene'
-import HUD from './components/HUD'
+import { createRealCity } from './engine/cityEngine'
+import RealCityScene from './scene/RealCityScene'
+import HUD from './ui/HUD'
 
 export default function App() {
+  const city = useMemo(() => createRealCity(), [])
+
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#0a0e18', position: 'relative' }}>
+    <main className="app">
       <Canvas
         shadows="soft"
-        gl={{
-          antialias: false,          // SMAA handles AA
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 0.55, // slightly darker = less washed out
-          outputColorSpace: THREE.SRGBColorSpace,
-          powerPreference: 'high-performance',
-          logarithmicDepthBuffer: true,
-          // Enable high-quality rendering
-          alpha: false,
-          stencil: false,
-          depth: true,
-          precision: 'highp',
-        }}
-        camera={{ fov: 68, near: 0.5, far: 5000, position: [0, 30, 40] }}
         dpr={[1, 2]}
-        performance={{ min: 0.7 }}
+        performance={{ min: 0.65 }}
+        camera={{ fov: 68, near: 0.25, far: 5200, position: [18, 18, 34] }}
+        gl={{
+          antialias: false,
+          alpha: false,
+          depth: true,
+          stencil: false,
+          precision: 'highp',
+          powerPreference: 'high-performance',
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 0.72,
+          outputColorSpace: THREE.SRGBColorSpace,
+          logarithmicDepthBuffer: true,
+        }}
       >
         <Suspense fallback={null}>
-          <Physics
-            gravity={[0, -20, 0]}
-            timeStep="vary"
-            maxStabilizationIterations={4}
-            maxVelocityIterations={4}
-          >
-            <Scene />
-          </Physics>
+          <RealCityScene city={city} />
         </Suspense>
       </Canvas>
-      <HUD />
-    </div>
+      <HUD city={city} />
+    </main>
   )
 }

@@ -1,0 +1,357 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #05080d;
+  color: #eef4ff;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+  background: #05080d;
+}
+
+.boot {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(238, 244, 255, 0.78);
+  letter-spacing: 0.04em;
+  background: #05080d;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.time-card,
+.agent-card {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(5, 9, 15, 0.58);
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
+}
+
+.time-card {
+  top: 20px;
+  left: 20px;
+  min-width: 188px;
+  padding: 13px 15px;
+  border-radius: 10px;
+}
+
+.time-card h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 350;
+  letter-spacing: 0;
+}
+
+.time-card p,
+.time-card span {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: rgba(238, 244, 255, 0.62);
+}
+
+.time-card span {
+  color: rgba(238, 244, 255, 0.42);
+}
+
+.compass {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  width: min(360px, calc(100vw - 48px));
+  height: 36px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 18px;
+  background: rgba(5, 9, 15, 0.52);
+  backdrop-filter: blur(14px);
+}
+
+.compass-tick {
+  position: absolute;
+  top: 13px;
+  transform: translateX(-50%);
+  min-width: 26px;
+  text-align: center;
+  font-size: 8px;
+  color: rgba(238, 244, 255, 0.45);
+}
+
+.compass-tick.major {
+  top: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.compass-tick span {
+  display: block;
+  width: 1px;
+  height: 5px;
+  margin: 2px auto 0;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.compass-tick.major span {
+  height: 9px;
+  background: #4aadff;
+}
+
+.compass-center {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #4aadff;
+}
+
+.agent-card {
+  top: 20px;
+  right: 20px;
+  width: 270px;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+.eyebrow {
+  color: #4aadff;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-card h2 {
+  margin: 8px 0 4px;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.agent-card p {
+  margin: 10px 0 0;
+  color: rgba(238, 244, 255, 0.66);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-card small {
+  display: block;
+  margin-top: 10px;
+  color: rgba(238, 244, 255, 0.38);
+  font-size: 11px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.metrics div {
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.metrics span,
+.metrics strong {
+  display: block;
+}
+
+.metrics span {
+  font-size: 10px;
+  color: rgba(238, 244, 255, 0.45);
+}
+
+.metrics strong {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.dialogue {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  width: min(560px, calc(100vw - 40px));
+  transform: translateX(-50%);
+  padding: 14px 18px;
+  border: 1px solid rgba(74, 173, 255, 0.32);
+  border-radius: 12px;
+  background: rgba(5, 12, 22, 0.86);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(16px);
+  text-align: center;
+}
+
+.dialogue-speaker {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  color: #4aadff;
+  font-size: 12px;
+}
+
+.dialogue-speaker span {
+  color: rgba(238, 244, 255, 0.54);
+}
+
+.dialogue p {
+  margin: 7px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.map-shell {
+  position: absolute;
+  left: 20px;
+  bottom: 146px;
+  width: 192px;
+  height: 192px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: #0b1320;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+}
+
+.minimap,
+.minimap-map {
+  position: absolute;
+  inset: 0;
+}
+
+.minimap-player {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 18px solid #4aadff;
+  filter: drop-shadow(0 0 6px rgba(74, 173, 255, 0.88));
+}
+
+.vitals {
+  position: absolute;
+  left: 22px;
+  bottom: 72px;
+  width: 176px;
+  display: grid;
+  gap: 7px;
+}
+
+.vitals div {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.vitals span {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(238, 244, 255, 0.64);
+}
+
+.vitals div::after {
+  content: "";
+  grid-column: 2;
+  grid-row: 1;
+  height: 7px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.vitals i {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  height: 7px;
+  max-width: 100%;
+  border-radius: 10px;
+  background: #e85d75;
+}
+
+.vitals div:nth-child(2) i {
+  background: #7bd389;
+}
+
+@media (max-width: 760px) {
+  .compass {
+    top: 122px;
+    left: 14px;
+    width: 188px;
+    transform: none;
+  }
+
+  .agent-card {
+    top: auto;
+    right: 14px;
+    bottom: 18px;
+    width: 172px;
+    padding: 13px;
+  }
+
+  .agent-card .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .agent-card p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .time-card {
+    top: 14px;
+    left: 14px;
+  }
+
+  .map-shell {
+    left: 14px;
+    bottom: 104px;
+    width: 164px;
+    height: 164px;
+  }
+
+  .vitals {
+    left: 16px;
+    bottom: 58px;
+    width: 150px;
+  }
+}
