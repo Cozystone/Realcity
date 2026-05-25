@@ -110,7 +110,7 @@ function Traffic({ cars }) {
     for (let i = 0; i < cars.length; i += 1) {
       const car = cars[i]
       const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
-      car.t = (car.t + (car.speed * wave * dt) / 2400) % 1
+      car.t = (car.t + (car.speed * wave * dt) / Math.max(1, car.road.to - car.road.from)) % 1
       const t = car.direction > 0 ? car.t : 1 - car.t
       const span = car.road.to - car.road.from
       let x

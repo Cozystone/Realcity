@@ -1,7 +1,15 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
-import { CITY_HALF, CITY_WORLD_SIZE, terrainHeight, terrainTone } from '../engine/cityEngine'
+import {
+  CITY_BASE_Y,
+  CITY_GRID_HALF,
+  CITY_WORLD_SIZE,
+  ROAD_SPACING,
+  ROAD_WIDTH,
+  terrainHeight,
+  terrainTone,
+} from '../engine/cityEngine'
 
 function makeTerrainGeometry() {
   const segments = 220
@@ -13,7 +21,8 @@ function makeTerrainGeometry() {
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i)
     const z = positions.getZ(i)
-    const h = terrainHeight(x, z)
+    const distance = Math.hypot(x, z)
+    const h = distance < CITY_GRID_HALF * 1.08 ? CITY_BASE_Y - 0.22 : terrainHeight(x, z)
     positions.setY(i, h)
     const tone = terrainTone(x, z)
     colors[i * 3] = tone[0]
@@ -36,13 +45,13 @@ function makeRoadGeometry(roads) {
     if (road.axis === 'x') {
       const z0 = road.z - hw
       const z1 = road.z + hw
-      const y = terrainHeight(0, road.z) + 0.12
+      const y = CITY_BASE_Y + 0.1
       vertices.push(road.from, y, z0, road.to, y, z0, road.to, y, z1, road.from, y, z0, road.to, y, z1, road.from, y, z1)
       uvs.push(0, 0, 36, 0, 36, 1, 0, 0, 36, 1, 0, 1)
     } else {
       const x0 = road.x - hw
       const x1 = road.x + hw
-      const y = terrainHeight(road.x, 0) + 0.12
+      const y = CITY_BASE_Y + 0.1
       vertices.push(x0, y, road.from, x1, y, road.from, x1, y, road.to, x0, y, road.from, x1, y, road.to, x0, y, road.to)
       uvs.push(0, 0, 1, 0, 1, 36, 0, 0, 1, 36, 0, 36)
     }
@@ -61,31 +70,165 @@ function makeRoadTexture() {
   canvas.width = 512
   canvas.height = 512
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#1b1c1f'
+  ctx.fillStyle = '#474c4f'
   ctx.fillRect(0, 0, 512, 512)
   ctx.fillStyle = 'rgba(255,255,255,0.035)'
-  for (let i = 0; i < 180; i += 1) {
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 42, 1)
+  for (let i = 0; i < 150; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 24, 1)
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.045)'
+  for (let i = 0; i < 90; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 4 + Math.random() * 34, 1)
   }
   ctx.setLineDash([42, 34])
-  ctx.strokeStyle = '#f0d456'
-  ctx.lineWidth = 5
+  ctx.strokeStyle = 'rgba(236, 196, 70, 0.72)'
+  ctx.lineWidth = 3
   ctx.beginPath()
   ctx.moveTo(256, 0)
   ctx.lineTo(256, 512)
+  ctx.moveTo(0, 256)
+  ctx.lineTo(512, 256)
   ctx.stroke()
   ctx.setLineDash([])
-  ctx.strokeStyle = 'rgba(255,255,255,0.78)'
-  ctx.lineWidth = 3
+  ctx.strokeStyle = 'rgba(230,236,240,0.24)'
+  ctx.lineWidth = 2
   ctx.beginPath()
   ctx.moveTo(36, 0)
   ctx.lineTo(36, 512)
   ctx.moveTo(476, 0)
   ctx.lineTo(476, 512)
+  ctx.moveTo(0, 36)
+  ctx.lineTo(512, 36)
+  ctx.moveTo(0, 476)
+  ctx.lineTo(512, 476)
   ctx.stroke()
   const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+  texture.colorSpace = THREE.SRGBColorSpace
   return texture
+}
+
+function makePavementTexture() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 512
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#676967'
+  ctx.fillRect(0, 0, 512, 512)
+  ctx.strokeStyle = 'rgba(46, 50, 50, 0.74)'
+  ctx.lineWidth = 2
+  for (let p = 0; p <= 512; p += 64) {
+    ctx.beginPath()
+    ctx.moveTo(p, 0)
+    ctx.lineTo(p, 512)
+    ctx.moveTo(0, p)
+    ctx.lineTo(512, p)
+    ctx.stroke()
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.035)'
+  for (let i = 0; i < 140; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 18, 1)
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.035)'
+  for (let i = 0; i < 110; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 20, 1)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(1.5, 1.5)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function UrbanBase() {
+  const blockRef = useRef()
+  const curbRef = useRef()
+  const pavementTexture = useMemo(() => makePavementTexture(), [])
+  const blocks = useMemo(() => {
+    const items = []
+    for (let x = -CITY_GRID_HALF + ROAD_SPACING / 2; x < CITY_GRID_HALF; x += ROAD_SPACING) {
+      for (let z = -CITY_GRID_HALF + ROAD_SPACING / 2; z < CITY_GRID_HALF; z += ROAD_SPACING) {
+        const distance = Math.hypot(x, z)
+        if (distance > 930) continue
+        const isPlaza = distance < 132
+        items.push({ x, z, size: ROAD_SPACING - ROAD_WIDTH - (isPlaza ? 2 : 10), plaza: isPlaza })
+      }
+    }
+    return items
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!blockRef.current || !curbRef.current) return
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    blocks.forEach((block, i) => {
+      dummy.position.set(block.x, CITY_BASE_Y + 0.02, block.z)
+      dummy.scale.set(block.size, 0.12, block.size)
+      dummy.updateMatrix()
+      blockRef.current.setMatrixAt(i, dummy.matrix)
+      blockRef.current.setColorAt(i, color.set(block.plaza ? '#d7d2c6' : '#e0dfd4'))
+
+      dummy.position.set(block.x, CITY_BASE_Y + 0.12, block.z)
+      dummy.scale.set(block.size + 2.6, 0.16, block.size + 2.6)
+      dummy.updateMatrix()
+      curbRef.current.setMatrixAt(i, dummy.matrix)
+    })
+    blockRef.current.instanceMatrix.needsUpdate = true
+    curbRef.current.instanceMatrix.needsUpdate = true
+    if (blockRef.current.instanceColor) blockRef.current.instanceColor.needsUpdate = true
+  }, [blocks])
+
+  return (
+    <>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, CITY_BASE_Y - 0.03, 0]}>
+        <planeGeometry args={[CITY_GRID_HALF * 2.08, CITY_GRID_HALF * 2.08]} />
+        <meshBasicMaterial color="#444845" toneMapped={false} />
+      </mesh>
+      <instancedMesh ref={curbRef} args={[undefined, undefined, blocks.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#343839" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={blockRef} args={[undefined, undefined, blocks.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial map={pavementTexture} color="#ffffff" vertexColors toneMapped={false} />
+      </instancedMesh>
+    </>
+  )
+}
+
+function RoadMarkings({ roads }) {
+  const stripeRef = useRef()
+  const stripes = useMemo(() => {
+    const items = []
+    for (const road of roads) {
+      if (!road.main) continue
+      for (let p = road.from + 34; p < road.to - 34; p += 52) {
+        items.push(road.axis === 'x'
+          ? { x: p, z: road.z, sx: 15, sz: 0.42 }
+          : { x: road.x, z: p, sx: 0.42, sz: 15 })
+      }
+    }
+    return items
+  }, [roads])
+
+  useLayoutEffect(() => {
+    if (!stripeRef.current) return
+    const dummy = new THREE.Object3D()
+    stripes.forEach((stripe, i) => {
+      dummy.position.set(stripe.x, CITY_BASE_Y + 0.17, stripe.z)
+      dummy.scale.set(stripe.sx, 0.035, stripe.sz)
+      dummy.updateMatrix()
+      stripeRef.current.setMatrixAt(i, dummy.matrix)
+    })
+    stripeRef.current.instanceMatrix.needsUpdate = true
+  }, [stripes])
+
+  return (
+    <instancedMesh ref={stripeRef} args={[undefined, undefined, stripes.length]} frustumCulled={false}>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshBasicMaterial color="#d9b84a" toneMapped={false} />
+    </instancedMesh>
+  )
 }
 
 function makeWindowTexture(type) {
@@ -94,10 +237,10 @@ function makeWindowTexture(type) {
   canvas.height = 512
   const ctx = canvas.getContext('2d')
   const wall = {
-    skyscraper: '#2d4e66',
-    office: '#56666b',
-    apartment: '#8a7660',
-    house: '#9b6950',
+    skyscraper: '#5f7f90',
+    office: '#8c9693',
+    apartment: '#aa967f',
+    house: '#b1846b',
   }[type] || '#63717a'
   const cols = type === 'skyscraper' ? 8 : type === 'house' ? 3 : 6
   const rows = type === 'skyscraper' ? 24 : type === 'house' ? 5 : 15
@@ -106,7 +249,7 @@ function makeWindowTexture(type) {
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       const lit = (r * 17 + c * 11 + type.length) % 5 !== 0
-      ctx.fillStyle = lit ? '#f2d88d' : '#09111a'
+      ctx.fillStyle = lit ? '#ead08a' : '#26313a'
       const cellW = 256 / cols
       const cellH = 512 / rows
       ctx.fillRect(c * cellW + cellW * 0.25, r * cellH + cellH * 0.28, cellW * 0.5, cellH * 0.46)
@@ -114,6 +257,8 @@ function makeWindowTexture(type) {
   }
   const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(1, type === 'skyscraper' ? 3.2 : type === 'office' ? 2.1 : type === 'apartment' ? 1.55 : 1)
+  texture.colorSpace = THREE.SRGBColorSpace
   return texture
 }
 
@@ -138,8 +283,8 @@ function Buildings({ buildings }) {
         dummy.scale.set(building.w, building.h, building.d)
         dummy.updateMatrix()
         mesh.setMatrixAt(i, dummy.matrix)
-        const base = type === 'skyscraper' ? '#9bd3ff' : type === 'office' ? '#b9c7bd' : type === 'apartment' ? '#d3aa84' : '#c88b66'
-        mesh.setColorAt(i, color.set(base).lerp(new THREE.Color('#101820'), building.tint * 0.28))
+        const base = type === 'skyscraper' ? '#a8c3d2' : type === 'office' ? '#c1c7c2' : type === 'apartment' ? '#c9ad8b' : '#c18a6d'
+        mesh.setColorAt(i, color.set(base).lerp(new THREE.Color('#44525c'), building.tint * 0.14))
       }
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
@@ -156,18 +301,15 @@ function Buildings({ buildings }) {
             key={type}
             ref={node => { if (node) refs.current[type] = node }}
             args={[undefined, undefined, items.length]}
-            castShadow
-            receiveShadow
             frustumCulled={false}
           >
             <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial
+            <meshLambertMaterial
               map={makeWindowTexture(type)}
               color="#ffffff"
               vertexColors
-              roughness={isGlass ? 0.22 : 0.76}
-              metalness={isGlass ? 0.42 : 0.05}
-              envMapIntensity={isGlass ? 0.9 : 0.25}
+              emissive={isGlass ? '#5f7f90' : type === 'apartment' ? '#796652' : type === 'house' ? '#76513f' : '#6f7875'}
+              emissiveIntensity={isGlass ? 0.95 : 0.82}
             />
           </instancedMesh>
         )
@@ -230,22 +372,65 @@ function Landmark({ place }) {
     logistics: '#adb5bd',
   }[place.kind] || '#ffffff'
 
+  const signHeight = place.kind === 'finance' ? 58 : place.kind === 'transit' ? 22 : 15
+
   return (
-    <group position={[place.x, place.y, place.z]}>
-      <mesh castShadow receiveShadow position={[0, 1.5, 0]}>
-        <cylinderGeometry args={[place.radius * 0.38, place.radius * 0.46, 3, 24]} />
-        <meshStandardMaterial color={color} roughness={0.35} metalness={0.18} />
+    <group position={[place.x, CITY_BASE_Y, place.z]}>
+      {place.kind === 'finance' ? (
+        <>
+          <mesh castShadow receiveShadow position={[0, 18, 0]}>
+            <boxGeometry args={[24, 36, 24]} />
+            <meshStandardMaterial color="#9fb8c7" roughness={0.18} metalness={0.35} transparent opacity={0.88} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, 43, 0]}>
+            <boxGeometry args={[15, 50, 15]} />
+            <meshStandardMaterial color="#9fb8c7" roughness={0.18} metalness={0.35} transparent opacity={0.88} />
+          </mesh>
+        </>
+      ) : place.kind === 'transit' ? (
+        <>
+          <mesh castShadow receiveShadow position={[0, 3.2, 0]}>
+            <boxGeometry args={[58, 6.4, 26]} />
+            <meshStandardMaterial color={color} roughness={0.42} metalness={0.18} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, 8.2, 0]}>
+            <boxGeometry args={[64, 3.4, 30]} />
+            <meshStandardMaterial color="#cfd7dd" roughness={0.32} metalness={0.18} />
+          </mesh>
+          <mesh castShadow position={[0, 11, 0]} rotation={[0, 0, Math.PI / 8]}>
+            <boxGeometry args={[68, 1.4, 31]} />
+            <meshStandardMaterial color="#2a3034" roughness={0.55} metalness={0.12} />
+          </mesh>
+        </>
+      ) : place.kind === 'park' ? (
+        <>
+          <mesh receiveShadow position={[0, 0.14, 0]}>
+            <cylinderGeometry args={[34, 34, 0.24, 48]} />
+            <meshStandardMaterial color="#2f6f3d" roughness={0.9} />
+          </mesh>
+          <mesh castShadow position={[0, 3.5, 0]}>
+            <cylinderGeometry args={[5, 6, 7, 14]} />
+            <meshStandardMaterial color="#826d4f" roughness={0.78} />
+          </mesh>
+        </>
+      ) : (
+        <>
+          <mesh castShadow receiveShadow position={[0, 4.5, 0]}>
+            <boxGeometry args={[26, 9, 22]} />
+            <meshStandardMaterial color={color} roughness={0.42} metalness={0.18} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, 10.5, 0]}>
+            <boxGeometry args={[22, 4, 18]} />
+            <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.08} />
+          </mesh>
+        </>
+      )}
+      <mesh position={[0, signHeight - 3, 0]}>
+        <sphereGeometry args={[1.35, 16, 10]} />
+        <meshStandardMaterial color="#ffffff" emissive={color} emissiveIntensity={1.6} />
       </mesh>
-      <mesh castShadow position={[0, 7 + place.scale * 2, 0]}>
-        <boxGeometry args={[place.radius * 0.72, 8 + place.scale * 6, place.radius * 0.72]} />
-        <meshStandardMaterial color={color} roughness={0.25} metalness={0.45} emissive={color} emissiveIntensity={0.14} />
-      </mesh>
-      <mesh position={[0, 16 + place.scale * 4, 0]}>
-        <sphereGeometry args={[2.3, 18, 12]} />
-        <meshStandardMaterial color="#ffffff" emissive={color} emissiveIntensity={2.2} />
-      </mesh>
-      <Billboard position={[0, 24 + place.scale * 6, 0]}>
-        <Text fontSize={4.2} maxWidth={70} textAlign="center" color="#f8fbff" outlineWidth={0.12} outlineColor="#07111d">
+      <Billboard position={[0, signHeight, 0]}>
+        <Text fontSize={3.2} maxWidth={64} textAlign="center" color="#f8fbff" outlineWidth={0.1} outlineColor="#07111d">
           {place.name}
         </Text>
       </Billboard>
@@ -260,22 +445,20 @@ export default function CityMeshes({ city }) {
 
   return (
     <>
-      <mesh geometry={terrain} receiveShadow>
-        <meshStandardMaterial vertexColors roughness={0.9} metalness={0.02} />
+      <mesh geometry={terrain}>
+        <meshLambertMaterial vertexColors />
       </mesh>
 
-      <mesh geometry={roads} receiveShadow>
-        <meshStandardMaterial map={roadTexture} roughness={0.86} metalness={0.04} />
-      </mesh>
+      <UrbanBase />
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.45, -180]} receiveShadow>
-        <planeGeometry args={[CITY_WORLD_SIZE, 122]} />
-        <meshStandardMaterial color="#14324b" roughness={0.1} metalness={0.25} transparent opacity={0.86} />
+      <mesh geometry={roads}>
+        <meshBasicMaterial map={roadTexture} color="#ffffff" toneMapped={false} />
       </mesh>
+      <RoadMarkings roads={city.roads} />
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 2.52, 0]} receiveShadow>
-        <circleGeometry args={[CITY_HALF * 0.48, 96]} />
-        <meshStandardMaterial color="#303032" roughness={0.95} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.8, -980]} receiveShadow>
+        <planeGeometry args={[CITY_WORLD_SIZE, 150]} />
+        <meshStandardMaterial color="#14324b" roughness={0.1} metalness={0.25} />
       </mesh>
 
       <Buildings buildings={city.buildings} />

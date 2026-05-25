@@ -8,8 +8,8 @@ const WALK_SPEED = 6.2
 const RUN_SPEED = 12.5
 const GRAVITY = 23
 const JUMP = 8.6
-const CAMERA_DISTANCE = 15
-const CAMERA_HEIGHT = 3.4
+const CAMERA_DISTANCE = 10.5
+const CAMERA_HEIGHT = 2.35
 
 function useKeys() {
   const keys = useRef({})
@@ -129,10 +129,10 @@ export default function PlayerRig({ city }) {
   const root = useRef()
   const heading = useRef(0)
   const camAz = useRef(0)
-  const camEl = useRef(0.28)
+  const camEl = useRef(0.12)
   const velocityY = useRef(0)
   const grounded = useRef(false)
-  const pos = useRef(new THREE.Vector3(0, terrainHeight(0, 70) + 2.2, 70))
+  const pos = useRef(new THREE.Vector3(0, terrainHeight(0, 40) + 2.2, 40))
   const moving = useRef(false)
   const running = useRef(false)
   const forward = useMemo(() => new THREE.Vector3(), [])

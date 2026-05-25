@@ -2,10 +2,12 @@ const TAU = Math.PI * 2
 
 export const CITY_WORLD_SIZE = 2400
 export const CITY_HALF = CITY_WORLD_SIZE / 2
-export const ROAD_SPACING = 82
-export const ROAD_WIDTH = 12
+export const CITY_GRID_HALF = 920
+export const ROAD_SPACING = 76
+export const ROAD_WIDTH = 11
 export const TILE_SIZE = 240
 export const DAY_MINUTES = 24 * 60
+export const CITY_BASE_Y = 0
 
 const ROLE_LIBRARY = [
   { role: 'banker', job: 'Banker', workplace: 'aster_exchange', color: '#2c5f8a', pace: 1.05 },
@@ -69,23 +71,21 @@ function fbm(x, z) {
 
 export function terrainHeight(x, z) {
   const distance = Math.hypot(x, z)
-  const cityBlend = smoothstep(620, 1120, distance)
-  const cityFloor = 2.4 + fbm(x * 0.35, z * 0.35) * 0.65
-  const hills = 12 + Math.max(0, fbm(x + 450, z - 250) + 0.46) * 155
-  const river = Math.abs(z + Math.sin(x * 0.004) * 54 + 180)
-  const riverCut = smoothstep(78, 0, river) * 5.2
-  return cityFloor * (1 - cityBlend) + hills * cityBlend - riverCut
+  const cityBlend = smoothstep(900, 1160, distance)
+  const cityFloor = CITY_BASE_Y + fbm(x * 0.1, z * 0.1) * 0.035
+  const hills = 4 + Math.max(0, fbm(x + 450, z - 250) + 0.5) * 92
+  const coastalDip = smoothstep(74, 0, Math.abs(z + 980 + Math.sin(x * 0.003) * 40)) * 6
+  return cityFloor * (1 - cityBlend) + hills * cityBlend - coastalDip
 }
 
 export function terrainTone(x, z) {
   const h = terrainHeight(x, z)
   const distance = Math.hypot(x, z)
-  const river = Math.abs(z + Math.sin(x * 0.004) * 54 + 180)
-  if (river < 70) return [0.07, 0.16, 0.24]
-  if (distance < 620) return [0.29, 0.29, 0.27]
-  if (h > 120) return [0.72, 0.72, 0.68]
-  if (h > 55) return [0.23, 0.34, 0.22]
-  return [0.22, 0.43, 0.24]
+  const coastal = Math.abs(z + 980 + Math.sin(x * 0.003) * 40)
+  if (coastal < 70) return [0.08, 0.18, 0.25]
+  if (distance < 940) return [0.24, 0.245, 0.24]
+  if (h > 70) return [0.29, 0.31, 0.28]
+  return [0.19, 0.36, 0.22]
 }
 
 function districtAt(x, z) {
@@ -101,10 +101,10 @@ function districtAt(x, z) {
 function roadGrid() {
   const roads = []
   let index = 0
-  for (let p = -CITY_HALF; p <= CITY_HALF + 1; p += ROAD_SPACING) {
-    const isMain = Math.round((p + CITY_HALF) / ROAD_SPACING) % 3 === 0
-    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_HALF, to: CITY_HALF, width: isMain ? ROAD_WIDTH * 1.35 : ROAD_WIDTH, main: isMain })
-    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_HALF, to: CITY_HALF, width: isMain ? ROAD_WIDTH * 1.35 : ROAD_WIDTH, main: isMain })
+  for (let p = -CITY_GRID_HALF; p <= CITY_GRID_HALF + 1; p += ROAD_SPACING) {
+    const isMain = Math.round((p + CITY_GRID_HALF) / ROAD_SPACING) % 4 === 0
+    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: isMain ? ROAD_WIDTH * 1.55 : ROAD_WIDTH, main: isMain })
+    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: isMain ? ROAD_WIDTH * 1.55 : ROAD_WIDTH, main: isMain })
     index += 1
   }
   return roads
@@ -112,10 +112,10 @@ function roadGrid() {
 
 function landmarkSet() {
   const raw = [
-    { id: 'central_station', name: 'Central Station', kind: 'transit', x: -44, z: 16, scale: 1.25, tripoPrompt: 'futuristic Korean central train station concourse' },
-    { id: 'aster_exchange', name: 'Aster Exchange', kind: 'finance', x: 88, z: -72, scale: 1.45, tripoPrompt: 'glass financial exchange tower lobby' },
-    { id: 'river_cafe', name: 'River Cafe', kind: 'cafe', x: -188, z: -210, scale: 0.72, tripoPrompt: 'warm riverside cafe terrace' },
-    { id: 'hanbit_hospital', name: 'Hanbit Hospital', kind: 'hospital', x: 312, z: -128, scale: 1.2, tripoPrompt: 'modern hospital complex with emergency entrance' },
+    { id: 'central_station', name: 'Central Station', kind: 'transit', x: -148, z: 52, scale: 1.0, tripoPrompt: 'futuristic Korean central train station concourse' },
+    { id: 'aster_exchange', name: 'Aster Exchange', kind: 'finance', x: 142, z: -132, scale: 1.12, tripoPrompt: 'glass financial exchange tower lobby' },
+    { id: 'river_cafe', name: 'River Cafe', kind: 'cafe', x: -236, z: -236, scale: 0.72, tripoPrompt: 'warm riverside cafe terrace' },
+    { id: 'hanbit_hospital', name: 'Hanbit Hospital', kind: 'hospital', x: 300, z: -198, scale: 1.0, tripoPrompt: 'modern hospital complex with emergency entrance' },
     { id: 'maker_yard', name: 'Maker Yard', kind: 'workshop', x: -332, z: 172, scale: 0.94, tripoPrompt: 'robotics workshop yard with modular containers' },
     { id: 'market_lane', name: 'Market Lane', kind: 'retail', x: -284, z: -314, scale: 0.9, tripoPrompt: 'dense open street market with covered stalls' },
     { id: 'mirae_school', name: 'Mirae School', kind: 'school', x: 366, z: 312, scale: 1.0, tripoPrompt: 'compact urban school campus' },
@@ -123,42 +123,50 @@ function landmarkSet() {
     { id: 'hill_park', name: 'Hill Park', kind: 'park', x: -612, z: 512, scale: 1.35, tripoPrompt: 'urban hill park pavilion and paths' },
     { id: 'south_depot', name: 'South Depot', kind: 'logistics', x: 588, z: -542, scale: 1.1, tripoPrompt: 'logistics depot with loading bays' },
   ]
-  return raw.map(place => ({ ...place, y: terrainHeight(place.x, place.z), radius: 34 * place.scale }))
+  return raw.map(place => ({ ...place, y: terrainHeight(place.x, place.z), radius: 26 * place.scale }))
 }
 
 function createBuildings(rng, landmarks) {
   const buildings = []
   const landmarkMask = (x, z) => landmarks.some(place => Math.hypot(x - place.x, z - place.z) < place.radius + 34)
   let id = 0
+  const slotSets = {
+    1: [{ x: 0, z: 0 }],
+    2: [{ x: -0.22, z: -0.16 }, { x: 0.22, z: 0.16 }],
+    3: [{ x: -0.24, z: -0.22 }, { x: 0.24, z: -0.22 }, { x: 0, z: 0.24 }],
+    4: [{ x: -0.24, z: -0.24 }, { x: 0.24, z: -0.24 }, { x: -0.24, z: 0.24 }, { x: 0.24, z: 0.24 }],
+  }
 
-  for (let x = -CITY_HALF + ROAD_SPACING / 2; x < CITY_HALF; x += ROAD_SPACING) {
-    for (let z = -CITY_HALF + ROAD_SPACING / 2; z < CITY_HALF; z += ROAD_SPACING) {
+  for (let x = -CITY_GRID_HALF + ROAD_SPACING / 2; x < CITY_GRID_HALF; x += ROAD_SPACING) {
+    for (let z = -CITY_GRID_HALF + ROAD_SPACING / 2; z < CITY_GRID_HALF; z += ROAD_SPACING) {
       const distance = Math.hypot(x, z)
-      if (distance > 1080 || landmarkMask(x, z)) continue
+      if (distance > 900 || distance < 170 || landmarkMask(x, z)) continue
 
       const district = districtAt(x, z)
       const isParkPocket = distance > 360 && rng() > 0.83
       if (isParkPocket) continue
 
-      const count = district.id === 'core' ? 2 + Math.floor(rng() * 3) : district.id === 'outer' ? 3 + Math.floor(rng() * 4) : 2 + Math.floor(rng() * 3)
-      const footprint = ROAD_SPACING - ROAD_WIDTH - 14
+      const count = district.id === 'core' ? 1 + Math.floor(rng() * 2) : district.id === 'outer' ? 2 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * 3)
+      const footprint = ROAD_SPACING - ROAD_WIDTH - 18
+      const slots = slotSets[Math.min(4, count)]
 
       for (let i = 0; i < count; i += 1) {
         const type = district.id === 'core' ? 'skyscraper' : district.type === 'house' ? 'house' : district.type === 'apartment' ? 'apartment' : rng() > 0.55 ? 'office' : 'apartment'
-        const maxW = footprint / (count > 3 ? 2.3 : 1.8)
-        const w = type === 'house' ? 9 + rng() * 10 : 13 + rng() * maxW
-        const d = type === 'house' ? 9 + rng() * 10 : 13 + rng() * maxW
-        const off = footprint * 0.34
-        const bx = x + (rng() - 0.5) * off
-        const bz = z + (rng() - 0.5) * off
+        const slot = slots[i] || slots[0]
+        const slotSize = count === 1 ? footprint * 0.78 : footprint * 0.36
+        const w = type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(8, slotSize)
+        const d = type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(8, slotSize)
+        const jitter = count === 1 ? footprint * 0.07 : footprint * 0.035
+        const bx = x + slot.x * footprint + (rng() - 0.5) * jitter
+        const bz = z + slot.z * footprint + (rng() - 0.5) * jitter
         const base = terrainHeight(bx, bz)
         const height = type === 'skyscraper'
-          ? 92 + rng() * 270
+          ? 44 + rng() * 92
           : type === 'office'
-            ? 22 + rng() * 90
+            ? 16 + rng() * 42
             : type === 'apartment'
-              ? 14 + rng() * 45
-              : 5 + rng() * 13
+              ? 10 + rng() * 24
+              : 4.5 + rng() * 6.5
 
         buildings.push({
           id: `b${id++}`,
@@ -182,9 +190,9 @@ function createBuildings(rng, landmarks) {
 
 function createTrees(rng, landmarks) {
   const trees = []
-  for (let i = 0; i < 1600; i += 1) {
+  for (let i = 0; i < 1300; i += 1) {
     const angle = rng() * TAU
-    const radius = 210 + rng() * 950
+    const radius = 620 + rng() * 500
     const x = Math.cos(angle) * radius + (rng() - 0.5) * 120
     const z = Math.sin(angle) * radius + (rng() - 0.5) * 120
     const nearPlace = landmarks.some(place => place.kind !== 'park' && Math.hypot(x - place.x, z - place.z) < place.radius + 16)

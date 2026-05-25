@@ -56,13 +56,13 @@ export default function Atmosphere() {
 
     if (dirRef.current) {
       dirRef.current.position.set(sun.x * 300, sun.y * 300, sun.z * 300)
-      dirRef.current.intensity = night ? 0.02 : 0.25 + day * 4.7
+      dirRef.current.intensity = night ? 0.02 : 0.2 + day * 3.15
       dirRef.current.color.setRGB(1, 0.76 + day * 0.24, 0.5 + day * 0.44 + twilight * 0.12)
     }
-    if (ambientRef.current) ambientRef.current.intensity = night ? 0.07 : 0.18 + day * 0.34
-    if (hemiRef.current) hemiRef.current.intensity = night ? 0.05 : 0.44 + day * 0.55
+    if (ambientRef.current) ambientRef.current.intensity = night ? 0.09 : 0.42 + day * 0.34
+    if (hemiRef.current) hemiRef.current.intensity = night ? 0.07 : 0.75 + day * 0.45
     if (fogRef.current) {
-      fogRef.current.color.set(night ? '#192133' : twilight > 0.45 ? '#8f7968' : '#6f8496')
+      fogRef.current.color.set(night ? '#192133' : twilight > 0.45 ? '#8f7968' : '#7f91a0')
       fogRef.current.near = 520 - weather.clouds * 120
       fogRef.current.far = 2240 - weather.clouds * 320
     }
@@ -83,7 +83,7 @@ export default function Atmosphere() {
 
   return (
     <>
-      <Sky sunPosition={skySun} distance={4700} turbidity={3.8} rayleigh={1.8} mieCoefficient={0.006} mieDirectionalG={0.9} />
+      <Sky sunPosition={skySun} distance={4700} turbidity={2.9} rayleigh={1.25} mieCoefficient={0.0045} mieDirectionalG={0.84} />
       <Stars radius={2300} depth={90} count={9500} factor={5} fade speed={0.25} />
       <directionalLight
         ref={dirRef}
@@ -102,8 +102,8 @@ export default function Atmosphere() {
         shadow-normalBias={0.05}
         shadow-radius={3}
       />
-      <ambientLight ref={ambientRef} color="#9fb6d5" intensity={0.22} />
-      <hemisphereLight ref={hemiRef} skyColor="#7fb1f0" groundColor="#31412a" intensity={0.7} />
+      <ambientLight ref={ambientRef} color="#b9c6d4" intensity={0.55} />
+      <hemisphereLight ref={hemiRef} skyColor="#9fc7ef" groundColor="#4a5147" intensity={0.9} />
       <fog ref={fogRef} attach="fog" args={['#6f8496', 520, 2240]} />
       <Environment preset="city" background={false} />
       {clouds.map((cloud, i) => (

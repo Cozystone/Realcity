@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { DAY_MINUTES } from './cityEngine'
 
 export const useCityStore = create((set, get) => ({
-  timeMinutes: 7 * 60 + 20,
+  timeMinutes: 10 * 60 + 30,
   day: 1,
   player: {
     x: 0,
