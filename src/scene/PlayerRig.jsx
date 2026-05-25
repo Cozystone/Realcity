@@ -10,6 +10,17 @@ const GRAVITY = 23
 const JUMP = 8.6
 const CAMERA_DISTANCE = 10.5
 const CAMERA_HEIGHT = 2.35
+const CAMERA_BASE_ELEVATION = 0.12
+const TURN_SPEED = 2.35
+const FREE_LOOK_YAW = 1.18
+const FREE_LOOK_PITCH_UP = 0.72
+const FREE_LOOK_PITCH_DOWN = -0.22
+const FREE_LOOK_IN_SPEED = 8.5
+const FREE_LOOK_RETURN_SPEED = 5.8
+
+function approach(current, target, speed, delta) {
+  return current + (target - current) * (1 - Math.exp(-speed * delta))
+}
 
 function useKeys() {
   const keys = useRef({})
@@ -127,9 +138,9 @@ function Character({ moving, running }) {
 export default function PlayerRig({ city }) {
   const keys = useKeys()
   const root = useRef()
-  const heading = useRef(0)
-  const camAz = useRef(0)
-  const camEl = useRef(0.12)
+  const heading = useRef(Math.PI)
+  const lookYaw = useRef(0)
+  const lookPitch = useRef(0)
   const velocityY = useRef(0)
   const grounded = useRef(false)
   const pos = useRef(new THREE.Vector3(0, terrainHeight(0, 40) + 2.2, 40))
@@ -143,25 +154,35 @@ export default function PlayerRig({ city }) {
     const dt = Math.min(delta, 0.05)
     useCityStore.getState().tick(dt)
 
-    const rotationSpeed = 1.85 * dt
-    if (keys.current.ArrowLeft) camAz.current += rotationSpeed
-    if (keys.current.ArrowRight) camAz.current -= rotationSpeed
-    if (keys.current.ArrowUp) camEl.current = Math.min(1.18, camEl.current + rotationSpeed)
-    if (keys.current.ArrowDown) camEl.current = Math.max(-0.04, camEl.current - rotationSpeed)
+    if (keys.current.KeyA) heading.current += TURN_SPEED * dt
+    if (keys.current.KeyD) heading.current -= TURN_SPEED * dt
 
-    // Keep movement independent from the orbit camera: WASD changes character direction, arrows change only view.
+    const targetLookYaw = keys.current.ArrowLeft
+      ? FREE_LOOK_YAW
+      : keys.current.ArrowRight
+        ? -FREE_LOOK_YAW
+        : 0
+    const targetLookPitch = keys.current.ArrowUp
+      ? FREE_LOOK_PITCH_UP
+      : keys.current.ArrowDown
+        ? FREE_LOOK_PITCH_DOWN
+        : 0
+    const lookSpeed = targetLookYaw || targetLookPitch ? FREE_LOOK_IN_SPEED : FREE_LOOK_RETURN_SPEED
+    lookYaw.current = approach(lookYaw.current, targetLookYaw, lookSpeed, dt)
+    lookPitch.current = approach(lookPitch.current, targetLookPitch, lookSpeed, dt)
+
+    // Vehicle-style keyboard control: WASD drives the body's heading; arrows are temporary free-look only.
+    const forwardX = Math.sin(heading.current)
+    const forwardZ = Math.cos(heading.current)
+    const throttle = (keys.current.KeyW ? 1 : 0) - (keys.current.KeyS ? 1 : 0)
     move.set(0, 0, 0)
-    if (keys.current.KeyW) move.z -= 1
-    if (keys.current.KeyS) move.z += 1
-    if (keys.current.KeyA) move.x -= 1
-    if (keys.current.KeyD) move.x += 1
 
     running.current = !!(keys.current.ShiftLeft || keys.current.ShiftRight)
-    moving.current = move.lengthSq() > 0.001
+    moving.current = Math.abs(throttle) > 0.001
 
     if (moving.current) {
-      move.normalize().multiplyScalar((running.current ? RUN_SPEED : WALK_SPEED) * dt)
-      heading.current = Math.atan2(move.x, move.z)
+      const distance = throttle * (running.current ? RUN_SPEED : WALK_SPEED) * dt
+      move.set(forwardX * distance, 0, forwardZ * distance)
     }
 
     velocityY.current -= GRAVITY * dt
@@ -187,11 +208,14 @@ export default function PlayerRig({ city }) {
       root.current.rotation.y += Math.atan2(Math.sin(heading.current - root.current.rotation.y), Math.cos(heading.current - root.current.rotation.y)) * 0.22
     }
 
-    const ce = Math.cos(camEl.current)
+    const viewHeading = heading.current + lookYaw.current
+    const cameraOrbit = viewHeading + Math.PI
+    const cameraElevation = CAMERA_BASE_ELEVATION + lookPitch.current
+    const ce = Math.cos(cameraElevation)
     camTarget.set(
-      pos.current.x + CAMERA_DISTANCE * Math.sin(camAz.current) * ce,
-      pos.current.y + CAMERA_HEIGHT + CAMERA_DISTANCE * Math.sin(camEl.current),
-      pos.current.z + CAMERA_DISTANCE * Math.cos(camAz.current) * ce,
+      pos.current.x + CAMERA_DISTANCE * Math.sin(cameraOrbit) * ce,
+      pos.current.y + CAMERA_HEIGHT + CAMERA_DISTANCE * Math.sin(cameraElevation),
+      pos.current.z + CAMERA_DISTANCE * Math.cos(cameraOrbit) * ce,
     )
     state.camera.position.lerp(camTarget, 0.12)
     lookAt.set(pos.current.x, pos.current.y + 1.2, pos.current.z)
@@ -203,7 +227,7 @@ export default function PlayerRig({ city }) {
       y: pos.current.y,
       z: pos.current.z,
       heading: heading.current,
-      viewHeading: camAz.current,
+      viewHeading,
       speed: moving.current ? (running.current ? RUN_SPEED : WALK_SPEED) : 0,
       district,
     })
