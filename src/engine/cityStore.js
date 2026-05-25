@@ -7,8 +7,9 @@ export const useCityStore = create((set, get) => ({
   player: {
     x: 0,
     y: 6,
-    z: 70,
+    z: 40,
     heading: 0,
+    viewHeading: 0,
     speed: 0,
     district: 'Central Core',
   },
@@ -45,6 +46,7 @@ export const useCityStore = create((set, get) => ({
       Math.abs(player.x - current.x) < 0.12 &&
       Math.abs(player.z - current.z) < 0.12 &&
       Math.abs(player.heading - current.heading) < 0.008 &&
+      Math.abs((player.viewHeading ?? player.heading) - (current.viewHeading ?? current.heading)) < 0.008 &&
       Math.abs(player.speed - current.speed) < 0.2
     ) return
 

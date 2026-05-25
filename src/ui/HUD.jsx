@@ -6,6 +6,7 @@ import { clockLabel, useCityStore } from '../engine/cityStore'
 function Minimap({ city, player }) {
   const container = useRef(null)
   const map = useRef(null)
+  const viewHeading = player.viewHeading ?? player.heading
 
   useEffect(() => {
     if (!container.current || map.current) return
@@ -72,10 +73,10 @@ function Minimap({ city, player }) {
     if (!map.current) return
     map.current.jumpTo({
       center: city.worldToLngLat(player.x, player.z),
-      bearing: (player.heading * 180) / Math.PI,
+      bearing: (viewHeading * 180) / Math.PI,
       zoom: 13.6,
     })
-  }, [city, player.x, player.z, player.heading])
+  }, [city, player.x, player.z, viewHeading])
 
   return (
     <div className="minimap">
@@ -165,6 +166,7 @@ export default function HUD({ city }) {
   const pulse = useCityStore(state => state.pulse)
   const focusedAgent = useCityStore(state => state.focusedAgent)
   const dialogue = useCityStore(state => state.dialogue)
+  const viewHeading = player.viewHeading ?? player.heading
 
   return (
     <div className="hud">
@@ -174,7 +176,7 @@ export default function HUD({ city }) {
         <span>{player.district}</span>
       </section>
 
-      <Compass heading={player.heading} />
+      <Compass heading={viewHeading} />
       <AgentCard agent={focusedAgent} stats={stats} pulse={pulse} />
       <Dialogue dialogue={dialogue} />
 

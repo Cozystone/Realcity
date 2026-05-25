@@ -135,8 +135,6 @@ export default function PlayerRig({ city }) {
   const pos = useRef(new THREE.Vector3(0, terrainHeight(0, 40) + 2.2, 40))
   const moving = useRef(false)
   const running = useRef(false)
-  const forward = useMemo(() => new THREE.Vector3(), [])
-  const right = useMemo(() => new THREE.Vector3(), [])
   const move = useMemo(() => new THREE.Vector3(), [])
   const camTarget = useMemo(() => new THREE.Vector3(), [])
   const lookAt = useMemo(() => new THREE.Vector3(), [])
@@ -151,13 +149,12 @@ export default function PlayerRig({ city }) {
     if (keys.current.ArrowUp) camEl.current = Math.min(1.18, camEl.current + rotationSpeed)
     if (keys.current.ArrowDown) camEl.current = Math.max(-0.04, camEl.current - rotationSpeed)
 
-    forward.set(-Math.sin(camAz.current), 0, -Math.cos(camAz.current))
-    right.set(Math.cos(camAz.current), 0, -Math.sin(camAz.current))
+    // Keep movement independent from the orbit camera: WASD changes character direction, arrows change only view.
     move.set(0, 0, 0)
-    if (keys.current.KeyW) move.add(forward)
-    if (keys.current.KeyS) move.sub(forward)
-    if (keys.current.KeyA) move.sub(right)
-    if (keys.current.KeyD) move.add(right)
+    if (keys.current.KeyW) move.z -= 1
+    if (keys.current.KeyS) move.z += 1
+    if (keys.current.KeyA) move.x -= 1
+    if (keys.current.KeyD) move.x += 1
 
     running.current = !!(keys.current.ShiftLeft || keys.current.ShiftRight)
     moving.current = move.lengthSq() > 0.001
@@ -205,7 +202,8 @@ export default function PlayerRig({ city }) {
       x: pos.current.x,
       y: pos.current.y,
       z: pos.current.z,
-      heading: camAz.current,
+      heading: heading.current,
+      viewHeading: camAz.current,
       speed: moving.current ? (running.current ? RUN_SPEED : WALK_SPEED) : 0,
       district,
     })
