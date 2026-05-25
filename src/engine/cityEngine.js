@@ -1,3 +1,5 @@
+import { DISTRICT_BLUEPRINT, LANDMARK_BLUEPRINTS, ROAD_TIERS } from './cityBlueprint'
+
 const TAU = Math.PI * 2
 
 export const CITY_WORLD_SIZE = 2400
@@ -89,13 +91,14 @@ export function terrainTone(x, z) {
 }
 
 function districtAt(x, z) {
-  const distance = Math.hypot(x, z)
-  if (distance < 190) return { id: 'core', name: 'Central Core', type: 'skyscraper' }
-  if (x < -120 && z < 180 && distance < 650) return { id: 'market', name: 'Market Ward', type: 'mixed' }
-  if (x > 170 && z < 230 && distance < 720) return { id: 'medical', name: 'Medical Campus', type: 'office' }
-  if (z > 220 && distance < 760) return { id: 'creative', name: 'Neon Arts District', type: 'apartment' }
-  if (distance < 760) return { id: 'midtown', name: 'Midtown', type: 'office' }
-  return { id: 'outer', name: 'Outer Hills', type: 'house' }
+  const context = { x, z, distance: Math.hypot(x, z) }
+  const district = DISTRICT_BLUEPRINT.find(rule => rule.match(context)) || DISTRICT_BLUEPRINT[DISTRICT_BLUEPRINT.length - 1]
+  return {
+    id: district.id,
+    name: district.name,
+    type: district.type,
+    activation: district.activation,
+  }
 }
 
 function roadGrid() {
@@ -103,27 +106,16 @@ function roadGrid() {
   let index = 0
   for (let p = -CITY_GRID_HALF; p <= CITY_GRID_HALF + 1; p += ROAD_SPACING) {
     const isMain = Math.round((p + CITY_GRID_HALF) / ROAD_SPACING) % 4 === 0
-    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: isMain ? ROAD_WIDTH * 1.55 : ROAD_WIDTH, main: isMain })
-    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: isMain ? ROAD_WIDTH * 1.55 : ROAD_WIDTH, main: isMain })
+    const tier = isMain ? ROAD_TIERS.primary : ROAD_TIERS.local
+    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight })
+    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight })
     index += 1
   }
   return roads
 }
 
 function landmarkSet() {
-  const raw = [
-    { id: 'central_station', name: 'Central Station', kind: 'transit', x: -148, z: 52, scale: 1.0, tripoPrompt: 'futuristic Korean central train station concourse' },
-    { id: 'aster_exchange', name: 'Aster Exchange', kind: 'finance', x: 142, z: -132, scale: 1.12, tripoPrompt: 'glass financial exchange tower lobby' },
-    { id: 'river_cafe', name: 'River Cafe', kind: 'cafe', x: -236, z: -236, scale: 0.72, tripoPrompt: 'warm riverside cafe terrace' },
-    { id: 'hanbit_hospital', name: 'Hanbit Hospital', kind: 'hospital', x: 300, z: -198, scale: 1.0, tripoPrompt: 'modern hospital complex with emergency entrance' },
-    { id: 'maker_yard', name: 'Maker Yard', kind: 'workshop', x: -332, z: 172, scale: 0.94, tripoPrompt: 'robotics workshop yard with modular containers' },
-    { id: 'market_lane', name: 'Market Lane', kind: 'retail', x: -284, z: -314, scale: 0.9, tripoPrompt: 'dense open street market with covered stalls' },
-    { id: 'mirae_school', name: 'Mirae School', kind: 'school', x: 366, z: 312, scale: 1.0, tripoPrompt: 'compact urban school campus' },
-    { id: 'neon_square', name: 'Neon Square', kind: 'leisure', x: 72, z: 470, scale: 1.08, tripoPrompt: 'night entertainment plaza with digital signs' },
-    { id: 'hill_park', name: 'Hill Park', kind: 'park', x: -612, z: 512, scale: 1.35, tripoPrompt: 'urban hill park pavilion and paths' },
-    { id: 'south_depot', name: 'South Depot', kind: 'logistics', x: 588, z: -542, scale: 1.1, tripoPrompt: 'logistics depot with loading bays' },
-  ]
-  return raw.map(place => ({ ...place, y: terrainHeight(place.x, place.z), radius: 26 * place.scale }))
+  return LANDMARK_BLUEPRINTS.map(place => ({ ...place, y: terrainHeight(place.x, place.z), radius: 26 * place.scale }))
 }
 
 function createBuildings(rng, landmarks) {
