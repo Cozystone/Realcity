@@ -25,7 +25,7 @@ export default function Atmosphere() {
       seed = (seed * 1664525 + 1013904223) & 0xffffffff
       return (seed >>> 0) / 4294967296
     }
-    return Array.from({ length: 34 }, (_, i) => ({
+    return Array.from({ length: 16 }, (_, i) => ({
       x: (rnd() - 0.5) * 3400,
       y: 250 + rnd() * 260,
       z: (rnd() - 0.5) * 3400,
@@ -84,14 +84,14 @@ export default function Atmosphere() {
   return (
     <>
       <Sky sunPosition={skySun} distance={4700} turbidity={2.9} rayleigh={1.25} mieCoefficient={0.0045} mieDirectionalG={0.84} />
-      <Stars radius={2300} depth={90} count={9500} factor={5} fade speed={0.25} />
+      <Stars radius={2300} depth={90} count={2600} factor={4} fade speed={0.18} />
       <directionalLight
         ref={dirRef}
         castShadow
         position={[220, 260, 80]}
         intensity={4}
-        shadow-mapSize-width={4096}
-        shadow-mapSize-height={4096}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
         shadow-camera-left={-760}
         shadow-camera-right={760}
         shadow-camera-top={760}
@@ -113,7 +113,7 @@ export default function Atmosphere() {
           position={[cloud.x, cloud.y, cloud.z]}
           opacity={cloud.opacity}
           scale={[cloud.sx, cloud.sy, cloud.sz]}
-          segments={18}
+          segments={10}
           speed={0}
           color="#eef4fb"
         />

@@ -29,6 +29,9 @@ export const useCityStore = create((set, get) => ({
   },
   focusedAgent: null,
   dialogue: null,
+  interaction: null,
+  mission: null,
+  ride: null,
   pulse: 'Morning traffic is building around Central Station.',
 
   tick(delta) {
@@ -61,6 +64,58 @@ export const useCityStore = create((set, get) => ({
     set({
       dialogue: { ...dialogue, shownAt: Date.now() },
       focusedAgent: dialogue.agent || null,
+    })
+  },
+
+  openInteraction(agent) {
+    set({
+      interaction: { agent, status: 'open', request: '', plan: null, updatedAt: Date.now() },
+      focusedAgent: agent,
+    })
+  },
+
+  setInteraction(patch) {
+    set(state => ({
+      interaction: state.interaction ? { ...state.interaction, ...patch, updatedAt: Date.now() } : null,
+    }))
+  },
+
+  closeInteraction() {
+    set({ interaction: null })
+  },
+
+  startMission(mission) {
+    set({
+      mission: { ...mission, updatedAt: Date.now() },
+      pulse: mission.summary || `${mission.agentName} is acting on your request.`,
+    })
+  },
+
+  updateMission(patch) {
+    set(state => ({
+      mission: state.mission ? { ...state.mission, ...patch, updatedAt: Date.now() } : null,
+    }))
+  },
+
+  finishMission(text) {
+    set(state => ({
+      mission: null,
+      interaction: state.interaction ? { ...state.interaction, status: 'done', updatedAt: Date.now() } : null,
+      pulse: text || 'The requested action is complete.',
+    }))
+  },
+
+  startRide(ride) {
+    set({
+      ride: { ...ride, startedAt: performance.now(), updatedAt: Date.now() },
+      pulse: ride.label || 'Taxi ride started.',
+    })
+  },
+
+  finishRide(text) {
+    set({
+      ride: null,
+      pulse: text || 'Taxi ride complete.',
     })
   },
 

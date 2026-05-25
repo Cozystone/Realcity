@@ -3,9 +3,17 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { terrainHeight } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
-import { askLocalNPC, fallbackLine, llmStatus } from '../engine/localLLM'
+import { askLocalNPC, fallbackLine, llmStatus, planLocalNPCAction } from '../engine/localLLM'
 
 const forward = new THREE.Vector3(0, 0, 1)
+
+function formatTime(minutes) {
+  return `${Math.floor(minutes / 60)}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`
+}
+
+function smoothstep(t) {
+  return t * t * (3 - 2 * t)
+}
 
 function scheduleFor(agent, timeMinutes) {
   const hour = timeMinutes / 60
@@ -28,6 +36,22 @@ function targetFor(agent, places, timeMinutes) {
   }
 }
 
+function moveAgentToward(agent, target, delta, speed) {
+  const dx = target.x - agent.pos.x
+  const dz = target.z - agent.pos.z
+  const distance = Math.hypot(dx, dz)
+  if (distance <= 0.001) return 0
+
+  const desired = Math.atan2(dx, dz)
+  const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
+  agent.heading += turn * Math.min(1, delta * 3.5)
+  const step = Math.min(distance, speed * delta)
+  agent.pos.x += Math.sin(agent.heading) * step
+  agent.pos.z += Math.cos(agent.heading) * step
+  agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
+  return distance
+}
+
 class Agent {
   constructor(data) {
     Object.assign(this, data)
@@ -38,31 +62,28 @@ class Agent {
     this.talkTimer = 0
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
+    this.mission = null
   }
 
   update(delta, timeMinutes, places) {
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
-    if (this.talkTimer > 0) {
+    if (this.talkTimer > 0 && !this.mission) {
       this.talkTimer -= delta
       return 'talking'
     }
+    if (this.talkTimer > 0) this.talkTimer -= delta
+
+    if (this.mission) return this.updateMission(delta)
 
     const target = targetFor(this, places, timeMinutes)
     this.activity = target.activity
     this.placeName = target.name
 
-    const dx = target.x - this.pos.x
-    const dz = target.z - this.pos.z
-    const distance = Math.hypot(dx, dz)
+    const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (distance > 2.2) {
-      const desired = Math.atan2(dx, dz)
-      const turn = Math.atan2(Math.sin(desired - this.heading), Math.cos(desired - this.heading))
-      this.heading += turn * Math.min(1, delta * 3)
       const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace
-      this.pos.x += Math.sin(this.heading) * speed * delta
-      this.pos.z += Math.cos(this.heading) * speed * delta
-      this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+      moveAgentToward(this, target, delta, speed)
       return 'walking'
     }
 
@@ -70,12 +91,97 @@ class Agent {
     return 'dwelling'
   }
 
+  updateMission(delta) {
+    const store = useCityStore.getState()
+    const mission = this.mission
+    const destination = mission.destination
+    this.placeName = destination.name
+
+    if (mission.mode === 'taxi') {
+      if (mission.phase === 'to_pickup') {
+        this.activity = 'walking to taxi pickup'
+        const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace)
+        if (distance < 2.6) {
+          mission.phase = 'taxi_boarding'
+          mission.boardingAt = performance.now()
+          store.updateMission({ phase: 'taxi_boarding', summary: `${this.name} is hailing a taxi at the curb.` })
+          store.showDialogue({
+            speaker: this.name,
+            role: this.job,
+            text: '여기서 택시를 잡을게요. 바로 같이 타고 제 일터로 이동하죠.',
+            agent: this.snapshot(),
+          })
+        }
+        return 'walking'
+      }
+
+      if (mission.phase === 'taxi_boarding') {
+        this.activity = 'boarding a taxi'
+        if (performance.now() - mission.boardingAt > 1300) {
+          const player = store.player
+          mission.phase = 'taxi_ride'
+          store.updateMission({ phase: 'taxi_ride', summary: `Taxi to ${destination.name}` })
+          store.startRide({
+            from: { x: player.x, z: player.z },
+            to: { x: destination.x, z: destination.z },
+            duration: Math.min(15, Math.max(7, Math.hypot(destination.x - player.x, destination.z - player.z) / 58)),
+            label: `${this.name} and you are taking a taxi to ${destination.name}.`,
+            destinationName: destination.name,
+          })
+        }
+        return 'talking'
+      }
+
+      if (mission.phase === 'taxi_ride') {
+        this.activity = 'riding with player'
+        const ride = store.ride
+        if (ride) {
+          const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
+          const eased = smoothstep(t)
+          this.pos.x = ride.from.x + (ride.to.x - ride.from.x) * eased + 1.2
+          this.pos.z = ride.from.z + (ride.to.z - ride.from.z) * eased - 1.2
+          this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+          this.heading = Math.atan2(ride.to.x - ride.from.x, ride.to.z - ride.from.z)
+          return 'riding'
+        }
+        this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
+        store.finishMission(`${this.name} brought you to ${destination.name}.`)
+        store.showDialogue({
+          speaker: this.name,
+          role: this.job,
+          text: `도착했어요. 여기가 ${destination.name}입니다. 안으로 들어가려면 제가 먼저 안내할게요.`,
+          agent: this.snapshot(),
+        })
+        this.mission = null
+        return 'dwelling'
+      }
+    }
+
+    this.activity = 'guiding player'
+    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace)
+    if (distance < 3.2) {
+      this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
+      store.finishMission(`${this.name} guided you to ${destination.name}.`)
+      store.showDialogue({
+        speaker: this.name,
+        role: this.job,
+        text: `도착했어요. 여기가 ${destination.name}입니다. 제가 일하는 곳이에요.`,
+        agent: this.snapshot(),
+      })
+      this.mission = null
+      return 'dwelling'
+    }
+    return 'walking'
+  }
+
   talk(seconds = 6) {
     this.talkTimer = seconds
     this.socialCooldown = 20 + Math.random() * 20
   }
 
-  snapshot() {
+  snapshot(places) {
+    const work = places?.get(this.workId)
+    const third = places?.get(this.thirdId)
     return {
       id: this.id,
       name: this.name,
@@ -86,8 +192,48 @@ class Agent {
       personality: this.personality,
       activity: this.activity,
       placeName: this.placeName,
+      workId: this.workId,
+      workName: work?.name,
+      thirdId: this.thirdId,
+      thirdName: third?.name,
+      x: this.pos.x,
+      z: this.pos.z,
+      mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
     }
   }
+}
+
+function nearestRoadPickup(pos, roads) {
+  let best = null
+  let bestDistance = Infinity
+  for (const road of roads) {
+    const half = road.width * 0.58
+    let x
+    let z
+    if (road.axis === 'x') {
+      x = Math.max(road.from, Math.min(road.to, pos.x))
+      z = road.z + (pos.z >= road.z ? half : -half)
+    } else {
+      x = road.x + (pos.x >= road.x ? half : -half)
+      z = Math.max(road.from, Math.min(road.to, pos.z))
+    }
+    const distance = Math.hypot(pos.x - x, pos.z - z)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = { x, z, y: terrainHeight(x, z), name: `${road.tier === 'primary' ? 'main road' : 'street'} curb` }
+    }
+  }
+  return best || { x: pos.x + 4, z: pos.z + 4, y: terrainHeight(pos.x + 4, pos.z + 4), name: 'curbside' }
+}
+
+function destinationFromPlan(plan, agent, places) {
+  if (plan.destination === 'home') return { ...agent.home, name: agent.home.name || 'home' }
+  if (plan.destination === 'third') {
+    const third = places.get(agent.thirdId)
+    if (third) return third
+  }
+  const work = places.get(agent.workId)
+  return work || [...places.values()][0]
 }
 
 function setLocalPart(mesh, index, dummy, base, yaw, local, scale, rotX = 0, rotZ = 0) {
@@ -193,7 +339,19 @@ function Traffic({ cars }) {
 
 function NPCs({ city }) {
   const places = useMemo(() => new Map(city.landmarks.map(place => [place.id, place])), [city.landmarks])
-  const agents = useMemo(() => city.npcs.map(npc => new Agent(npc)), [city.npcs])
+  const agents = useMemo(() => city.npcs.map((npc, i) => {
+    const agent = new Agent(npc)
+    const target = targetFor(agent, places, useCityStore.getState().timeMinutes)
+    const spread = 2.4 + (i % 5) * 0.7
+    const plazaAgent = i < 10
+    const x = plazaAgent ? Math.sin(i * 1.9) * (8 + i * 1.1) : target.x + Math.sin(i * 2.13) * spread
+    const z = plazaAgent ? 40 + Math.cos(i * 1.37) * (8 + i * 1.1) : target.z + Math.cos(i * 1.71) * spread
+    agent.pos.set(x, terrainHeight(x, z) + 0.95, z)
+    agent.activity = plazaAgent ? 'available for directions' : target.activity
+    agent.placeName = plazaAgent ? 'Central Core plaza' : target.name
+    agent.heading = plazaAgent ? Math.atan2(-x, 40 - z) : Math.atan2(target.x - agent.home.x, target.z - agent.home.z)
+    return agent
+  }), [city.npcs, places])
   const torsoRef = useRef()
   const headRef = useRef()
   const legRef = useRef()
@@ -206,6 +364,7 @@ function NPCs({ city }) {
   const socialClock = useRef(0)
   const statsClock = useRef(0)
   const busy = useRef(false)
+  const requestBusy = useRef(false)
 
   useEffect(() => {
     useCityStore.getState().setStats({ npcs: agents.length, cars: city.cars.length, tiles: city.tiles.length, llm: llmStatus() })
@@ -275,6 +434,7 @@ function NPCs({ city }) {
 
   useEffect(() => {
     const onKey = async (event) => {
+      if (event.target?.closest?.('input, textarea, select, button')) return
       if (event.code !== 'KeyE' || busy.current) return
       const store = useCityStore.getState()
       const player = new THREE.Vector3(store.player.x, store.player.y, store.player.z)
@@ -287,21 +447,101 @@ function NPCs({ city }) {
           bestDistance = distance
         }
       }
-      if (!best || bestDistance > 7 || best.playerCooldown > 0) return
+      if (!best || bestDistance > 24 || best.playerCooldown > 0) {
+        store.setPulse('No one is close enough to talk. Move nearer to a pedestrian and press E.')
+        return
+      }
 
       busy.current = true
-      best.talk(8)
-      best.playerCooldown = 8
-      store.showDialogue({ speaker: best.name, role: best.job, text: '...', agent: best.snapshot() })
+      best.talk(6)
+      best.playerCooldown = 2.2
+      const agent = best.snapshot(places)
+      store.openInteraction(agent)
+      store.showDialogue({
+        speaker: best.name,
+        role: best.job,
+        text: '말씀하세요. 제가 가능한 일인지 판단하고 움직일게요.',
+        agent,
+      })
+      window.setTimeout(() => { busy.current = false }, 450)
+    }
 
-      const reply = await askLocalNPC(best, `Day ${store.day}, ${Math.floor(store.timeMinutes / 60)}:${String(Math.floor(store.timeMinutes % 60)).padStart(2, '0')}, ${store.player.district}`)
-      store.showDialogue({ speaker: best.name, role: best.job, text: reply || fallbackLine(best), agent: best.snapshot() })
-      window.setTimeout(() => { busy.current = false }, 1200)
+    const onNpcRequest = async (event) => {
+      if (requestBusy.current) return
+      const { agentId, text } = event.detail || {}
+      const request = String(text || '').trim()
+      if (!agentId || !request) return
+      const best = agents.find(agent => agent.id === agentId)
+      if (!best) return
+
+      requestBusy.current = true
+      const store = useCityStore.getState()
+      const work = places.get(best.workId)
+      const distanceToWork = work ? Math.hypot(work.x - store.player.x, work.z - store.player.z) : 0
+      const snapshot = best.snapshot(places)
+      store.setInteraction({ status: 'thinking', request })
+      store.showDialogue({ speaker: best.name, role: best.job, text: '잠깐 생각해볼게요...', agent: snapshot })
+
+      const plan = await planLocalNPCAction(snapshot, request, {
+        distanceToWork,
+        timeLabel: `Day ${store.day}, ${formatTime(store.timeMinutes)}`,
+        playerDistrict: store.player.district,
+      })
+      const updatedSnapshot = best.snapshot(places)
+
+      if (plan.decision !== 'accept' || plan.mode === 'talk') {
+        store.setInteraction({ status: 'done', plan })
+        store.showDialogue({ speaker: best.name, role: best.job, text: plan.speech || fallbackLine(best), agent: updatedSnapshot })
+        window.setTimeout(() => { requestBusy.current = false }, 700)
+        return
+      }
+
+      const destination = destinationFromPlan(plan, best, places)
+      const destinationTarget = {
+        x: destination.x,
+        z: destination.z,
+        y: destination.y ?? terrainHeight(destination.x, destination.z),
+        name: destination.name || 'destination',
+      }
+      const distance = Math.hypot(destinationTarget.x - store.player.x, destinationTarget.z - store.player.z)
+      const mode = plan.mode === 'taxi' || distance > 420 ? 'taxi' : 'walk'
+      const mission = {
+        id: `${best.id}_${Date.now()}`,
+        agentId: best.id,
+        agentName: best.name,
+        mode,
+        phase: mode === 'taxi' ? 'to_pickup' : 'leading',
+        destination: destinationTarget,
+        pickup: nearestRoadPickup(best.pos, city.roads),
+        steps: plan.steps,
+        request,
+      }
+
+      best.mission = mission
+      best.talk(2.4)
+      store.setInteraction({ status: 'active', plan })
+      store.startMission({
+        agentId: best.id,
+        agentName: best.name,
+        mode,
+        phase: mission.phase,
+        destination: destinationTarget,
+        steps: plan.steps,
+        request,
+        source: plan.source,
+        summary: plan.speech,
+      })
+      store.showDialogue({ speaker: best.name, role: best.job, text: plan.speech, agent: updatedSnapshot })
+      window.setTimeout(() => { requestBusy.current = false }, 700)
     }
 
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [agents])
+    window.addEventListener('realcity:npc-request', onNpcRequest)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('realcity:npc-request', onNpcRequest)
+    }
+  }, [agents, city.roads, places])
 
   return (
     <>

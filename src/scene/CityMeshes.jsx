@@ -12,7 +12,7 @@ import {
 } from '../engine/cityEngine'
 
 function makeTerrainGeometry() {
-  const segments = 220
+  const segments = 140
   const geometry = new THREE.PlaneGeometry(CITY_WORLD_SIZE, CITY_WORLD_SIZE, segments, segments)
   geometry.rotateX(-Math.PI / 2)
   const positions = geometry.attributes.position

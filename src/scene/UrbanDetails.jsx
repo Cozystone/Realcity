@@ -65,7 +65,7 @@ function StreetLights({ roads }) {
   const { mainVertical, mainHorizontal } = useRoadLayout(roads)
   const lights = useMemo(() => {
     const items = []
-    const spacing = ROAD_SPACING * 1.5
+    const spacing = ROAD_SPACING * 2.25
     for (const road of mainHorizontal) {
       for (let x = road.from + spacing; x < road.to - spacing; x += spacing) {
         if (Math.hypot(x, road.z) > CITY_GRID_HALF * 0.96) continue
@@ -229,7 +229,7 @@ function RooftopDetails({ buildings }) {
   const details = useMemo(() => {
     return buildings
       .filter(building => building.h > 18 && Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.9)
-      .slice(0, 420)
+      .slice(0, 220)
       .map((building, i) => ({
         x: building.x,
         z: building.z,

@@ -234,6 +234,132 @@ select {
   line-height: 1.55;
 }
 
+.interaction-panel {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  width: min(640px, calc(100vw - 44px));
+  transform: translateX(-50%);
+  padding: 12px;
+  border: 1px solid rgba(74, 173, 255, 0.34);
+  border-radius: 10px;
+  background: rgba(5, 12, 22, 0.88);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(16px);
+}
+
+.interaction-panel > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #eef4ff;
+  font-size: 13px;
+}
+
+.interaction-panel > div:first-child span {
+  color: #4aadff;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.interaction-panel textarea {
+  width: 100%;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  outline: none;
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fbff;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.interaction-panel textarea::placeholder {
+  color: rgba(238, 244, 255, 0.45);
+}
+
+.interaction-panel textarea:focus {
+  border-color: rgba(74, 173, 255, 0.78);
+  box-shadow: 0 0 0 3px rgba(74, 173, 255, 0.14);
+}
+
+.interaction-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.interaction-actions button {
+  width: auto;
+  min-width: 82px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(74, 173, 255, 0.86);
+  color: #06111d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.interaction-actions button:nth-child(2) {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 244, 255, 0.78);
+}
+
+.interaction-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.mission-panel {
+  position: absolute;
+  right: 20px;
+  bottom: 28px;
+  width: 288px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(5, 12, 22, 0.78);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(16px);
+}
+
+.mission-panel h2 {
+  margin: 8px 0 4px;
+  font-size: 17px;
+}
+
+.mission-panel p,
+.mission-panel small,
+.mission-panel li {
+  color: rgba(238, 244, 255, 0.66);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.mission-panel p {
+  margin: 8px 0 0;
+}
+
+.mission-panel small {
+  display: block;
+  margin-top: 8px;
+  color: #4aadff;
+  font-weight: 800;
+}
+
+.mission-panel ol {
+  margin: 9px 0 0;
+  padding-left: 18px;
+}
+
 .map-shell {
   position: absolute;
   left: 20px;
@@ -353,5 +479,13 @@ select {
     left: 16px;
     bottom: 58px;
     width: 150px;
+  }
+
+  .interaction-panel {
+    bottom: 220px;
+  }
+
+  .mission-panel {
+    display: none;
   }
 }

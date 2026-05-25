@@ -182,7 +182,7 @@ function createBuildings(rng, landmarks) {
 
 function createTrees(rng, landmarks) {
   const trees = []
-  for (let i = 0; i < 1300; i += 1) {
+  for (let i = 0; i < 760; i += 1) {
     const angle = rng() * TAU
     const radius = 620 + rng() * 500
     const x = Math.cos(angle) * radius + (rng() - 0.5) * 120
@@ -196,7 +196,7 @@ function createTrees(rng, landmarks) {
 
 function createTraffic(rng, roads) {
   const candidates = roads.filter(road => road.main)
-  return Array.from({ length: 180 }, (_, i) => {
+  return Array.from({ length: 120 }, (_, i) => {
     const road = pick(rng, candidates)
     const direction = rng() > 0.5 ? 1 : -1
     const lane = (rng() > 0.5 ? 1 : -1) * (road.width * 0.24)
@@ -256,7 +256,7 @@ function createNPCs(rng, buildings, landmarks) {
   const byId = new Map(landmarks.map(place => [place.id, place]))
   const homes = buildings.filter(building => building.type === 'apartment' || building.type === 'house')
 
-  return Array.from({ length: 220 }, (_, i) => {
+  return Array.from({ length: 160 }, (_, i) => {
     const roleInfo = pick(rng, ROLE_LIBRARY)
     const home = pick(rng, homes)
     const work = byId.get(roleInfo.workplace) || landmarks[0]

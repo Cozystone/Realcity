@@ -12,9 +12,9 @@ export default function App() {
     <main className="app">
       <Canvas
         shadows="soft"
-        dpr={[1, 2]}
-        performance={{ min: 0.65 }}
-        camera={{ fov: 68, near: 0.25, far: 5200, position: [18, 18, 34] }}
+        dpr={1}
+        performance={{ min: 0.35 }}
+        camera={{ fov: 68, near: 0.25, far: 3600, position: [18, 18, 34] }}
         gl={{
           antialias: false,
           alpha: false,

@@ -157,6 +157,64 @@ function AgentCard({ agent, stats, pulse }) {
   )
 }
 
+function InteractionPanel({ interaction }) {
+  const [text, setText] = useState('')
+
+  useEffect(() => {
+    setText('')
+  }, [interaction?.agent?.id])
+
+  if (!interaction?.agent) return null
+
+  const disabled = interaction.status === 'thinking'
+  const submit = (event) => {
+    event.preventDefault()
+    const request = text.trim()
+    if (!request || disabled) return
+    useCityStore.getState().setInteraction({ status: 'thinking', request })
+    window.dispatchEvent(new CustomEvent('realcity:npc-request', {
+      detail: { agentId: interaction.agent.id, text: request },
+    }))
+  }
+
+  return (
+    <form className="interaction-panel" onSubmit={submit} onKeyDown={event => event.stopPropagation()}>
+      <div>
+        <strong>{interaction.agent.name}</strong>
+        <span>{interaction.status === 'thinking' ? 'Thinking' : interaction.status === 'active' ? 'Acting' : 'Ready'}</span>
+      </div>
+      <textarea
+        value={text}
+        disabled={disabled}
+        onChange={event => setText(event.target.value)}
+        placeholder="예: 나를 당신이 일하는 데까지 데려다줘요. 급하면 택시를 잡아도 돼요."
+        rows={3}
+      />
+      <div className="interaction-actions">
+        <button type="submit" disabled={disabled || !text.trim()}>{disabled ? 'Thinking...' : 'Send'}</button>
+        <button type="button" onClick={() => useCityStore.getState().closeInteraction()}>Close</button>
+      </div>
+    </form>
+  )
+}
+
+function MissionPanel({ mission, ride }) {
+  if (!mission) return null
+  const phase = ride ? `Taxi ${(Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000)) * 100).toFixed(0)}%` : mission.phase
+
+  return (
+    <aside className="mission-panel">
+      <div className="eyebrow">Active Plan</div>
+      <h2>{mission.agentName}</h2>
+      <p>{mission.mode === 'taxi' ? 'Taxi escort' : 'Walking escort'} to {mission.destination?.name}</p>
+      <small>{phase}</small>
+      <ol>
+        {(mission.steps || []).slice(0, 4).map(step => <li key={step}>{step}</li>)}
+      </ol>
+    </aside>
+  )
+}
+
 export default function HUD({ city }) {
   const timeMinutes = useCityStore(state => state.timeMinutes)
   const day = useCityStore(state => state.day)
@@ -166,6 +224,9 @@ export default function HUD({ city }) {
   const pulse = useCityStore(state => state.pulse)
   const focusedAgent = useCityStore(state => state.focusedAgent)
   const dialogue = useCityStore(state => state.dialogue)
+  const interaction = useCityStore(state => state.interaction)
+  const mission = useCityStore(state => state.mission)
+  const ride = useCityStore(state => state.ride)
   const viewHeading = player.viewHeading ?? player.heading
 
   return (
@@ -179,6 +240,8 @@ export default function HUD({ city }) {
       <Compass heading={viewHeading} />
       <AgentCard agent={focusedAgent} stats={stats} pulse={pulse} />
       <Dialogue dialogue={dialogue} />
+      <InteractionPanel interaction={interaction} />
+      <MissionPanel mission={mission} ride={ride} />
 
       <div className="map-shell">
         <Minimap city={city} player={player} />

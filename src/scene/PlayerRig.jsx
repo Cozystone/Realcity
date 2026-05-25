@@ -22,15 +22,25 @@ function approach(current, target, speed, delta) {
   return current + (target - current) * (1 - Math.exp(-speed * delta))
 }
 
+function smoothstep(t) {
+  return t * t * (3 - 2 * t)
+}
+
+function isTypingTarget(target) {
+  return !!target?.closest?.('input, textarea, select, button')
+}
+
 function useKeys() {
   const keys = useRef({})
 
   useEffect(() => {
     const down = (event) => {
+      if (isTypingTarget(event.target)) return
       keys.current[event.code] = true
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
     }
     const up = (event) => {
+      if (isTypingTarget(event.target)) return
       keys.current[event.code] = false
     }
     window.addEventListener('keydown', down, { passive: false })
@@ -152,57 +162,74 @@ export default function PlayerRig({ city }) {
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
-    useCityStore.getState().tick(dt)
+    const store = useCityStore.getState()
+    store.tick(dt)
+    const ride = store.ride
 
-    if (keys.current.KeyA) heading.current += TURN_SPEED * dt
-    if (keys.current.KeyD) heading.current -= TURN_SPEED * dt
-
-    const targetLookYaw = keys.current.ArrowLeft
-      ? FREE_LOOK_YAW
-      : keys.current.ArrowRight
-        ? -FREE_LOOK_YAW
-        : 0
-    const targetLookPitch = keys.current.ArrowUp
-      ? FREE_LOOK_PITCH_UP
-      : keys.current.ArrowDown
-        ? FREE_LOOK_PITCH_DOWN
-        : 0
-    const lookSpeed = targetLookYaw || targetLookPitch ? FREE_LOOK_IN_SPEED : FREE_LOOK_RETURN_SPEED
-    lookYaw.current = approach(lookYaw.current, targetLookYaw, lookSpeed, dt)
-    lookPitch.current = approach(lookPitch.current, targetLookPitch, lookSpeed, dt)
-
-    // Vehicle-style keyboard control: WASD drives the body's heading; arrows are temporary free-look only.
-    const forwardX = Math.sin(heading.current)
-    const forwardZ = Math.cos(heading.current)
-    const throttle = (keys.current.KeyW ? 1 : 0) - (keys.current.KeyS ? 1 : 0)
-    move.set(0, 0, 0)
-
-    running.current = !!(keys.current.ShiftLeft || keys.current.ShiftRight)
-    moving.current = Math.abs(throttle) > 0.001
-
-    if (moving.current) {
-      const distance = throttle * (running.current ? RUN_SPEED : WALK_SPEED) * dt
-      move.set(forwardX * distance, 0, forwardZ * distance)
-    }
-
-    velocityY.current -= GRAVITY * dt
-    if (keys.current.Space && grounded.current) {
-      velocityY.current = JUMP
-      grounded.current = false
-    }
-
-    const nextX = pos.current.x + move.x
-    const nextZ = pos.current.z + move.z
-    const [safeX, safeZ] = resolveBuildingCollision(city, nextX, nextZ)
-    const groundY = terrainHeight(safeX, safeZ) + 1.1
-    let nextY = pos.current.y + velocityY.current * dt
-    if (nextY <= groundY) {
-      nextY = groundY
-      velocityY.current = 0
+    if (ride) {
+      const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
+      const eased = smoothstep(t)
+      const x = ride.from.x + (ride.to.x - ride.from.x) * eased
+      const z = ride.from.z + (ride.to.z - ride.from.z) * eased
+      heading.current = Math.atan2(ride.to.x - ride.from.x, ride.to.z - ride.from.z)
+      pos.current.set(x, terrainHeight(x, z) + 1.1, z)
+      moving.current = true
+      running.current = false
       grounded.current = true
+      velocityY.current = 0
+      if (t >= 1) store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+    } else {
+      if (keys.current.KeyA) heading.current += TURN_SPEED * dt
+      if (keys.current.KeyD) heading.current -= TURN_SPEED * dt
+
+      const targetLookYaw = keys.current.ArrowLeft
+        ? FREE_LOOK_YAW
+        : keys.current.ArrowRight
+          ? -FREE_LOOK_YAW
+          : 0
+      const targetLookPitch = keys.current.ArrowUp
+        ? FREE_LOOK_PITCH_UP
+        : keys.current.ArrowDown
+          ? FREE_LOOK_PITCH_DOWN
+          : 0
+      const lookSpeed = targetLookYaw || targetLookPitch ? FREE_LOOK_IN_SPEED : FREE_LOOK_RETURN_SPEED
+      lookYaw.current = approach(lookYaw.current, targetLookYaw, lookSpeed, dt)
+      lookPitch.current = approach(lookPitch.current, targetLookPitch, lookSpeed, dt)
+
+      // Vehicle-style keyboard control: WASD drives the body's heading; arrows are temporary free-look only.
+      const forwardX = Math.sin(heading.current)
+      const forwardZ = Math.cos(heading.current)
+      const throttle = (keys.current.KeyW ? 1 : 0) - (keys.current.KeyS ? 1 : 0)
+      move.set(0, 0, 0)
+
+      running.current = !!(keys.current.ShiftLeft || keys.current.ShiftRight)
+      moving.current = Math.abs(throttle) > 0.001
+
+      if (moving.current) {
+        const distance = throttle * (running.current ? RUN_SPEED : WALK_SPEED) * dt
+        move.set(forwardX * distance, 0, forwardZ * distance)
+      }
+
+      velocityY.current -= GRAVITY * dt
+      if (keys.current.Space && grounded.current) {
+        velocityY.current = JUMP
+        grounded.current = false
+      }
+
+      const nextX = pos.current.x + move.x
+      const nextZ = pos.current.z + move.z
+      const [safeX, safeZ] = resolveBuildingCollision(city, nextX, nextZ)
+      const groundY = terrainHeight(safeX, safeZ) + 1.1
+      let nextY = pos.current.y + velocityY.current * dt
+      if (nextY <= groundY) {
+        nextY = groundY
+        velocityY.current = 0
+        grounded.current = true
+      }
+
+      pos.current.set(safeX, nextY, safeZ)
     }
 
-    pos.current.set(safeX, nextY, safeZ)
     if (root.current) {
       root.current.position.copy(pos.current)
       root.current.rotation.y += Math.atan2(Math.sin(heading.current - root.current.rotation.y), Math.cos(heading.current - root.current.rotation.y)) * 0.22
