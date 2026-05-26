@@ -12,6 +12,7 @@ export const DAY_MINUTES = 24 * 60
 export const CITY_BASE_Y = 0
 export const TRAFFIC_SIGNAL_CYCLE_SECONDS = 54
 export const TRAFFIC_SIGNAL_YELLOW_SECONDS = 4.5
+export const BUILDING_ROAD_SETBACK = 8.5
 
 const ROLE_LIBRARY = [
   { role: 'banker', job: 'Banker', workplace: 'aster_exchange', color: '#2c5f8a', pace: 1.05 },
@@ -197,19 +198,144 @@ function pointInRoadReserve(x, z, roads, margin = 0) {
   })
 }
 
+function buildableZoneForBlock(blockX, blockZ, roads) {
+  const west = roads
+    .filter(road => road.axis === 'z' && road.x < blockX)
+    .sort((a, b) => b.x - a.x)[0]
+  const east = roads
+    .filter(road => road.axis === 'z' && road.x > blockX)
+    .sort((a, b) => a.x - b.x)[0]
+  const south = roads
+    .filter(road => road.axis === 'x' && road.z < blockZ)
+    .sort((a, b) => b.z - a.z)[0]
+  const north = roads
+    .filter(road => road.axis === 'x' && road.z > blockZ)
+    .sort((a, b) => a.z - b.z)[0]
+
+  if (!west || !east || !south || !north) return null
+
+  const minX = west.x + west.width / 2 + BUILDING_ROAD_SETBACK
+  const maxX = east.x - east.width / 2 - BUILDING_ROAD_SETBACK
+  const minZ = south.z + south.width / 2 + BUILDING_ROAD_SETBACK
+  const maxZ = north.z - north.width / 2 - BUILDING_ROAD_SETBACK
+  const width = maxX - minX
+  const depth = maxZ - minZ
+
+  if (width < 18 || depth < 18) return null
+
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    width,
+    depth,
+    cx: (minX + maxX) / 2,
+    cz: (minZ + maxZ) / 2,
+  }
+}
+
+function nearestBlockCenterCoord(value) {
+  const first = -CITY_GRID_HALF + ROAD_SPACING / 2
+  const last = CITY_GRID_HALF - ROAD_SPACING / 2
+  const index = Math.round((clamp(value, first, last) - first) / ROAD_SPACING)
+  return first + index * ROAD_SPACING
+}
+
+function blockReferenceForPoint(x, z) {
+  return {
+    x: nearestBlockCenterCoord(x),
+    z: nearestBlockCenterCoord(z),
+  }
+}
+
+function landmarkBaseFootprint(place) {
+  const base = {
+    transit: { width: 68, depth: 31 },
+    finance: { width: 32, depth: 32 },
+    cafe: { width: 30, depth: 24 },
+    hospital: { width: 42, depth: 32 },
+    workshop: { width: 32, depth: 25 },
+    retail: { width: 36, depth: 25 },
+    school: { width: 40, depth: 30 },
+    leisure: { width: 38, depth: 30 },
+    logistics: { width: 63, depth: 46 },
+    park: { width: 68, depth: 68 },
+  }[place.kind] || { width: 28, depth: 24 }
+
+  return {
+    width: base.width * (place.scale || 1),
+    depth: base.depth * (place.scale || 1),
+  }
+}
+
+function fitFootprintToZone(footprint, zone) {
+  if (!zone) return { ...footprint, scale: 1 }
+  const maxWidth = zone.width * 0.88
+  const maxDepth = zone.depth * 0.88
+  const scale = Math.min(1, maxWidth / footprint.width, maxDepth / footprint.depth)
+  return {
+    width: footprint.width * scale,
+    depth: footprint.depth * scale,
+    scale,
+  }
+}
+
+function landmarkInteriorFor(place, footprint) {
+  const interior = LANDMARK_INTERIORS[place.kind]
+  if (!interior) return null
+
+  const scale = footprint.scale || 1
+  const width = Math.max(10, Math.min(interior.width * scale, footprint.width - 2))
+  const depth = Math.max(9, Math.min(interior.depth * scale, footprint.depth - 2))
+  const doorLimit = Math.max(3.4, width - 4)
+
+  return {
+    ...interior,
+    width,
+    depth,
+    height: Math.max(5.4, interior.height * Math.max(0.72, scale)),
+    doorWidth: Math.min(Math.max(3.8, interior.doorWidth * scale), doorLimit),
+    lobbyDepth: Math.min(Math.max(6, interior.lobbyDepth * scale), Math.max(6, depth - 3)),
+    entranceSide: 'front',
+    solidWalls: true,
+    entryRule: 'front-door-only',
+  }
+}
+
 function landmarkSet(roads) {
-  return LANDMARK_BLUEPRINTS.map(place => ({
-    ...place,
-    y: terrainHeight(place.x, place.z),
-    radius: 26 * place.scale,
-    ...addressInfoForPoint(place.x, place.z, roads),
-    interior: place.kind === 'park' ? null : {
-      ...LANDMARK_INTERIORS[place.kind],
-      entranceSide: 'front',
-      solidWalls: true,
-      entryRule: 'front-door-only',
-    },
-  }))
+  return LANDMARK_BLUEPRINTS.map(place => {
+    const blockReference = blockReferenceForPoint(place.x, place.z)
+    const zone = buildableZoneForBlock(blockReference.x, blockReference.z, roads)
+    const footprint = fitFootprintToZone(landmarkBaseFootprint(place), zone)
+    const x = zone
+      ? clamp(place.x, zone.minX + footprint.width / 2, zone.maxX - footprint.width / 2)
+      : place.x
+    const z = zone
+      ? clamp(place.z, zone.minZ + footprint.depth / 2, zone.maxZ - footprint.depth / 2)
+      : place.z
+
+    return {
+      ...place,
+      x,
+      z,
+      y: terrainHeight(x, z),
+      radius: Math.max(14, Math.min(footprint.width, footprint.depth) / 2),
+      footprint,
+      zoning: zone
+        ? {
+            requested: { x: place.x, z: place.z },
+            blockCenter: blockReference,
+            buildable: zone,
+            roadSetback: BUILDING_ROAD_SETBACK,
+            envelopeW: footprint.width,
+            envelopeD: footprint.depth,
+          }
+        : null,
+      ...addressInfoForPoint(x, z, roads),
+      interior: landmarkInteriorFor(place, footprint),
+    }
+  })
 }
 
 function createBuildings(rng, landmarks, roads) {
@@ -231,20 +357,31 @@ function createBuildings(rng, landmarks, roads) {
       const district = districtAt(x, z)
       const isParkPocket = distance > 360 && rng() > 0.83
       if (isParkPocket) continue
+      const zone = buildableZoneForBlock(x, z, roads)
+      if (!zone) continue
 
       const count = district.id === 'core' ? 1 + Math.floor(rng() * 2) : district.id === 'outer' ? 2 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * 3)
-      const footprint = ROAD_SPACING - ROAD_WIDTH - 18
       const slots = slotSets[Math.min(4, count)]
 
       for (let i = 0; i < count; i += 1) {
         const type = district.id === 'core' ? 'skyscraper' : district.type === 'house' ? 'house' : district.type === 'apartment' ? 'apartment' : rng() > 0.55 ? 'office' : 'apartment'
         const slot = slots[i] || slots[0]
-        const slotSize = count === 1 ? footprint * 0.78 : footprint * 0.36
-        const w = type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(8, slotSize)
-        const d = type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(8, slotSize)
-        const jitter = count === 1 ? footprint * 0.07 : footprint * 0.035
-        const bx = x + slot.x * footprint + (rng() - 0.5) * jitter
-        const bz = z + slot.z * footprint + (rng() - 0.5) * jitter
+        const single = count === 1
+        const maxW = single
+          ? zone.width * (type === 'house' ? 0.42 : 0.58)
+          : zone.width * (type === 'house' ? 0.28 : 0.32)
+        const maxD = single
+          ? zone.depth * (type === 'apartment' ? 0.48 : type === 'house' ? 0.42 : 0.56)
+          : zone.depth * (type === 'house' ? 0.28 : 0.31)
+        const minW = type === 'house' ? 7.2 : 11
+        const minD = type === 'house' ? 7.2 : 11
+        if (maxW < minW || maxD < minD) continue
+        const w = clamp(type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(7, maxW - 12), minW, maxW)
+        const d = clamp(type === 'house' ? 7.5 + rng() * 6.5 : 12 + rng() * Math.max(7, maxD - 12), minD, maxD)
+        const jitterX = single ? zone.width * 0.025 : zone.width * 0.015
+        const jitterZ = single ? zone.depth * 0.025 : zone.depth * 0.015
+        const bx = clamp(zone.cx + slot.x * zone.width + (rng() - 0.5) * jitterX, zone.minX + w * 0.68, zone.maxX - w * 0.68)
+        const bz = clamp(zone.cz + slot.z * zone.depth + (rng() - 0.5) * jitterZ, zone.minZ + d * 0.72, zone.maxZ - d * 0.72)
         const base = terrainHeight(bx, bz)
         const height = type === 'skyscraper'
           ? 44 + rng() * 92
@@ -265,8 +402,15 @@ function createBuildings(rng, landmarks, roads) {
           h: height,
           type,
           district: district.name,
-          rot: rng() > 0.78 ? (rng() - 0.5) * 0.35 : 0,
+          rot: 0,
           tint: rng(),
+          zoning: {
+            blockCenter: { x, z },
+            buildable: zone,
+            roadSetback: BUILDING_ROAD_SETBACK,
+            envelopeW: w * 1.36,
+            envelopeD: d * 1.44,
+          },
           form: createBuildingForm(type, rng, district),
         })
       }
@@ -643,6 +787,12 @@ export function createRealCity(seed = 20260525) {
       traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
+      zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
+    },
+    zoningRules: {
+      roadSetback: BUILDING_ROAD_SETBACK,
+      buildableEnvelope: 'Each generated building is clamped inside the rectangle between adjacent roads after subtracting road half-widths and setbacks.',
+      rotationPolicy: 'Procedural buildings stay axis-aligned with the street grid until parcel-aware rotated lots are introduced.',
     },
     trafficRules: {
       drivingSide: 'right-hand',

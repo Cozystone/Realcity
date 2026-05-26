@@ -1080,6 +1080,9 @@ function Landmark({ place }) {
     logistics: '#adb5bd',
   }[place.kind] || '#ffffff'
 
+  const footprint = place.footprint || { width: place.interior?.width || 28, depth: place.interior?.depth || 24 }
+  const fw = footprint.width
+  const fd = footprint.depth
   const signHeight = place.kind === 'finance' ? 58 : place.kind === 'transit' ? 22 : 15
 
   return (
@@ -1095,18 +1098,18 @@ function Landmark({ place }) {
       ) : place.kind === 'transit' ? (
         <>
           <mesh castShadow receiveShadow position={[0, 8.2, 0]}>
-            <boxGeometry args={[64, 3.4, 30]} />
+            <boxGeometry args={[Math.max(12, fw - 4), 3.4, Math.max(10, fd - 1)]} />
             <meshStandardMaterial color="#cfd7dd" roughness={0.32} metalness={0.18} />
           </mesh>
           <mesh castShadow position={[0, 11, 0]} rotation={[0, 0, Math.PI / 8]}>
-            <boxGeometry args={[68, 1.4, 31]} />
+            <boxGeometry args={[fw, 1.4, fd]} />
             <meshStandardMaterial color="#2a3034" roughness={0.55} metalness={0.12} />
           </mesh>
         </>
       ) : place.kind === 'park' ? (
         <>
           <mesh receiveShadow position={[0, 0.14, 0]}>
-            <cylinderGeometry args={[34, 34, 0.24, 48]} />
+            <cylinderGeometry args={[Math.min(fw, fd) / 2, Math.min(fw, fd) / 2, 0.24, 48]} />
             <meshStandardMaterial color="#2f6f3d" roughness={0.9} />
           </mesh>
           <mesh castShadow position={[0, 3.5, 0]}>
@@ -1117,51 +1120,51 @@ function Landmark({ place }) {
       ) : place.kind === 'logistics' ? (
         <>
           <mesh castShadow receiveShadow position={[0, 12.2, 0]}>
-            <boxGeometry args={[63, 2.4, 39]} />
+            <boxGeometry args={[fw, 2.4, fd]} />
             <meshStandardMaterial color="#3e474f" roughness={0.44} metalness={0.18} />
           </mesh>
-          {[-19, 0, 19].map(x => (
-            <mesh key={`dock-${x}`} receiveShadow position={[x, 3.2, -17.25]}>
-              <boxGeometry args={[9.5, 5.8, 0.42]} />
+          {[-fw * 0.3, 0, fw * 0.3].map(x => (
+            <mesh key={`dock-${x}`} receiveShadow position={[x, 3.2, -fd * 0.46]}>
+              <boxGeometry args={[Math.min(9.5, fw * 0.18), 5.8, 0.42]} />
               <meshStandardMaterial color="#2d343a" roughness={0.62} metalness={0.18} />
             </mesh>
           ))}
-          {[-24, -12, 12, 24].map(x => (
-            <mesh key={`window-${x}`} position={[x, 7.8, 17.25]}>
-              <boxGeometry args={[4.5, 1.55, 0.36]} />
+          {[-fw * 0.36, -fw * 0.14, fw * 0.14, fw * 0.36].map(x => (
+            <mesh key={`window-${x}`} position={[x, 7.8, fd * 0.43]}>
+              <boxGeometry args={[Math.min(4.5, fw * 0.11), 1.55, 0.36]} />
               <meshStandardMaterial color="#bde8ff" emissive="#4bb6ff" emissiveIntensity={0.36} roughness={0.22} metalness={0.28} />
             </mesh>
           ))}
-          <mesh position={[0, 1.35, -18.15]}>
-            <boxGeometry args={[54, 0.18, 0.34]} />
+          <mesh position={[0, 1.35, -fd * 0.46]}>
+            <boxGeometry args={[fw * 0.84, 0.18, 0.34]} />
             <meshStandardMaterial color="#f5c542" emissive="#b7791f" emissiveIntensity={0.22} roughness={0.48} />
           </mesh>
-          <mesh castShadow position={[-22, 1.4, -23]}>
-            <boxGeometry args={[8, 2.8, 4.6]} />
+          <mesh castShadow position={[-fw * 0.34, 1.4, -fd * 0.34]}>
+            <boxGeometry args={[Math.min(8, fw * 0.16), 2.8, Math.min(4.6, fd * 0.16)]} />
             <meshStandardMaterial color="#d9a441" roughness={0.48} metalness={0.12} />
           </mesh>
-          <mesh castShadow position={[20, 1.1, -23]}>
-            <boxGeometry args={[7, 2.2, 5]} />
+          <mesh castShadow position={[fw * 0.31, 1.1, -fd * 0.34]}>
+            <boxGeometry args={[Math.min(7, fw * 0.15), 2.2, Math.min(5, fd * 0.18)]} />
             <meshStandardMaterial color="#58616a" roughness={0.52} metalness={0.12} />
           </mesh>
         </>
       ) : place.kind === 'hospital' ? (
         <>
           <mesh castShadow receiveShadow position={[0, 14.8, 0]}>
-            <boxGeometry args={[31, 6, 22]} />
+            <boxGeometry args={[Math.min(31, fw * 0.78), 6, Math.min(22, fd * 0.74)]} />
             <meshStandardMaterial color="#cbd9df" roughness={0.42} metalness={0.06} />
           </mesh>
-          {[-13, -4.5, 4.5, 13].map(x => (
-            <mesh key={`hospital-window-${x}`} position={[x, 7.2, -15.25]}>
-              <boxGeometry args={[4.4, 2.2, 0.28]} />
+          {[-fw * 0.32, -fw * 0.11, fw * 0.11, fw * 0.32].map(x => (
+            <mesh key={`hospital-window-${x}`} position={[x, 7.2, -fd * 0.47]}>
+              <boxGeometry args={[Math.min(4.4, fw * 0.12), 2.2, 0.28]} />
               <meshStandardMaterial color="#c8f2ff" emissive="#76d6ff" emissiveIntensity={0.22} roughness={0.18} metalness={0.16} />
             </mesh>
           ))}
-          <mesh position={[0, 8.2, -15.55]}>
+          <mesh position={[0, 8.2, -fd * 0.48]}>
             <boxGeometry args={[1.5, 6.8, 0.36]} />
             <meshStandardMaterial color="#e85d75" emissive="#e85d75" emissiveIntensity={0.32} />
           </mesh>
-          <mesh position={[0, 8.2, -15.62]}>
+          <mesh position={[0, 8.2, -fd * 0.49]}>
             <boxGeometry args={[6.8, 1.5, 0.38]} />
             <meshStandardMaterial color="#e85d75" emissive="#e85d75" emissiveIntensity={0.32} />
           </mesh>
@@ -1169,21 +1172,21 @@ function Landmark({ place }) {
       ) : (
         <>
           <mesh castShadow receiveShadow position={[0, 10.5, 0]}>
-            <boxGeometry args={[22, 4, 18]} />
+            <boxGeometry args={[fw * 0.68, 4, fd * 0.72]} />
             <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.08} />
           </mesh>
-          {[-8, 0, 8].map(x => (
-            <mesh key={`front-window-${x}`} position={[x, 5.2, -11.25]}>
-              <boxGeometry args={[4.2, 2.0, 0.3]} />
+          {[-fw * 0.24, 0, fw * 0.24].map(x => (
+            <mesh key={`front-window-${x}`} position={[x, 5.2, -fd * 0.43]}>
+              <boxGeometry args={[Math.min(4.2, fw * 0.15), 2.0, 0.3]} />
               <meshStandardMaterial color="#d4f4ff" emissive="#57c7ff" emissiveIntensity={0.25} roughness={0.2} metalness={0.2} />
             </mesh>
           ))}
-          <mesh position={[0, 1.8, -11.4]}>
+          <mesh position={[0, 1.8, -fd * 0.44]}>
             <boxGeometry args={[4.4, 3.4, 0.34]} />
             <meshStandardMaterial color="#202831" roughness={0.45} metalness={0.18} />
           </mesh>
-          <mesh position={[0, 8.8, -11.55]}>
-            <boxGeometry args={[17, 1.1, 0.36]} />
+          <mesh position={[0, 8.8, -fd * 0.45]}>
+            <boxGeometry args={[fw * 0.52, 1.1, 0.36]} />
             <meshStandardMaterial color="#101820" emissive={color} emissiveIntensity={0.6} roughness={0.28} metalness={0.24} />
           </mesh>
         </>

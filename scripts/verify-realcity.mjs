@@ -183,11 +183,35 @@ async function inspectCityNorms(page) {
     const formKeys = buildings => [...new Set(buildings.map(building => building.form?.profile).filter(Boolean))]
     const roofKeys = buildings => [...new Set(buildings.map(building => building.form?.roof).filter(Boolean))]
     const houses = city.buildings.filter(building => building.type === 'house')
+    const rectsOverlap = (a, b) => a.minX <= b.maxX && a.maxX >= b.minX && a.minZ <= b.maxZ && a.maxZ >= b.minZ
+    const roadRect = (road, margin = 0) => road.axis === 'x'
+      ? { minX: road.from - margin, maxX: road.to + margin, minZ: road.z - road.width / 2 - margin, maxZ: road.z + road.width / 2 + margin }
+      : { minX: road.x - road.width / 2 - margin, maxX: road.x + road.width / 2 + margin, minZ: road.from - margin, maxZ: road.to + margin }
+    const envelopeRect = item => {
+      const width = item.zoning?.envelopeW || item.footprint?.width || item.w || 0
+      const depth = item.zoning?.envelopeD || item.footprint?.depth || item.d || 0
+      return {
+        minX: item.x - width / 2,
+        maxX: item.x + width / 2,
+        minZ: item.z - depth / 2,
+        maxZ: item.z + depth / 2,
+      }
+    }
+    const insideZone = item => {
+      const zone = item.zoning?.buildable
+      if (!zone) return false
+      const rect = envelopeRect(item)
+      return rect.minX >= zone.minX - 0.01 && rect.maxX <= zone.maxX + 0.01 && rect.minZ >= zone.minZ - 0.01 && rect.maxZ <= zone.maxZ + 0.01
+    }
     const laneViolations = city.cars.filter(car => {
       const expectedOffset = car.road.width * (car.road.main ? 0.27 : 0.22)
       const expectedLane = car.road.axis === 'x' ? car.direction * expectedOffset : -car.direction * expectedOffset
       return car.laneRule !== 'right-hand' || Math.abs(car.lane - expectedLane) > 0.01
     })
+    const buildingRoadConflicts = city.buildings.filter(building => city.roads.some(road => rectsOverlap(envelopeRect(building), roadRect(road, 0.35))))
+    const landmarkRoadConflicts = city.landmarks.filter(place => city.roads.some(road => rectsOverlap(envelopeRect(place), roadRect(road, 0.35))))
+    const buildingZoningReady = city.buildings.filter(building => building.zoning?.roadSetback >= 8 && insideZone(building))
+    const landmarkZoningReady = city.landmarks.filter(place => place.zoning?.roadSetback >= 8 && insideZone(place))
     const carBodyStyles = new Set(city.cars.map(car => car.bodyStyle).filter(Boolean))
     const detailedCars = city.cars.filter(car => car.dimensions?.width > 0 && car.dimensions?.length > 0 && car.dimensions?.cabinLength > 0)
     const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
@@ -199,10 +223,17 @@ async function inspectCityNorms(page) {
     }))
     return {
       roads: city.roads.length,
+      buildingCount: city.buildings.length,
+      landmarkCount: city.landmarks.length,
       namedRoads: city.roads.filter(road => road.name).length,
       landmarkAddresses: city.landmarks.filter(place => place.address && place.roadName).length,
       buildingAddresses: city.buildings.filter(building => building.address && building.roadName).length,
       addressBookEntries: (city.addressBook || []).filter(place => place.address && place.roadName && typeof place.x === 'number' && typeof place.z === 'number').length,
+      buildingRoadConflicts: buildingRoadConflicts.length,
+      landmarkRoadConflicts: landmarkRoadConflicts.length,
+      landmarkRoadConflictIds: landmarkRoadConflicts.map(place => place.id),
+      buildingZoningReady: buildingZoningReady.length,
+      landmarkZoningReady: landmarkZoningReady.length,
       buildingProfiles: formKeys(city.buildings),
       houseProfiles: formKeys(houses),
       houseRoofs: roofKeys(houses),
@@ -224,6 +255,10 @@ async function inspectCityNorms(page) {
   assert(norms.landmarkAddresses >= 9, 'Landmarks did not receive road-name addresses')
   assert(norms.buildingAddresses > 100, 'Buildings did not receive road-name addresses')
   assert(norms.addressBookEntries > 100, 'Address book did not expose routable street addresses')
+  assert(norms.buildingZoningReady === norms.buildingCount, 'Building zoning metadata is incomplete or outside buildable envelopes')
+  assert(norms.landmarkZoningReady === norms.landmarkCount, 'Landmark zoning metadata is incomplete or outside buildable envelopes')
+  assert(norms.buildingRoadConflicts === 0, `${norms.buildingRoadConflicts} buildings overlap road reserves`)
+  assert(norms.landmarkRoadConflicts === 0, `${norms.landmarkRoadConflicts} landmarks overlap road reserves: ${norms.landmarkRoadConflictIds.join(', ')}`)
   assert(norms.buildingProfiles.length >= 12, `Building massing profiles are not diverse enough: ${norms.buildingProfiles.join(', ')}`)
   assert(norms.houseProfiles.length >= 4, `House profiles are not diverse enough: ${norms.houseProfiles.join(', ')}`)
   assert(norms.houseRoofs.length >= 3, `House roof styles are not diverse enough: ${norms.houseRoofs.join(', ')}`)
@@ -236,7 +271,7 @@ async function inspectCityNorms(page) {
   assert(norms.heightVariants >= 8, `NPC height variation is too low: ${norms.heightVariants}`)
   assert(norms.fashionVariants >= 8, `NPC fashion variation is too low: ${norms.fashionVariants}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning, 'Social norm metadata is incomplete')
   return norms
 }
 
