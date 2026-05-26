@@ -32,6 +32,7 @@ export const useCityStore = create((set, get) => ({
   interaction: null,
   mission: null,
   ride: null,
+  pedestrianSamples: [],
   pulse: 'Morning traffic is building around Central Station.',
 
   tick(delta) {
@@ -122,7 +123,15 @@ export const useCityStore = create((set, get) => ({
   setPulse(pulse) {
     set({ pulse })
   },
+
+  setPedestrianSamples(pedestrianSamples) {
+    set({ pedestrianSamples })
+  },
 }))
+
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  window.__REALCITY_STORE__ = useCityStore
+}
 
 export function clockLabel(minutes) {
   const h = Math.floor(minutes / 60)

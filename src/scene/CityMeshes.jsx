@@ -246,24 +246,64 @@ function makeWindowTexture(type) {
   const rows = type === 'skyscraper' ? 24 : type === 'house' ? 5 : 15
   ctx.fillStyle = wall
   ctx.fillRect(0, 0, 256, 512)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.045)'
+  for (let i = 0; i < 180; i += 1) {
+    const x = (i * 47) % 256
+    const y = (i * 83) % 512
+    ctx.fillRect(x, y, 1 + (i % 7), 1)
+  }
+  ctx.strokeStyle = type === 'house' ? 'rgba(80,54,40,0.34)' : 'rgba(255,255,255,0.13)'
+  ctx.lineWidth = 2
+  for (let c = 0; c <= cols; c += 1) {
+    const x = (c / cols) * 256
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, 512)
+    ctx.stroke()
+  }
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       const lit = (r * 17 + c * 11 + type.length) % 5 !== 0
-      ctx.fillStyle = lit ? '#ead08a' : '#26313a'
       const cellW = 256 / cols
       const cellH = 512 / rows
-      ctx.fillRect(c * cellW + cellW * 0.25, r * cellH + cellH * 0.28, cellW * 0.5, cellH * 0.46)
+      const x = c * cellW + cellW * 0.2
+      const y = r * cellH + cellH * 0.25
+      const w = cellW * 0.58
+      const h = cellH * 0.5
+      ctx.fillStyle = 'rgba(8,13,18,0.28)'
+      ctx.fillRect(x - 2, y - 2, w + 4, h + 4)
+      ctx.fillStyle = lit ? '#eac46f' : '#1e2a33'
+      ctx.fillRect(x, y, w, h)
+      ctx.fillStyle = lit ? 'rgba(255,255,255,0.22)' : 'rgba(111,158,184,0.12)'
+      ctx.fillRect(x + w * 0.12, y + h * 0.1, w * 0.18, h * 0.78)
     }
+  }
+  ctx.strokeStyle = type === 'apartment' || type === 'house' ? 'rgba(68,45,32,0.42)' : 'rgba(20,28,35,0.28)'
+  ctx.lineWidth = 3
+  for (let r = 1; r < rows; r += 1) {
+    const y = (r / rows) * 512
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(256, y)
+    ctx.stroke()
   }
   const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping
   texture.repeat.set(1, type === 'skyscraper' ? 3.2 : type === 'office' ? 2.1 : type === 'apartment' ? 1.55 : 1)
   texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 4
   return texture
 }
 
 function Buildings({ buildings }) {
   const refs = useRef({})
+  const textures = useMemo(() => ({
+    skyscraper: makeWindowTexture('skyscraper'),
+    office: makeWindowTexture('office'),
+    apartment: makeWindowTexture('apartment'),
+    house: makeWindowTexture('house'),
+  }), [])
   const grouped = useMemo(() => {
     const groups = { skyscraper: [], office: [], apartment: [], house: [] }
     for (const building of buildings) groups[building.type]?.push(building)
@@ -304,17 +344,62 @@ function Buildings({ buildings }) {
             frustumCulled={false}
           >
             <boxGeometry args={[1, 1, 1]} />
-            <meshLambertMaterial
-              map={makeWindowTexture(type)}
+            <meshStandardMaterial
+              map={textures[type]}
               color="#ffffff"
               vertexColors
-              emissive={isGlass ? '#5f7f90' : type === 'apartment' ? '#796652' : type === 'house' ? '#76513f' : '#6f7875'}
-              emissiveIntensity={isGlass ? 0.95 : 0.82}
+              roughness={isGlass ? 0.22 : type === 'house' ? 0.76 : 0.52}
+              metalness={isGlass ? 0.42 : type === 'office' ? 0.16 : 0.04}
+              emissive={isGlass ? '#1c3342' : type === 'apartment' ? '#2b2118' : type === 'house' ? '#28170f' : '#202728'}
+              emissiveIntensity={isGlass ? 0.28 : 0.18}
+              envMapIntensity={isGlass ? 1.25 : 0.45}
             />
           </instancedMesh>
         )
       })}
     </>
+  )
+}
+
+function DistantMountains() {
+  const ref = useRef()
+  const mountains = useMemo(() => Array.from({ length: 38 }, (_, i) => {
+    const angle = (i / 38) * Math.PI * 2
+    const radius = 1540 + ((i * 97) % 220)
+    const height = 85 + ((i * 53) % 160)
+    return {
+      x: Math.cos(angle) * radius,
+      z: Math.sin(angle) * radius,
+      y: -24,
+      sx: 120 + ((i * 71) % 190),
+      sy: height,
+      sz: 70 + ((i * 37) % 120),
+      yaw: -angle,
+      tint: i / 38,
+    }
+  }), [])
+
+  useLayoutEffect(() => {
+    if (!ref.current) return
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    mountains.forEach((mountain, i) => {
+      dummy.position.set(mountain.x, mountain.y + mountain.sy / 2, mountain.z)
+      dummy.rotation.set(0, mountain.yaw, 0)
+      dummy.scale.set(mountain.sx, mountain.sy, mountain.sz)
+      dummy.updateMatrix()
+      ref.current.setMatrixAt(i, dummy.matrix)
+      ref.current.setColorAt(i, color.set('#45514d').lerp(new THREE.Color('#6d766d'), mountain.tint * 0.28))
+    })
+    ref.current.instanceMatrix.needsUpdate = true
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true
+  }, [mountains])
+
+  return (
+    <instancedMesh ref={ref} args={[undefined, undefined, mountains.length]} frustumCulled={false}>
+      <coneGeometry args={[1, 1, 6]} />
+      <meshStandardMaterial color="#ffffff" vertexColors roughness={0.94} metalness={0.02} flatShading />
+    </instancedMesh>
   )
 }
 
@@ -413,6 +498,66 @@ function Landmark({ place }) {
             <meshStandardMaterial color="#826d4f" roughness={0.78} />
           </mesh>
         </>
+      ) : place.kind === 'logistics' ? (
+        <>
+          <mesh castShadow receiveShadow position={[0, 5.4, 0]}>
+            <boxGeometry args={[58, 10.8, 34]} />
+            <meshStandardMaterial color="#9fa7ac" roughness={0.58} metalness={0.08} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, 12.2, 0]}>
+            <boxGeometry args={[63, 2.4, 39]} />
+            <meshStandardMaterial color="#3e474f" roughness={0.44} metalness={0.18} />
+          </mesh>
+          {[-19, 0, 19].map(x => (
+            <mesh key={`dock-${x}`} receiveShadow position={[x, 3.2, -17.25]}>
+              <boxGeometry args={[9.5, 5.8, 0.42]} />
+              <meshStandardMaterial color="#2d343a" roughness={0.62} metalness={0.18} />
+            </mesh>
+          ))}
+          {[-24, -12, 12, 24].map(x => (
+            <mesh key={`window-${x}`} position={[x, 7.8, 17.25]}>
+              <boxGeometry args={[4.5, 1.55, 0.36]} />
+              <meshStandardMaterial color="#bde8ff" emissive="#4bb6ff" emissiveIntensity={0.36} roughness={0.22} metalness={0.28} />
+            </mesh>
+          ))}
+          <mesh position={[0, 1.35, -18.15]}>
+            <boxGeometry args={[54, 0.18, 0.34]} />
+            <meshStandardMaterial color="#f5c542" emissive="#b7791f" emissiveIntensity={0.22} roughness={0.48} />
+          </mesh>
+          <mesh castShadow position={[-22, 1.4, -23]}>
+            <boxGeometry args={[8, 2.8, 4.6]} />
+            <meshStandardMaterial color="#d9a441" roughness={0.48} metalness={0.12} />
+          </mesh>
+          <mesh castShadow position={[20, 1.1, -23]}>
+            <boxGeometry args={[7, 2.2, 5]} />
+            <meshStandardMaterial color="#58616a" roughness={0.52} metalness={0.12} />
+          </mesh>
+        </>
+      ) : place.kind === 'hospital' ? (
+        <>
+          <mesh castShadow receiveShadow position={[0, 6.5, 0]}>
+            <boxGeometry args={[42, 13, 30]} />
+            <meshStandardMaterial color="#dfe8ed" roughness={0.48} metalness={0.05} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, 14.8, 0]}>
+            <boxGeometry args={[31, 6, 22]} />
+            <meshStandardMaterial color="#cbd9df" roughness={0.42} metalness={0.06} />
+          </mesh>
+          {[-13, -4.5, 4.5, 13].map(x => (
+            <mesh key={`hospital-window-${x}`} position={[x, 7.2, -15.25]}>
+              <boxGeometry args={[4.4, 2.2, 0.28]} />
+              <meshStandardMaterial color="#c8f2ff" emissive="#76d6ff" emissiveIntensity={0.22} roughness={0.18} metalness={0.16} />
+            </mesh>
+          ))}
+          <mesh position={[0, 8.2, -15.55]}>
+            <boxGeometry args={[1.5, 6.8, 0.36]} />
+            <meshStandardMaterial color="#e85d75" emissive="#e85d75" emissiveIntensity={0.32} />
+          </mesh>
+          <mesh position={[0, 8.2, -15.62]}>
+            <boxGeometry args={[6.8, 1.5, 0.38]} />
+            <meshStandardMaterial color="#e85d75" emissive="#e85d75" emissiveIntensity={0.32} />
+          </mesh>
+        </>
       ) : (
         <>
           <mesh castShadow receiveShadow position={[0, 4.5, 0]}>
@@ -422,6 +567,20 @@ function Landmark({ place }) {
           <mesh castShadow receiveShadow position={[0, 10.5, 0]}>
             <boxGeometry args={[22, 4, 18]} />
             <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.08} />
+          </mesh>
+          {[-8, 0, 8].map(x => (
+            <mesh key={`front-window-${x}`} position={[x, 5.2, -11.25]}>
+              <boxGeometry args={[4.2, 2.0, 0.3]} />
+              <meshStandardMaterial color="#d4f4ff" emissive="#57c7ff" emissiveIntensity={0.25} roughness={0.2} metalness={0.2} />
+            </mesh>
+          ))}
+          <mesh position={[0, 1.8, -11.4]}>
+            <boxGeometry args={[4.4, 3.4, 0.34]} />
+            <meshStandardMaterial color="#202831" roughness={0.45} metalness={0.18} />
+          </mesh>
+          <mesh position={[0, 8.8, -11.55]}>
+            <boxGeometry args={[17, 1.1, 0.36]} />
+            <meshStandardMaterial color="#101820" emissive={color} emissiveIntensity={0.6} roughness={0.28} metalness={0.24} />
           </mesh>
         </>
       )}
@@ -460,6 +619,7 @@ export default function CityMeshes({ city }) {
         <planeGeometry args={[CITY_WORLD_SIZE, 150]} />
         <meshStandardMaterial color="#14324b" roughness={0.1} metalness={0.25} />
       </mesh>
+      <DistantMountains />
 
       <Buildings buildings={city.buildings} />
       <Trees trees={city.trees} />

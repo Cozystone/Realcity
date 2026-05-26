@@ -200,16 +200,22 @@ function createTraffic(rng, roads) {
     const road = pick(rng, candidates)
     const direction = rng() > 0.5 ? 1 : -1
     const lane = (rng() > 0.5 ? 1 : -1) * (road.width * 0.24)
+    const taxi = rng() < 0.16
+    const driverName = `${pick(rng, GIVEN_NAMES)} ${pick(rng, FAMILY_NAMES)}`
     return {
       id: `car_${i}`,
+      kind: taxi ? 'taxi' : 'private',
+      driverName,
+      driverTemperament: pick(rng, ['calm', 'careful', 'hurried', 'patient']),
       roadId: road.id,
       road,
       direction,
       lane,
       t: rng(),
       speed: 7 + rng() * 10,
+      brake: 0,
       phase: rng() * TAU,
-      color: pick(rng, ['#e8504f', '#f3f4f6', '#1f2937', '#3b82f6', '#16a34a', '#f59e0b', '#7c3aed', '#94a3b8']),
+      color: taxi ? '#f6c445' : pick(rng, ['#e8504f', '#f3f4f6', '#1f2937', '#3b82f6', '#16a34a', '#f59e0b', '#7c3aed', '#94a3b8']),
     }
   })
 }

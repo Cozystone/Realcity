@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { terrainHeight } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
-import { askLocalNPC, fallbackLine, llmStatus, planLocalNPCAction } from '../engine/localLLM'
+import { askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction } from '../engine/localLLM'
 
 const forward = new THREE.Vector3(0, 0, 1)
 
@@ -62,12 +62,14 @@ class Agent {
     this.talkTimer = 0
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
+    this.glanceCooldown = 1 + Math.random() * 5
     this.mission = null
   }
 
   update(delta, timeMinutes, places) {
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
+    this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
     if (this.talkTimer > 0 && !this.mission) {
       this.talkTimer -= delta
       return 'talking'
@@ -226,7 +228,22 @@ function nearestRoadPickup(pos, roads) {
   return best || { x: pos.x + 4, z: pos.z + 4, y: terrainHeight(pos.x + 4, pos.z + 4), name: 'curbside' }
 }
 
-function destinationFromPlan(plan, agent, places) {
+function destinationFromPlan(plan, agent, places, request = '') {
+  if (plan.destination === 'named_place') {
+    const placeList = [...places.values()]
+    const targetId = typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : ''
+    const targetName = typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName.toLowerCase() : ''
+    const byId = targetId ? places.get(targetId) : null
+    if (byId) return byId
+
+    if (targetName) {
+      const byName = placeList.find(place => [place.id, place.name, place.kind].some(value => String(value || '').toLowerCase().includes(targetName)))
+      if (byName) return byName
+    }
+
+    const byRequest = matchRequestedPlace(request, placeList)
+    if (byRequest) return byRequest
+  }
   if (plan.destination === 'home') return { ...agent.home, name: agent.home.name || 'home' }
   if (plan.destination === 'third') {
     const third = places.get(agent.thirdId)
@@ -250,19 +267,60 @@ function setLocalPart(mesh, index, dummy, base, yaw, local, scale, rotX = 0, rot
   mesh.setMatrixAt(index, dummy.matrix)
 }
 
+function trafficPose(car, tValue = car.t) {
+  const t = car.direction > 0 ? tValue : 1 - tValue
+  const span = car.road.to - car.road.from
+  if (car.road.axis === 'x') {
+    return {
+      x: car.road.from + span * t,
+      z: car.road.z + car.lane,
+      yaw: car.direction > 0 ? Math.PI / 2 : -Math.PI / 2,
+    }
+  }
+  return {
+    x: car.road.x + car.lane,
+    z: car.road.from + span * t,
+    yaw: car.direction > 0 ? 0 : Math.PI,
+  }
+}
+
+function shouldYieldToPedestrian(car, pose, pedestrians) {
+  for (const pedestrian of pedestrians) {
+    if (car.road.axis === 'x') {
+      const lateral = Math.abs(pedestrian.z - car.road.z)
+      const ahead = car.direction > 0 ? pedestrian.x - pose.x : pose.x - pedestrian.x
+      if (lateral < car.road.width * 0.72 && ahead > -5 && ahead < 26) return pedestrian
+    } else {
+      const lateral = Math.abs(pedestrian.x - car.road.x)
+      const ahead = car.direction > 0 ? pedestrian.z - pose.z : pose.z - pedestrian.z
+      if (lateral < car.road.width * 0.72 && ahead > -5 && ahead < 26) return pedestrian
+    }
+  }
+  return null
+}
+
 function Traffic({ cars }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
   const wheelRef = useRef()
   const headlightRef = useRef()
   const tailLightRef = useRef()
+  const taxiSignRef = useRef()
+  const driverRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
   const colorsReady = useRef(false)
+  const yieldPulse = useRef(0)
 
   useFrame((state, delta) => {
-    if (!bodyRef.current || !cabinRef.current || !wheelRef.current || !headlightRef.current || !tailLightRef.current) return
+    if (!bodyRef.current || !cabinRef.current || !wheelRef.current || !headlightRef.current || !tailLightRef.current || !taxiSignRef.current || !driverRef.current) return
     const dt = Math.min(delta, 0.05)
+    const store = useCityStore.getState()
+    const pedestrians = [
+      { x: store.player.x, z: store.player.z, player: true },
+      ...(store.pedestrianSamples || []),
+    ]
+    yieldPulse.current = Math.max(0, yieldPulse.current - dt)
 
     if (!colorsReady.current) {
       cars.forEach((car, i) => bodyRef.current.setColorAt(i, color.set(car.color)))
@@ -272,43 +330,43 @@ function Traffic({ cars }) {
 
     for (let i = 0; i < cars.length; i += 1) {
       const car = cars[i]
-      const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
-      car.t = (car.t + (car.speed * wave * dt) / Math.max(1, car.road.to - car.road.from)) % 1
-      const t = car.direction > 0 ? car.t : 1 - car.t
-      const span = car.road.to - car.road.from
-      let x
-      let z
-      let yaw
-
-      if (car.road.axis === 'x') {
-        x = car.road.from + span * t
-        z = car.road.z + car.lane
-        yaw = car.direction > 0 ? Math.PI / 2 : -Math.PI / 2
-      } else {
-        x = car.road.x + car.lane
-        z = car.road.from + span * t
-        yaw = car.direction > 0 ? 0 : Math.PI
+      const currentPose = trafficPose(car)
+      const hazard = shouldYieldToPedestrian(car, currentPose, pedestrians)
+      car.brake = hazard
+        ? Math.min(1, (car.brake || 0) + dt * (car.driverTemperament === 'hurried' ? 2.8 : 4.2))
+        : Math.max(0, (car.brake || 0) - dt * 1.45)
+      if (hazard?.player && yieldPulse.current <= 0) {
+        yieldPulse.current = 5
+        store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'A driver'} yields as you step into the lane.`)
       }
+      const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
+      const speedFactor = Math.max(0, 1 - car.brake * 0.98)
+      car.t = (car.t + (car.speed * wave * speedFactor * dt) / Math.max(1, car.road.to - car.road.from)) % 1
+      const { x, z, yaw } = trafficPose(car)
 
       const y = terrainHeight(x, z) + 0.55
       const base = { x, y, z }
       setLocalPart(bodyRef.current, i, dummy, base, yaw, [0, 0, 0], [2.1, 0.72, 4.35])
       setLocalPart(cabinRef.current, i, dummy, base, yaw, [0, 0.72, -0.18], [1.56, 0.58, 1.82])
+      setLocalPart(driverRef.current, i, dummy, base, yaw, [-0.34, 1.1, 0.04], [0.22, 0.26, 0.22])
       setLocalPart(wheelRef.current, i * 4, dummy, base, yaw, [-1.14, -0.36, 1.55], [0.34, 0.42, 0.72])
       setLocalPart(wheelRef.current, i * 4 + 1, dummy, base, yaw, [1.14, -0.36, 1.55], [0.34, 0.42, 0.72])
       setLocalPart(wheelRef.current, i * 4 + 2, dummy, base, yaw, [-1.14, -0.36, -1.55], [0.34, 0.42, 0.72])
       setLocalPart(wheelRef.current, i * 4 + 3, dummy, base, yaw, [1.14, -0.36, -1.55], [0.34, 0.42, 0.72])
       setLocalPart(headlightRef.current, i * 2, dummy, base, yaw, [-0.55, 0.08, 2.22], [0.24, 0.14, 0.08])
       setLocalPart(headlightRef.current, i * 2 + 1, dummy, base, yaw, [0.55, 0.08, 2.22], [0.24, 0.14, 0.08])
-      setLocalPart(tailLightRef.current, i * 2, dummy, base, yaw, [-0.58, 0.05, -2.22], [0.22, 0.12, 0.08])
-      setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [0.58, 0.05, -2.22], [0.22, 0.12, 0.08])
+      setLocalPart(tailLightRef.current, i * 2, dummy, base, yaw, [-0.58, 0.05, -2.22], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
+      setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [0.58, 0.05, -2.22], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
+      setLocalPart(taxiSignRef.current, i, dummy, base, yaw, [0, 1.2, -0.12], car.kind === 'taxi' ? [0.9, 0.18, 0.45] : [0.001, 0.001, 0.001])
     }
 
     bodyRef.current.instanceMatrix.needsUpdate = true
     cabinRef.current.instanceMatrix.needsUpdate = true
+    driverRef.current.instanceMatrix.needsUpdate = true
     wheelRef.current.instanceMatrix.needsUpdate = true
     headlightRef.current.instanceMatrix.needsUpdate = true
     tailLightRef.current.instanceMatrix.needsUpdate = true
+    taxiSignRef.current.instanceMatrix.needsUpdate = true
   })
 
   return (
@@ -321,6 +379,10 @@ function Traffic({ cars }) {
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#101820" roughness={0.1} metalness={0.32} />
       </instancedMesh>
+      <instancedMesh ref={driverRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
+        <sphereGeometry args={[1, 10, 8]} />
+        <meshStandardMaterial color="#d4a17d" roughness={0.7} />
+      </instancedMesh>
       <instancedMesh ref={wheelRef} args={[undefined, undefined, cars.length * 4]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#08090b" roughness={0.56} metalness={0.18} />
@@ -332,6 +394,10 @@ function Traffic({ cars }) {
       <instancedMesh ref={tailLightRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#ff2b2b" emissive="#ff1d18" emissiveIntensity={1.2} roughness={0.24} />
+      </instancedMesh>
+      <instancedMesh ref={taxiSignRef} args={[undefined, undefined, cars.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#fff7b0" emissive="#ffd34d" emissiveIntensity={1.1} roughness={0.22} />
       </instancedMesh>
     </>
   )
@@ -376,6 +442,7 @@ function NPCs({ city }) {
     const store = useCityStore.getState()
     const time = store.timeMinutes
     let talks = 0
+    const player = new THREE.Vector3(store.player.x, store.player.y, store.player.z)
 
     if (!colorsReady.current) {
       agents.forEach((agent, i) => torsoRef.current.setColorAt(i, color.set(agent.color)))
@@ -387,6 +454,16 @@ function NPCs({ city }) {
       const agent = agents[i]
       const agentState = agent.update(dt, time, places)
       if (agentState === 'talking') talks += 1
+      const playerDistance = agent.pos.distanceTo(player)
+      if (!agent.mission && agentState !== 'walking' && agent.talkTimer <= 0 && playerDistance < 8.5) {
+        const desired = Math.atan2(store.player.x - agent.pos.x, store.player.z - agent.pos.z)
+        const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
+        agent.heading += turn * Math.min(1, dt * 3.2)
+        if (agent.glanceCooldown <= 0) {
+          agent.glanceCooldown = 7 + Math.random() * 8
+          if (playerDistance < 5.5) store.setPulse(`${agent.name} glances over as you pass through ${agent.placeName}.`)
+        }
+      }
 
       const walking = agentState === 'walking'
       const stride = Math.sin(state.clock.elapsedTime * (walking ? 7.6 : 1.2) * agent.pace + i * 0.83) * (walking ? 0.46 : 0.035)
@@ -413,7 +490,6 @@ function NPCs({ city }) {
         if (a.pos.distanceTo(b.pos) > 4.4) continue
         a.talk(5)
         b.talk(5)
-        const player = new THREE.Vector3(store.player.x, store.player.y, store.player.z)
         if (a.pos.distanceTo(player) < 45) store.setPulse(`${a.name} and ${b.name} are talking near ${a.placeName}.`)
         break
       }
@@ -422,6 +498,11 @@ function NPCs({ city }) {
     if (statsClock.current > 1.25) {
       statsClock.current = 0
       store.setStats({ talks })
+      store.setPedestrianSamples(agents.map(agent => ({
+        id: agent.id,
+        x: agent.pos.x,
+        z: agent.pos.z,
+      })))
     }
 
     torsoRef.current.instanceMatrix.needsUpdate = true
@@ -477,6 +558,13 @@ function NPCs({ city }) {
       requestBusy.current = true
       const store = useCityStore.getState()
       const work = places.get(best.workId)
+      const cityPlaces = [...places.values()].map(place => ({
+        id: place.id,
+        name: place.name,
+        kind: place.kind,
+        x: place.x,
+        z: place.z,
+      }))
       const distanceToWork = work ? Math.hypot(work.x - store.player.x, work.z - store.player.z) : 0
       const snapshot = best.snapshot(places)
       store.setInteraction({ status: 'thinking', request })
@@ -486,6 +574,8 @@ function NPCs({ city }) {
         distanceToWork,
         timeLabel: `Day ${store.day}, ${formatTime(store.timeMinutes)}`,
         playerDistrict: store.player.district,
+        player: { x: store.player.x, z: store.player.z },
+        places: cityPlaces,
       })
       const updatedSnapshot = best.snapshot(places)
 
@@ -496,7 +586,7 @@ function NPCs({ city }) {
         return
       }
 
-      const destination = destinationFromPlan(plan, best, places)
+      const destination = destinationFromPlan(plan, best, places, request)
       const destinationTarget = {
         x: destination.x,
         z: destination.z,

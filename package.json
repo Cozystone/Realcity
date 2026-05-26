@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:realcity": "node scripts/verify-realcity.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.116.4",

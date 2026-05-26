@@ -2,6 +2,49 @@ const provider = import.meta.env.VITE_LOCAL_LLM_PROVIDER || 'ollama'
 const endpoint = import.meta.env.VITE_LOCAL_LLM_ENDPOINT || '/ollama/api/generate'
 const model = import.meta.env.VITE_LOCAL_LLM_MODEL || 'dolphin3:latest'
 
+const PLACE_ALIASES = [
+  {
+    id: 'hanbit_hospital',
+    aliases: ['hospital', 'clinic', 'medical', 'emergency', '\ubcd1\uc6d0', '\uc751\uae09\uc2e4', '\uc9c4\ub8cc'],
+  },
+  {
+    id: 'river_cafe',
+    aliases: ['cafe', 'coffee', 'river cafe', '\uce74\ud398', '\ucee4\ud53c'],
+  },
+  {
+    id: 'mirae_school',
+    aliases: ['school', 'campus', 'class', '\ud559\uad50', '\ucea0\ud37c\uc2a4', '\uc218\uc5c5'],
+  },
+  {
+    id: 'hill_park',
+    aliases: ['park', 'garden', 'hill park', '\uacf5\uc6d0', '\uc815\uc6d0'],
+  },
+  {
+    id: 'central_station',
+    aliases: ['station', 'central station', 'train', 'metro', 'transit', '\uc5ed', '\uc815\uac70\uc7a5', '\uae30\ucc28', '\uc9c0\ud558\ucca0'],
+  },
+  {
+    id: 'market_lane',
+    aliases: ['market', 'shop', 'retail', 'market lane', '\uc2dc\uc7a5', '\ub9c8\ucf13', '\uc0c1\uc810'],
+  },
+  {
+    id: 'aster_exchange',
+    aliases: ['exchange', 'bank', 'finance', 'office tower', '\uc740\ud589', '\uae08\uc735', '\uac70\ub798\uc18c'],
+  },
+  {
+    id: 'neon_square',
+    aliases: ['square', 'plaza', 'neon square', 'nightlife', '\uad11\uc7a5', '\ud50c\ub77c\uc790'],
+  },
+  {
+    id: 'south_depot',
+    aliases: ['depot', 'warehouse', 'logistics', 'delivery hub', '\ucc3d\uace0', '\ubb3c\ub958', '\ubc30\uc1a1'],
+  },
+  {
+    id: 'maker_yard',
+    aliases: ['maker', 'workshop', 'robotics', 'yard', '\uacf5\ubc29', '\uc791\uc5c5\uc7a5', '\ub85c\ubcf4\ud2f1\uc2a4'],
+  },
+]
+
 export function llmStatus() {
   return `${provider}:${model}`
 }
@@ -85,13 +128,63 @@ function extractJson(text) {
   }
 }
 
-function fallbackActionPlan(agent, request, context = {}) {
-  const text = request.toLowerCase()
-  const wantsEscort = /데려|안내|같이|따라|직장|회사|office|work|guide|take|lead|escort/.test(text)
-  const wantsTaxi = /택시|taxi|차|car|ride|급|빨리|멀/.test(text)
-  const asksIdentity = /누구|이름|직업|who|name|job/.test(text)
+function includesToken(text, tokens) {
+  return tokens.some(token => token && text.includes(token.toLowerCase()))
+}
 
-  if (wantsEscort) {
+export function matchRequestedPlace(request, places = []) {
+  const text = String(request || '').toLowerCase()
+  const list = Array.isArray(places) ? places : []
+
+  for (const place of list) {
+    const candidates = [place.id, place.name, place.kind].filter(Boolean).map(value => String(value).toLowerCase())
+    if (includesToken(text, candidates)) return place
+  }
+
+  for (const group of PLACE_ALIASES) {
+    if (!includesToken(text, group.aliases)) continue
+    const byId = list.find(place => place.id === group.id)
+    if (byId) return byId
+  }
+
+  return null
+}
+
+function distanceTo(place, context) {
+  if (!place || typeof place.x !== 'number' || typeof place.z !== 'number') return 0
+  const player = context.player || {}
+  if (typeof player.x !== 'number' || typeof player.z !== 'number') return 0
+  return Math.hypot(place.x - player.x, place.z - player.z)
+}
+
+function fallbackActionPlan(agent, request, context = {}) {
+  const text = String(request || '').toLowerCase()
+  const targetPlace = matchRequestedPlace(request, context.places)
+  const wantsWork = /work|office|workplace|job|\uc9c1\uc7a5|\ud68c\uc0ac|\uadfc\ubb34|\uc77c\ud558\ub294/.test(text)
+  const wantsEscort = /guide|take|lead|escort|bring|drive|walk|go to|\ub370\ub824|\uc548\ub0b4|\uac19\uc774|\ub530\ub77c|\uac00\uc790/.test(text)
+  const wantsTaxi = /taxi|cab|car|ride|drive|\ud0dd\uc2dc|\ucc28|\uc2b9\ucc28|\ud0dc\uc6cc/.test(text)
+  const asksIdentity = /who|name|job|work|identity|\ub204\uad6c|\uc774\ub984|\uc9c1\uc5c5/.test(text)
+
+  if (targetPlace && (wantsEscort || wantsTaxi || /where|location|\uc5b4\ub514|\uc704\uce58/.test(text))) {
+    const tripDistance = distanceTo(targetPlace, context)
+    const mode = wantsTaxi || tripDistance > 420 ? 'taxi' : 'walk'
+    return {
+      intent: 'escort_to_place',
+      decision: 'accept',
+      mode,
+      destination: 'named_place',
+      targetPlaceId: targetPlace.id || '',
+      targetPlaceName: targetPlace.name || 'requested place',
+      speech: mode === 'taxi'
+        ? `I can take you to ${targetPlace.name}. Let's step to the curb, get a taxi, and ride there together.`
+        : `I can guide you to ${targetPlace.name}. Stay close and I will lead the way.`,
+      steps: mode === 'taxi'
+        ? ['Move to the nearest curb', 'Hail a taxi', `Ride with the player to ${targetPlace.name}`, 'Confirm arrival at the entrance']
+        : ['Confirm the destination', `Walk toward ${targetPlace.name}`, 'Stop at the entrance and brief the player'],
+    }
+  }
+
+  if (wantsWork || (wantsEscort && /work|office|job|\uc9c1\uc7a5|\ud68c\uc0ac/.test(text))) {
     const far = typeof context.distanceToWork === 'number' && context.distanceToWork > 260
     const mode = wantsTaxi || far ? 'taxi' : 'walk'
     return {
@@ -99,12 +192,14 @@ function fallbackActionPlan(agent, request, context = {}) {
       decision: 'accept',
       mode,
       destination: 'work',
+      targetPlaceId: agent.workId || '',
+      targetPlaceName: agent.workName || 'workplace',
       speech: mode === 'taxi'
-        ? '좋아요. 제 일터까지는 거리가 있어서 큰길로 나가 택시를 잡고 같이 이동하죠. 급한 상황이면 가는 동안 설명해주세요.'
-        : '좋아요. 제가 앞장설게요. 길이 복잡하니 제 뒤를 따라오세요.',
+        ? `Yes. My workplace is ${agent.workName || 'nearby'}, so I will call a taxi and take you there.`
+        : `Yes. My workplace is ${agent.workName || 'nearby'}; follow me and I will walk you there.`,
       steps: mode === 'taxi'
-        ? ['큰길 가장자리로 이동한다', '택시를 세운다', '함께 탑승한다', '직장 입구에서 내린다']
-        : ['플레이어가 따라오는지 확인한다', '보행 경로로 이동한다', '목적지 앞에서 멈춰 안내한다'],
+        ? ['Move to the nearest curb', 'Hail a taxi', 'Ride together to the workplace', 'Guide the player to the entrance']
+        : ['Check that the player is following', 'Walk along the route', 'Stop at the workplace entrance'],
     }
   }
 
@@ -114,8 +209,10 @@ function fallbackActionPlan(agent, request, context = {}) {
       decision: 'answer',
       mode: 'talk',
       destination: 'none',
-      speech: `저는 ${agent.name}, ${agent.job}입니다. 지금은 ${agent.placeName || '이 근처'}에서 ${agent.activity || '일정을 보내는 중'}이에요.`,
-      steps: ['짧게 자기소개한다'],
+      targetPlaceId: '',
+      targetPlaceName: '',
+      speech: `I am ${agent.name}, a ${agent.job}. I am ${agent.activity || 'moving through the city'} near ${agent.placeName || 'this block'}.`,
+      steps: ['Introduce identity and current activity'],
     }
   }
 
@@ -124,20 +221,47 @@ function fallbackActionPlan(agent, request, context = {}) {
     decision: 'clarify',
     mode: 'talk',
     destination: 'none',
-    speech: '가능한지 판단하려면 목적지를 조금 더 정확히 말해줘요. 같이 걸어갈지, 택시를 탈지도 상황을 보고 정할게요.',
-    steps: ['요청 목적지를 확인한다', '이동 방식이 필요한지 판단한다'],
+    targetPlaceId: '',
+    targetPlaceName: '',
+    speech: 'Tell me the exact place or person you need, and I will decide whether we should walk, take a taxi, or ask a better local guide.',
+    steps: ['Ask for a clearer destination', 'Choose walking or taxi after the destination is known'],
   }
 }
 
+function resolvePlanPlace(plan, request, places = []) {
+  if (!plan || plan.destination !== 'named_place') return null
+  const list = Array.isArray(places) ? places : []
+  const id = typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId.trim() : ''
+  if (id) {
+    const byId = list.find(place => place.id === id)
+    if (byId) return byId
+  }
+
+  const name = typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName.trim().toLowerCase() : ''
+  if (name) {
+    const byName = list.find(place => [place.name, place.kind, place.id].some(value => String(value || '').toLowerCase().includes(name)))
+    if (byName) return byName
+  }
+
+  return matchRequestedPlace(request, list)
+}
+
 export async function planLocalNPCAction(agent, request, context = {}) {
+  const places = Array.isArray(context.places) ? context.places : []
   const schema = {
     intent: 'escort_to_work | escort_to_place | smalltalk | clarify | decline',
     decision: 'accept | clarify | decline | answer',
     mode: 'walk | taxi | talk',
     destination: 'work | home | third | named_place | none',
+    targetPlaceId: 'known city place id or empty string',
+    targetPlaceName: 'known city place name or empty string',
     speech: 'Korean sentence spoken by the NPC',
     steps: ['short action step 1', 'short action step 2'],
   }
+
+  const knownPlaces = places
+    .map(place => `${place.id}: ${place.name} (${place.kind})`)
+    .join('\n')
 
   const system = [
     'You are the decision system for one autonomous NPC in a playable virtual city.',
@@ -147,7 +271,8 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     JSON.stringify(schema),
     'Use Korean for speech. Keep steps concrete and executable in a 3D city simulation.',
     'If the player asks to be taken to the NPC workplace, use destination "work".',
-    'If the trip is far or urgent, mode can be "taxi"; otherwise use "walk".',
+    'If the player names a known city place, use destination "named_place" and set targetPlaceId.',
+    'If the trip is far, urgent, or the player asks for a taxi, mode can be "taxi"; otherwise use "walk".',
     'Do not claim impossible actions. Clarify when the request is ambiguous.',
   ].join('\n')
 
@@ -160,6 +285,8 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     `Workplace: ${agent.workName || 'unknown'}`,
     `Distance to work: ${Math.round(context.distanceToWork || 0)} meters`,
     `City time: ${context.timeLabel || 'unknown'}`,
+    `Player district: ${context.playerDistrict || 'unknown'}`,
+    `Known city places:\n${knownPlaces || 'none'}`,
     `Player request: ${request}`,
   ].join('\n')
 
@@ -169,40 +296,51 @@ export async function planLocalNPCAction(agent, request, context = {}) {
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
-  }, { temperature: 0.42, maxTokens: 220 })
+  }, { temperature: 0.42, maxTokens: 240 })
 
   const parsed = extractJson(text)
   const safe = fallbackActionPlan(agent, request, context)
-  const plan = parsed || safe
+  const parsedPlace = resolvePlanPlace(parsed, request, places)
+  const safeAcceptsRoute = safe.decision === 'accept' && safe.destination !== 'none'
+  const parsedCanRoute = parsed && (
+    parsed.destination === 'work' ||
+    parsed.destination === 'home' ||
+    parsed.destination === 'third' ||
+    (parsed.destination === 'named_place' && parsedPlace)
+  )
+  const plan = parsedCanRoute || !safeAcceptsRoute ? (parsed || safe) : safe
+  const resolvedPlace = resolvePlanPlace(plan, request, places)
 
   return {
     intent: typeof plan.intent === 'string' ? plan.intent : safe.intent,
     decision: ['accept', 'clarify', 'decline', 'answer'].includes(plan.decision) ? plan.decision : safe.decision,
     mode: ['walk', 'taxi', 'talk'].includes(plan.mode) ? plan.mode : safe.mode,
     destination: ['work', 'home', 'third', 'named_place', 'none'].includes(plan.destination) ? plan.destination : safe.destination,
+    targetPlaceId: resolvedPlace?.id || (typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : safe.targetPlaceId || ''),
+    targetPlaceName: resolvedPlace?.name || (typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName : safe.targetPlaceName || ''),
     speech: typeof plan.speech === 'string' && plan.speech.trim() ? plan.speech.trim().slice(0, 220) : safe.speech,
     steps: Array.isArray(plan.steps) && plan.steps.length
       ? plan.steps.slice(0, 5).map(step => String(step).slice(0, 90))
       : safe.steps,
-    source: parsed ? 'local-llm' : 'fallback',
+    source: parsed ? (plan === safe ? 'local-llm+fallback-route' : 'local-llm') : 'fallback',
   }
 }
 
 export function fallbackLine(agent) {
   const place = agent.placeName || 'this block'
   const lines = {
-    banker: `오늘 ${place} 쪽 자금 흐름이 꽤 빠르게 움직이네요. 저는 회의 전에 시장 분위기를 보고 있어요.`,
-    doctor: '병원은 계속 바쁘지만 아직 버틸 만해요. 출퇴근 시간만 지나면 조금 숨이 트입니다.',
-    teacher: '수업 사이에 잠깐 이동 중이에요. 학생들이 오늘은 유난히 활발하네요.',
-    courier: '길은 막히지만 시간표는 기다려주지 않죠. 다음 배송지로 움직이는 중이에요.',
-    barista: '커피 주문이 잠깐 몰렸어요. 아침엔 모두가 조금씩 급해지니까요.',
-    engineer: '센서 데이터로 보면 이 구역 보행량이 갑자기 늘었어요. 작은 이벤트가 생긴 것 같네요.',
-    artist: '빛이 건물 유리에 닿는 각도가 좋아요. 오늘 전시 아이디어가 좀 떠오르네요.',
-    security: '주변 흐름만 잘 지키면 괜찮습니다. 사람이 많아질 때가 문제죠.',
-    student: '수업 끝나면 스터디로 갈 거예요. 지금은 잠깐 도시를 구경 중이에요.',
-    shopkeeper: '상권이 곧 붐빌 시간이에요. 사람들 발걸음만 봐도 오늘 분위기가 보여요.',
-    gardener: '바람이 조금 건조하네요. 공원 쪽 나무들에 오후 물주기가 필요하겠어요.',
-    retiree: '매일 같은 길을 걸어도 다른 이야기가 들려요. 그게 이 도시의 좋은 점이죠.',
+    banker: `The money flow around ${place} is moving fast today. I am watching the market before my next meeting.`,
+    doctor: 'The hospital is busy, but the shift is under control. A quiet ten minutes would help.',
+    teacher: 'I am between classes. The students have been unusually energetic today.',
+    courier: 'Traffic is rough, but delivery windows do not wait. I am heading to the next drop.',
+    barista: 'Coffee orders are stacking up. Morning makes everyone move a little faster.',
+    engineer: 'The sidewalk sensors show a strange flow pattern here. Something small changed in this block.',
+    artist: 'The light on the building glass is good right now. It is giving me an idea for tonight.',
+    security: 'Stay aware of the crowd and you will be fine. The station gets dense around this time.',
+    student: 'I am looking around before study hall. The city feels busier than usual today.',
+    shopkeeper: 'The market tells you the mood of the whole day if you watch people long enough.',
+    gardener: 'The wind is dry. The park trees will need water before the afternoon.',
+    retiree: 'I walk this route every day. Slow streets reveal more than fast ones.',
   }
-  return lines[agent.role] || `저는 지금 ${place} 근처를 지나고 있어요. 오늘 RealCity는 평소보다 조금 빠르게 움직이네요.`
+  return lines[agent.role] || `I am near ${place}. RealCity is moving a little faster than usual today.`
 }

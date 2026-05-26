@@ -16,7 +16,7 @@ const FREE_LOOK_YAW = 1.18
 const FREE_LOOK_PITCH_UP = 0.72
 const FREE_LOOK_PITCH_DOWN = -0.22
 const FREE_LOOK_IN_SPEED = 8.5
-const FREE_LOOK_RETURN_SPEED = 5.8
+const FREE_LOOK_RETURN_SPEED = 10.5
 
 function approach(current, target, speed, delta) {
   return current + (target - current) * (1 - Math.exp(-speed * delta))
@@ -40,14 +40,18 @@ function useKeys() {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
     }
     const up = (event) => {
-      if (isTypingTarget(event.target)) return
       keys.current[event.code] = false
+    }
+    const clear = () => {
+      keys.current = {}
     }
     window.addEventListener('keydown', down, { passive: false })
     window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
     }
   }, [])
 

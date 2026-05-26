@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
 
 function Minimap({ city, player }) {
@@ -215,7 +216,85 @@ function MissionPanel({ mission, ride }) {
   )
 }
 
+function placeColor(kind) {
+  return {
+    hospital: '#e85d75',
+    park: '#8ac926',
+    transit: '#55a7ff',
+    finance: '#8ecae6',
+    leisure: '#ff7ab6',
+    cafe: '#d98b5f',
+    retail: '#f4a261',
+    school: '#78c6a3',
+    workshop: '#9b7ede',
+    logistics: '#adb5bd',
+  }[kind] || '#f2c14e'
+}
+
+function FullCityMap({ city, player, onClose }) {
+  const heading = ((player.viewHeading ?? player.heading) * 180) / Math.PI
+
+  return (
+    <div className="full-map-overlay" onClick={onClose}>
+      <section className="full-map-panel" onClick={event => event.stopPropagation()}>
+        <div className="full-map-header">
+          <div>
+            <h2>RealCity Map</h2>
+            <p>{player.district}</p>
+          </div>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+        <svg
+          className="full-city-map"
+          viewBox={`${-CITY_HALF} ${-CITY_HALF} ${CITY_WORLD_SIZE} ${CITY_WORLD_SIZE}`}
+          role="img"
+          aria-label="Full city map with player position"
+        >
+          <rect x={-CITY_HALF} y={-CITY_HALF} width={CITY_WORLD_SIZE} height={CITY_WORLD_SIZE} />
+          <g className="full-map-grid">
+            {Array.from({ length: 13 }, (_, i) => {
+              const p = -900 + i * 150
+              return (
+                <g key={p}>
+                  <line x1={p} y1={-CITY_HALF} x2={p} y2={CITY_HALF} />
+                  <line x1={-CITY_HALF} y1={p} x2={CITY_HALF} y2={p} />
+                </g>
+              )
+            })}
+          </g>
+          <g className="full-map-roads">
+            {city.roads.map(road => (
+              <line
+                key={road.id}
+                className={road.main ? 'main' : 'local'}
+                x1={road.axis === 'x' ? road.from : road.x}
+                y1={road.axis === 'x' ? road.z : road.from}
+                x2={road.axis === 'x' ? road.to : road.x}
+                y2={road.axis === 'x' ? road.z : road.to}
+                strokeWidth={road.width}
+              />
+            ))}
+          </g>
+          <g className="full-map-landmarks">
+            {city.landmarks.map(place => (
+              <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
+                <circle r={place.kind === 'park' ? 25 : 17} fill={placeColor(place.kind)} />
+                <text x="24" y="7">{place.name}</text>
+              </g>
+            ))}
+          </g>
+          <g className="full-map-player" transform={`translate(${player.x} ${player.z}) rotate(${heading})`}>
+            <circle r="22" />
+            <path d="M 0 -38 L 16 18 L 0 8 L -16 18 Z" />
+          </g>
+        </svg>
+      </section>
+    </div>
+  )
+}
+
 export default function HUD({ city }) {
+  const [mapOpen, setMapOpen] = useState(false)
   const timeMinutes = useCityStore(state => state.timeMinutes)
   const day = useCityStore(state => state.day)
   const player = useCityStore(state => state.player)
@@ -243,9 +322,10 @@ export default function HUD({ city }) {
       <InteractionPanel interaction={interaction} />
       <MissionPanel mission={mission} ride={ride} />
 
-      <div className="map-shell">
+      <button type="button" className="map-shell" onClick={() => setMapOpen(true)} aria-label="Open full city map">
         <Minimap city={city} player={player} />
-      </div>
+      </button>
+      {mapOpen ? <FullCityMap city={city} player={player} onClose={() => setMapOpen(false)} /> : null}
 
       <div className="vitals">
         <div><span>HP</span><i style={{ width: '100%' }} /></div>
