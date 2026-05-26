@@ -166,17 +166,29 @@ function Character({ moving, running }) {
   return (
     <group position={[0, -0.9, 0]}>
       <mesh castShadow position={[0, 0.78, 0]}>
-        <boxGeometry args={[0.34, 0.18, 0.22]} />
+        <boxGeometry args={[0.38, 0.2, 0.25]} />
         <meshStandardMaterial color="#1c2541" roughness={0.8} />
       </mesh>
       <mesh castShadow position={[0, 1.2, 0]}>
-        <boxGeometry args={[0.42, 0.62, 0.24]} />
+        <capsuleGeometry args={[0.21, 0.52, 4, 10]} />
         <meshStandardMaterial color="#2f6f9f" roughness={0.72} />
+      </mesh>
+      <mesh castShadow position={[0, 1.27, 0.18]}>
+        <boxGeometry args={[0.28, 0.34, 0.035]} />
+        <meshStandardMaterial color="#e8f1f4" roughness={0.58} metalness={0.02} />
+      </mesh>
+      <mesh castShadow position={[0, 1.57, 0]}>
+        <capsuleGeometry args={[0.075, 0.12, 4, 8]} />
+        <meshStandardMaterial color="#d9a47f" roughness={0.66} />
       </mesh>
       <group ref={leftLeg} position={[-0.12, 0.74, 0]}>
         <mesh castShadow position={[0, -0.34, 0]}>
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
           <meshStandardMaterial color="#17203a" roughness={0.84} />
+        </mesh>
+        <mesh castShadow position={[0, -0.67, 0.045]}>
+          <boxGeometry args={[0.11, 0.06, 0.18]} />
+          <meshStandardMaterial color="#0d1118" roughness={0.85} />
         </mesh>
       </group>
       <group ref={rightLeg} position={[0.12, 0.74, 0]}>
@@ -184,10 +196,18 @@ function Character({ moving, running }) {
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
           <meshStandardMaterial color="#17203a" roughness={0.84} />
         </mesh>
+        <mesh castShadow position={[0, -0.67, 0.045]}>
+          <boxGeometry args={[0.11, 0.06, 0.18]} />
+          <meshStandardMaterial color="#0d1118" roughness={0.85} />
+        </mesh>
       </group>
       <group ref={leftArm} position={[-0.28, 1.34, 0]}>
         <mesh castShadow position={[0, -0.26, 0]}>
           <capsuleGeometry args={[0.055, 0.42, 4, 8]} />
+          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+        </mesh>
+        <mesh castShadow position={[0, -0.51, 0.015]}>
+          <sphereGeometry args={[0.065, 10, 8]} />
           <meshStandardMaterial color="#d9a47f" roughness={0.68} />
         </mesh>
       </group>
@@ -196,13 +216,45 @@ function Character({ moving, running }) {
           <capsuleGeometry args={[0.055, 0.42, 4, 8]} />
           <meshStandardMaterial color="#d9a47f" roughness={0.68} />
         </mesh>
+        <mesh castShadow position={[0, -0.51, 0.015]}>
+          <sphereGeometry args={[0.065, 10, 8]} />
+          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+        </mesh>
       </group>
       <mesh castShadow position={[0, 1.72, 0]}>
-        <sphereGeometry args={[0.2, 16, 12]} />
+        <sphereGeometry args={[0.205, 18, 14]} />
         <meshStandardMaterial color="#efc29a" roughness={0.64} />
+      </mesh>
+      <mesh castShadow position={[-0.088, 1.745, 0.188]}>
+        <sphereGeometry args={[0.022, 8, 6]} />
+        <meshStandardMaterial color="#05070a" roughness={0.34} />
+      </mesh>
+      <mesh castShadow position={[0.088, 1.745, 0.188]}>
+        <sphereGeometry args={[0.022, 8, 6]} />
+        <meshStandardMaterial color="#05070a" roughness={0.34} />
+      </mesh>
+      <mesh castShadow position={[0, 1.69, 0.215]}>
+        <boxGeometry args={[0.035, 0.055, 0.035]} />
+        <meshStandardMaterial color="#c98f70" roughness={0.68} />
+      </mesh>
+      <mesh castShadow position={[0, 1.625, 0.202]}>
+        <boxGeometry args={[0.09, 0.012, 0.014]} />
+        <meshStandardMaterial color="#78323a" roughness={0.7} />
+      </mesh>
+      <mesh castShadow position={[-0.215, 1.705, 0]}>
+        <sphereGeometry args={[0.035, 8, 6]} />
+        <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+      </mesh>
+      <mesh castShadow position={[0.215, 1.705, 0]}>
+        <sphereGeometry args={[0.035, 8, 6]} />
+        <meshStandardMaterial color="#d9a47f" roughness={0.68} />
       </mesh>
       <mesh castShadow position={[0, 1.88, -0.02]}>
         <sphereGeometry args={[0.205, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55]} />
+        <meshStandardMaterial color="#17100b" roughness={0.92} />
+      </mesh>
+      <mesh castShadow position={[0, 1.72, -0.145]}>
+        <boxGeometry args={[0.34, 0.22, 0.08]} />
         <meshStandardMaterial color="#17100b" roughness={0.92} />
       </mesh>
     </group>

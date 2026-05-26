@@ -314,6 +314,23 @@ function setLocalPart(mesh, index, dummy, base, yaw, local, scale, rotX = 0, rot
   mesh.setMatrixAt(index, dummy.matrix)
 }
 
+function hashValue(value) {
+  let hash = 0
+  const text = String(value || '')
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0
+  return hash
+}
+
+function skinTone(agent) {
+  const tones = ['#f0c49b', '#d8a17d', '#b98262', '#efd2b3', '#9f6a4f']
+  return tones[hashValue(agent.id) % tones.length]
+}
+
+function hairTone(agent) {
+  const tones = ['#17100b', '#2b1b12', '#4b3527', '#111318', '#6b5949']
+  return tones[hashValue(`${agent.id}_hair`) % tones.length]
+}
+
 function trafficPose(car, tValue = car.t) {
   const t = car.direction > 0 ? tValue : 1 - tValue
   const span = car.road.to - car.road.from
@@ -470,6 +487,11 @@ function NPCs({ city }) {
   const legRef = useRef()
   const armRef = useRef()
   const hairRef = useRef()
+  const eyeRef = useRef()
+  const noseRef = useRef()
+  const mouthRef = useRef()
+  const shoeRef = useRef()
+  const chestRef = useRef()
   const bagRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
@@ -484,7 +506,7 @@ function NPCs({ city }) {
   }, [agents.length, city.cars.length, city.tiles.length])
 
   useFrame((state, delta) => {
-    if (!torsoRef.current || !headRef.current || !legRef.current || !armRef.current || !hairRef.current || !bagRef.current) return
+    if (!torsoRef.current || !headRef.current || !legRef.current || !armRef.current || !hairRef.current || !eyeRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !bagRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -492,8 +514,19 @@ function NPCs({ city }) {
     const player = new THREE.Vector3(store.player.x, store.player.y, store.player.z)
 
     if (!colorsReady.current) {
-      agents.forEach((agent, i) => torsoRef.current.setColorAt(i, color.set(agent.color)))
+      agents.forEach((agent, i) => {
+        torsoRef.current.setColorAt(i, color.set(agent.color))
+        chestRef.current.setColorAt(i, color.set(agent.role === 'doctor' ? '#e8edf0' : agent.role === 'security' ? '#202833' : '#d9e2ea'))
+        headRef.current.setColorAt(i, color.set(skinTone(agent)))
+        hairRef.current.setColorAt(i, color.set(hairTone(agent)))
+        armRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
+        armRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+      })
       if (torsoRef.current.instanceColor) torsoRef.current.instanceColor.needsUpdate = true
+      if (chestRef.current.instanceColor) chestRef.current.instanceColor.needsUpdate = true
+      if (headRef.current.instanceColor) headRef.current.instanceColor.needsUpdate = true
+      if (hairRef.current.instanceColor) hairRef.current.instanceColor.needsUpdate = true
+      if (armRef.current.instanceColor) armRef.current.instanceColor.needsUpdate = true
       colorsReady.current = true
     }
 
@@ -518,11 +551,18 @@ function NPCs({ city }) {
       setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, 0.04, 0], [0.22, walking ? 0.49 : 0.45, 0.17])
       setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, 0.7, 0.025], [0.235, 0.235, 0.235])
       setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, 0.86, -0.02], [0.245, 0.105, 0.235])
+      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.075, 0.73, 0.245], [0.022, 0.022, 0.012])
+      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.075, 0.73, 0.245], [0.022, 0.022, 0.012])
+      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.675, 0.258], [0.025, 0.042, 0.026])
+      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, 0.61, 0.248], [0.07, 0.011, 0.012])
+      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, 0.15, 0.177], [0.145, 0.18, 0.018])
       setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.19, 0.08, -0.13], [0.1, 0.22, 0.055])
       setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.09, -0.43, 0], [0.055, 0.38, 0.055], stride)
       setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.09, -0.43, 0], [0.055, 0.38, 0.055], -stride)
       setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.245, 0.13, 0.02], [0.047, 0.32, 0.047], -stride * 0.58)
       setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.245, 0.13, 0.02], [0.047, 0.32, 0.047], stride * 0.58)
+      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.09, -0.84, 0.05], [0.065, 0.045, 0.105])
+      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.09, -0.84, 0.05], [0.065, 0.045, 0.105])
     }
 
     socialClock.current += dt
@@ -555,9 +595,14 @@ function NPCs({ city }) {
     torsoRef.current.instanceMatrix.needsUpdate = true
     headRef.current.instanceMatrix.needsUpdate = true
     hairRef.current.instanceMatrix.needsUpdate = true
+    eyeRef.current.instanceMatrix.needsUpdate = true
+    noseRef.current.instanceMatrix.needsUpdate = true
+    mouthRef.current.instanceMatrix.needsUpdate = true
+    chestRef.current.instanceMatrix.needsUpdate = true
     bagRef.current.instanceMatrix.needsUpdate = true
     legRef.current.instanceMatrix.needsUpdate = true
     armRef.current.instanceMatrix.needsUpdate = true
+    shoeRef.current.instanceMatrix.needsUpdate = true
   })
 
   useEffect(() => {
@@ -681,13 +726,29 @@ function NPCs({ city }) {
         <capsuleGeometry args={[1, 2, 4, 8]} />
         <meshStandardMaterial color="#ffffff" vertexColors roughness={0.82} metalness={0.02} />
       </instancedMesh>
+      <instancedMesh ref={chestRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.64} metalness={0.04} />
+      </instancedMesh>
       <instancedMesh ref={headRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 10, 8]} />
-        <meshStandardMaterial color="#efc29a" roughness={0.72} />
+        <meshStandardMaterial color="#efc29a" vertexColors roughness={0.72} />
       </instancedMesh>
       <instancedMesh ref={hairRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.56]} />
-        <meshStandardMaterial color="#19130f" roughness={0.9} />
+        <meshStandardMaterial color="#19130f" vertexColors roughness={0.9} />
+      </instancedMesh>
+      <instancedMesh ref={eyeRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshStandardMaterial color="#05070a" roughness={0.38} />
+      </instancedMesh>
+      <instancedMesh ref={noseRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#b98262" roughness={0.72} />
+      </instancedMesh>
+      <instancedMesh ref={mouthRef} args={[undefined, undefined, agents.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#6e2f2f" roughness={0.7} />
       </instancedMesh>
       <instancedMesh ref={bagRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -699,7 +760,11 @@ function NPCs({ city }) {
       </instancedMesh>
       <instancedMesh ref={armRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <capsuleGeometry args={[1, 2, 4, 7]} />
-        <meshStandardMaterial color="#d7a17d" roughness={0.7} />
+        <meshStandardMaterial color="#d7a17d" vertexColors roughness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={shoeRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#10151c" roughness={0.82} />
       </instancedMesh>
     </>
   )

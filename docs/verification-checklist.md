@@ -32,6 +32,9 @@ audit has a clear finish line.
 - NPC identity: sample at least 10 agents and confirm each has a distinct name,
   gender, age, job, personality, current activity, home/work/third-place loop,
   and visible movement state.
+- Human model readability: confirm player and NPCs have visible front-facing
+  face cues, hair/back cues, clothing detail, hands/feet, and readable walking
+  direction at street-camera distance.
 - NPC social life: observe NPC-to-NPC talks near social places and confirm the
   city pulse reports nearby conversations.
 - Phone social layer: send messages to several contacts, place at least one

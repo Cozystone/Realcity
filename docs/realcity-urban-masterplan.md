@@ -253,6 +253,35 @@ Activation model:
 
 This keeps the city feeling alive without trying to run a full LLM for every citizen every frame.
 
+## Human Rendering Strategy
+
+The visual target is not abstract pedestrians. People should read as citizens
+with a front, back, body direction, clothing, and recognizable social presence.
+
+Current rules:
+
+1. The player avatar has a modeled face with eyes, nose, mouth, ears, hair cap,
+   back hair mass, chest panel, hands, and shoes so movement direction is clear.
+2. NPCs remain instanced for performance, but include face parts, chest panels,
+   shoes, skin-tone variation, hair-tone variation, and bags.
+3. Face parts are placed on the local forward side of the head so glances and
+   turns have a visible direction.
+4. Clothing color still reflects NPC role/personality, while small front details
+   make the body orientation readable from street-camera distance.
+
+Long-term final version:
+
+- Replace hero pedestrians and nearby interactable NPCs with optimized GLB/VRM
+  character assets, with LOD fallback to the current instanced human system.
+- Add facial expressions, blinking, gaze targets, head turns, hand gestures,
+  phone-holding, sitting, leaning, and taxi boarding animations.
+- Use role-aware outfit sets: hospital staff, students, transit staff, couriers,
+  office workers, market vendors, security, tourists, and residents.
+- Add skeletal animation blending for idle, walk, jog, talk, wave, point, enter
+  vehicle, sit, use phone, open door, and wait for elevator.
+- Keep collision simple with capsule bodies even when visual characters are
+  detailed.
+
 ## RealPhone Layer
 
 The phone is the persistent diegetic UI for joining the city socially. It should
