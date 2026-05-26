@@ -25,6 +25,9 @@ audit has a clear finish line.
   for pedestrian/traffic/address rules.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
+- Building variety: the city data must expose many massing profiles, multiple
+  house profiles, multiple house roof types, and visible house accessories such
+  as porches, garages, chimneys, and wings.
 - Random avatar task: the harness chooses a random destination task, asks a
   nearby NPC to take the player there, waits for an escort mission, and verifies
   meaningful player travel plus arrival/completion text.

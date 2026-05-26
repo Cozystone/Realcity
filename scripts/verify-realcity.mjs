@@ -180,6 +180,9 @@ async function inspectCityNorms(page) {
   const norms = await page.evaluate(() => {
     const city = window.__REALCITY_CITY__
     if (!city) return null
+    const formKeys = buildings => [...new Set(buildings.map(building => building.form?.profile).filter(Boolean))]
+    const roofKeys = buildings => [...new Set(buildings.map(building => building.form?.roof).filter(Boolean))]
+    const houses = city.buildings.filter(building => building.type === 'house')
     const treeRoadConflicts = city.trees.filter(tree => city.roads.some(road => {
       if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
       return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
@@ -190,6 +193,10 @@ async function inspectCityNorms(page) {
       landmarkAddresses: city.landmarks.filter(place => place.address && place.roadName).length,
       buildingAddresses: city.buildings.filter(building => building.address && building.roadName).length,
       addressBookEntries: (city.addressBook || []).filter(place => place.address && place.roadName && typeof place.x === 'number' && typeof place.z === 'number').length,
+      buildingProfiles: formKeys(city.buildings),
+      houseProfiles: formKeys(houses),
+      houseRoofs: roofKeys(houses),
+      houseAccessoryCount: houses.filter(building => building.form?.porch || building.form?.garage || building.form?.chimney || building.form?.wing).length,
       treeRoadConflicts: treeRoadConflicts.length,
       socialNorms: city.socialNorms,
     }
@@ -199,6 +206,10 @@ async function inspectCityNorms(page) {
   assert(norms.landmarkAddresses >= 9, 'Landmarks did not receive road-name addresses')
   assert(norms.buildingAddresses > 100, 'Buildings did not receive road-name addresses')
   assert(norms.addressBookEntries > 100, 'Address book did not expose routable street addresses')
+  assert(norms.buildingProfiles.length >= 12, `Building massing profiles are not diverse enough: ${norms.buildingProfiles.join(', ')}`)
+  assert(norms.houseProfiles.length >= 4, `House profiles are not diverse enough: ${norms.houseProfiles.join(', ')}`)
+  assert(norms.houseRoofs.length >= 3, `House roof styles are not diverse enough: ${norms.houseRoofs.join(', ')}`)
+  assert(norms.houseAccessoryCount >= 20, 'Houses did not receive enough porches, garages, chimneys, or wings')
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
   assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem, 'Social norm metadata is incomplete')
   return norms

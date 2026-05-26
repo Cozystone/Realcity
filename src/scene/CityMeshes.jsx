@@ -355,44 +355,341 @@ function makeWindowTexture(type) {
   return texture
 }
 
+function makeGableRoofGeometry() {
+  const vertices = [
+    -0.5, 0, -0.5, 0.5, 0, -0.5, 0, 1, -0.5,
+    0.5, 0, 0.5, -0.5, 0, 0.5, 0, 1, 0.5,
+    -0.5, 0, -0.5, -0.5, 0, 0.5, 0, 1, 0.5,
+    -0.5, 0, -0.5, 0, 1, 0.5, 0, 1, -0.5,
+    0.5, 0, -0.5, 0, 1, -0.5, 0, 1, 0.5,
+    0.5, 0, -0.5, 0, 1, 0.5, 0.5, 0, 0.5,
+    -0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
+    -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5,
+  ]
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function worldOffset(building, lx = 0, lz = 0) {
+  const cos = Math.cos(building.rot || 0)
+  const sin = Math.sin(building.rot || 0)
+  return {
+    x: building.x + lx * cos + lz * sin,
+    z: building.z - lx * sin + lz * cos,
+  }
+}
+
+function bodyColor(type) {
+  return {
+    skyscraper: '#a8c3d2',
+    office: '#c1c7c2',
+    apartment: '#c9ad8b',
+    house: '#c18a6d',
+  }[type] || '#b9c0c2'
+}
+
+function roofColor(building) {
+  if (building.type === 'house') {
+    return {
+      brick: '#6f2f27',
+      stucco: '#7c5041',
+      timber: '#4b3b31',
+      painted: '#2f4654',
+    }[building.form?.facade] || '#5b3e35'
+  }
+  if (building.type === 'skyscraper') return '#1f3542'
+  if (building.type === 'office') return '#56646a'
+  return '#6b6258'
+}
+
+function partFromBuilding(building, { lx = 0, lz = 0, yOffset = 0, sx = building.w, sy = building.h, sz = building.d, rx = 0, rz = 0, color = bodyColor(building.type), textureType = building.type }) {
+  const position = worldOffset(building, lx, lz)
+  return {
+    building,
+    textureType,
+    localX: lx,
+    localZ: lz,
+    x: position.x,
+    z: position.z,
+    y: building.y + yOffset + sy / 2,
+    sx,
+    sy,
+    sz,
+    rot: building.rot || 0,
+    rx,
+    rz,
+    color,
+  }
+}
+
+function roofPartFromBuilding(building, { lx = 0, lz = 0, baseY = building.h, sx = building.w, sy = 1, sz = building.d, rx = 0, rz = 0, centered = false, color = roofColor(building) }) {
+  const position = worldOffset(building, lx, lz)
+  return {
+    building,
+    localX: lx,
+    localZ: lz,
+    x: position.x,
+    z: position.z,
+    y: building.y + baseY + (centered ? sy / 2 : 0),
+    sx,
+    sy,
+    sz,
+    rot: building.rot || 0,
+    rx,
+    rz,
+    color,
+  }
+}
+
+function mainMassFor(building) {
+  const form = building.form || {}
+  const profile = form.profile || 'slab'
+  if (building.type === 'house') {
+    const sy = Math.max(3.2, building.h * (form.bodyRatio || 0.72))
+    const row = profile === 'rowhouse'
+    return partFromBuilding(building, {
+      sx: building.w * (row ? 1.08 : 0.92),
+      sy,
+      sz: building.d * (row ? 0.82 : 0.9),
+      color: bodyColor(building.type),
+    })
+  }
+
+  if (building.type === 'skyscraper') {
+    const podiumH = Math.min(13, building.h * 0.16)
+    const narrow = profile === 'needle' ? 0.58 : profile === 'setback' ? 0.68 : 0.76
+    return partFromBuilding(building, {
+      lx: profile === 'twin_core' ? -building.w * 0.16 : 0,
+      yOffset: podiumH * 0.72,
+      sx: building.w * narrow,
+      sy: Math.max(22, building.h - podiumH * 0.72),
+      sz: building.d * (profile === 'needle' ? 0.6 : 0.76),
+    })
+  }
+
+  if (building.type === 'office') {
+    const podiumH = Math.min(8, building.h * 0.24)
+    const compact = profile === 'podium_tower' || profile === 'offset_core'
+    return partFromBuilding(building, {
+      lx: profile === 'offset_core' ? building.w * 0.08 : 0,
+      lz: profile === 'atrium' ? -building.d * 0.08 : 0,
+      yOffset: compact ? podiumH * 0.85 : 0,
+      sx: building.w * (compact ? 0.72 : 0.92),
+      sy: compact ? building.h - podiumH * 0.85 : building.h,
+      sz: building.d * (compact ? 0.78 : 0.9),
+    })
+  }
+
+  const bar = profile === 'bar' || profile === 'balcony_stack'
+  return partFromBuilding(building, {
+    sx: building.w * (bar ? 1.05 : 0.82),
+    sy: building.h * (profile === 'terraced' ? 0.88 : 1),
+    sz: building.d * (bar ? 0.62 : 0.94),
+  })
+}
+
+function createBuildingRenderData(buildings) {
+  const bodies = { skyscraper: [], office: [], apartment: [], house: [] }
+  const podiums = []
+  const wings = []
+  const flatRoofs = []
+  const gableRoofs = []
+  const hipRoofs = []
+  const shedRoofs = []
+  const crowns = []
+  const balconies = []
+  const porches = []
+  const garages = []
+  const chimneys = []
+  const antennas = []
+
+  for (const building of buildings) {
+    const form = building.form || {}
+    const body = mainMassFor(building)
+    bodies[building.type]?.push(body)
+
+    if (building.type !== 'house' && form.podium) {
+      const podiumH = Math.min(building.type === 'skyscraper' ? 13 : 8, building.h * 0.22)
+      podiums.push(partFromBuilding(building, {
+        sx: building.w * 1.08,
+        sy: podiumH,
+        sz: building.d * 1.05,
+        color: building.type === 'apartment' ? '#b99778' : '#7d898a',
+      }))
+    }
+
+    if (form.wing) {
+      const side = building.tint > 0.5 ? 1 : -1
+      if (building.type === 'house') {
+        wings.push(partFromBuilding(building, {
+          lx: side * building.w * 0.26,
+          lz: building.d * 0.08,
+          sx: building.w * 0.42,
+          sy: body.sy * 0.76,
+          sz: building.d * 0.52,
+          color: '#b8795e',
+        }))
+      } else {
+        wings.push(partFromBuilding(building, {
+          lx: side * building.w * 0.28,
+          lz: building.d * 0.05,
+          sx: building.w * 0.42,
+          sy: Math.max(6, body.sy * 0.72),
+          sz: building.d * (building.type === 'apartment' ? 0.88 : 0.62),
+          color: building.type === 'office' ? '#aeb9b8' : '#b89b7b',
+        }))
+      }
+    }
+
+    const topY = body.y - building.y + body.sy / 2
+    if (building.type === 'house') {
+      const roofH = 1.15 + building.tint * 1.35
+      const roofW = body.sx * 1.16
+      const roofD = body.sz * 1.16
+      if (form.roof === 'hip') {
+        hipRoofs.push(roofPartFromBuilding(building, { baseY: topY, sx: roofW / 2, sy: roofH, sz: roofD / 2, centered: true }))
+      } else if (form.roof === 'flat') {
+        flatRoofs.push(roofPartFromBuilding(building, { baseY: topY, sx: roofW, sy: 0.38, sz: roofD, centered: true }))
+      } else if (form.roof === 'shed') {
+        shedRoofs.push(roofPartFromBuilding(building, { baseY: topY + 0.12, sx: roofW, sy: 0.42, sz: roofD, rx: -0.12, centered: true }))
+      } else {
+        gableRoofs.push(roofPartFromBuilding(building, { baseY: topY, sx: roofW, sy: roofH, sz: roofD }))
+      }
+
+      if (form.porch) {
+        porches.push(partFromBuilding(building, {
+          lz: -body.sz * 0.58,
+          sx: Math.min(5.2, body.sx * 0.54),
+          sy: 0.18,
+          sz: 2.4,
+          yOffset: 2.25,
+          color: '#5d4a3a',
+        }))
+      }
+      if (form.garage) {
+        garages.push(partFromBuilding(building, {
+          lx: (building.tint > 0.5 ? 1 : -1) * body.sx * 0.42,
+          lz: -body.sz * 0.2,
+          sx: body.sx * 0.36,
+          sy: Math.min(2.5, body.sy * 0.62),
+          sz: body.sz * 0.46,
+          color: '#8c8175',
+        }))
+      }
+      if (form.chimney) {
+        chimneys.push(roofPartFromBuilding(building, {
+          lx: body.sx * 0.26,
+          lz: -body.sz * 0.12,
+          baseY: topY + roofH * 0.48,
+          sx: 0.42,
+          sy: 1.55,
+          sz: 0.42,
+          centered: true,
+          color: '#4f342b',
+        }))
+      }
+    } else {
+      flatRoofs.push(roofPartFromBuilding(building, {
+        lx: body.localX,
+        lz: body.localZ,
+        baseY: topY,
+        sx: body.sx * 1.02,
+        sy: 0.5,
+        sz: body.sz * 1.02,
+        centered: true,
+      }))
+
+      if (building.type === 'skyscraper' || form.roof === 'crown') {
+        crowns.push(roofPartFromBuilding(building, {
+          lx: body.localX,
+          lz: body.localZ,
+          baseY: topY + 0.3,
+          sx: body.sx * 0.54,
+          sy: Math.max(1.2, building.h * 0.035),
+          sz: body.sz * 0.54,
+          centered: true,
+          color: '#2c4654',
+        }))
+      }
+      if (form.roof === 'antenna') {
+        antennas.push(roofPartFromBuilding(building, {
+          lx: body.localX,
+          lz: body.localZ,
+          baseY: topY + 1.4,
+          sx: 0.12,
+          sy: Math.max(6, building.h * 0.12),
+          sz: 0.12,
+          centered: true,
+          color: '#c9d2d7',
+        }))
+      }
+      if (building.type === 'apartment' && form.balconies) {
+        const floors = Math.min(8, Math.max(3, Math.floor(building.h / 4.2)))
+        for (let floor = 1; floor <= floors; floor += 1) {
+          balconies.push(partFromBuilding(building, {
+            lz: -body.sz * 0.53,
+            yOffset: Math.min(building.h - 1.2, floor * (building.h / (floors + 1))),
+            sx: body.sx * 0.72,
+            sy: 0.14,
+            sz: 0.72,
+            color: '#d7d0c4',
+          }))
+        }
+      }
+    }
+  }
+
+  return { bodies, podiums, wings, flatRoofs, gableRoofs, hipRoofs, shedRoofs, crowns, balconies, porches, garages, chimneys, antennas }
+}
+
+function applyPart(mesh, index, part, dummy, color) {
+  dummy.position.set(part.x, part.y, part.z)
+  dummy.rotation.set(part.rx || 0, part.rot || 0, part.rz || 0)
+  dummy.scale.set(part.sx, part.sy, part.sz)
+  dummy.updateMatrix()
+  mesh.setMatrixAt(index, dummy.matrix)
+  if (color) mesh.setColorAt(index, color.set(part.color).lerp(new THREE.Color('#44525c'), (part.building?.tint || 0) * 0.08))
+}
+
 function Buildings({ buildings }) {
   const refs = useRef({})
+  const detailRefs = useRef({})
   const textures = useMemo(() => ({
     skyscraper: makeWindowTexture('skyscraper'),
     office: makeWindowTexture('office'),
     apartment: makeWindowTexture('apartment'),
     house: makeWindowTexture('house'),
   }), [])
-  const grouped = useMemo(() => {
-    const groups = { skyscraper: [], office: [], apartment: [], house: [] }
-    for (const building of buildings) groups[building.type]?.push(building)
-    return groups
-  }, [buildings])
+  const gableGeometry = useMemo(() => makeGableRoofGeometry(), [])
+  const renderData = useMemo(() => createBuildingRenderData(buildings), [buildings])
 
   useLayoutEffect(() => {
     const dummy = new THREE.Object3D()
     const color = new THREE.Color()
-    for (const [type, items] of Object.entries(grouped)) {
+    for (const [type, items] of Object.entries(renderData.bodies)) {
       const mesh = refs.current[type]
       if (!mesh) continue
       for (let i = 0; i < items.length; i += 1) {
-        const building = items[i]
-        dummy.position.set(building.x, building.y + building.h / 2, building.z)
-        dummy.rotation.set(0, building.rot, 0)
-        dummy.scale.set(building.w, building.h, building.d)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(i, dummy.matrix)
-        const base = type === 'skyscraper' ? '#a8c3d2' : type === 'office' ? '#c1c7c2' : type === 'apartment' ? '#c9ad8b' : '#c18a6d'
-        mesh.setColorAt(i, color.set(base).lerp(new THREE.Color('#44525c'), building.tint * 0.14))
+        applyPart(mesh, i, items[i], dummy, color)
       }
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     }
-  }, [grouped])
+    for (const [key, items] of Object.entries(renderData)) {
+      if (key === 'bodies') continue
+      const mesh = detailRefs.current[key]
+      if (!mesh) continue
+      for (let i = 0; i < items.length; i += 1) applyPart(mesh, i, items[i], dummy, color)
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
+  }, [renderData])
 
   return (
     <>
-      {Object.entries(grouped).map(([type, items]) => {
+      {Object.entries(renderData.bodies).map(([type, items]) => {
         if (!items.length) return null
         const isGlass = type === 'skyscraper'
         return (
@@ -409,13 +706,84 @@ function Buildings({ buildings }) {
               vertexColors
               roughness={isGlass ? 0.22 : type === 'house' ? 0.76 : 0.52}
               metalness={isGlass ? 0.42 : type === 'office' ? 0.16 : 0.04}
-              emissive={isGlass ? '#1c3342' : type === 'apartment' ? '#2b2118' : type === 'house' ? '#28170f' : '#202728'}
-              emissiveIntensity={isGlass ? 0.28 : 0.18}
+              emissive={isGlass ? '#1c3342' : type === 'apartment' ? '#2f241b' : type === 'house' ? '#4a2b1e' : '#202728'}
+              emissiveIntensity={isGlass ? 0.28 : type === 'house' ? 0.3 : 0.18}
               envMapIntensity={isGlass ? 1.25 : 0.45}
             />
           </instancedMesh>
         )
       })}
+      {renderData.podiums.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.podiums = node }} args={[undefined, undefined, renderData.podiums.length]} castShadow receiveShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.58} metalness={0.08} emissive="#151515" emissiveIntensity={0.07} />
+        </instancedMesh>
+      ) : null}
+      {renderData.wings.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.wings = node }} args={[undefined, undefined, renderData.wings.length]} castShadow receiveShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.62} metalness={0.06} emissive="#211611" emissiveIntensity={0.12} />
+        </instancedMesh>
+      ) : null}
+      {renderData.flatRoofs.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.flatRoofs = node }} args={[undefined, undefined, renderData.flatRoofs.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.5} metalness={0.12} emissive="#181818" emissiveIntensity={0.08} />
+        </instancedMesh>
+      ) : null}
+      {renderData.gableRoofs.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.gableRoofs = node }} args={[gableGeometry, undefined, renderData.gableRoofs.length]} castShadow frustumCulled={false}>
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.74} metalness={0.04} emissive="#321d17" emissiveIntensity={0.16} />
+        </instancedMesh>
+      ) : null}
+      {renderData.hipRoofs.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.hipRoofs = node }} args={[undefined, undefined, renderData.hipRoofs.length]} castShadow frustumCulled={false}>
+          <coneGeometry args={[1, 1, 4]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.74} metalness={0.04} emissive="#321d17" emissiveIntensity={0.16} flatShading />
+        </instancedMesh>
+      ) : null}
+      {renderData.shedRoofs.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.shedRoofs = node }} args={[undefined, undefined, renderData.shedRoofs.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.68} metalness={0.05} emissive="#321d17" emissiveIntensity={0.16} />
+        </instancedMesh>
+      ) : null}
+      {renderData.crowns.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.crowns = node }} args={[undefined, undefined, renderData.crowns.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.22} metalness={0.32} emissive="#122a34" emissiveIntensity={0.24} />
+        </instancedMesh>
+      ) : null}
+      {renderData.balconies.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.balconies = node }} args={[undefined, undefined, renderData.balconies.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.46} metalness={0.14} />
+        </instancedMesh>
+      ) : null}
+      {renderData.porches.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.porches = node }} args={[undefined, undefined, renderData.porches.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.78} metalness={0.04} emissive="#201712" emissiveIntensity={0.12} />
+        </instancedMesh>
+      ) : null}
+      {renderData.garages.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.garages = node }} args={[undefined, undefined, renderData.garages.length]} castShadow receiveShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.66} metalness={0.1} emissive="#171717" emissiveIntensity={0.1} />
+        </instancedMesh>
+      ) : null}
+      {renderData.chimneys.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.chimneys = node }} args={[undefined, undefined, renderData.chimneys.length]} castShadow frustumCulled={false}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.9} metalness={0.02} emissive="#1c100c" emissiveIntensity={0.14} />
+        </instancedMesh>
+      ) : null}
+      {renderData.antennas.length ? (
+        <instancedMesh ref={node => { if (node) detailRefs.current.antennas = node }} args={[undefined, undefined, renderData.antennas.length]} frustumCulled={false}>
+          <cylinderGeometry args={[1, 1, 1, 6]} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.35} metalness={0.7} />
+        </instancedMesh>
+      ) : null}
     </>
   )
 }

@@ -247,12 +247,64 @@ function createBuildings(rng, landmarks, roads) {
           district: district.name,
           rot: rng() > 0.78 ? (rng() - 0.5) * 0.35 : 0,
           tint: rng(),
+          form: createBuildingForm(type, rng, district),
         })
       }
     }
   }
 
   return buildings
+}
+
+function createBuildingForm(type, rng, district) {
+  if (type === 'house') {
+    const profile = pick(rng, ['cottage', 'duplex', 'rowhouse', 'villa', 'courtyard'])
+    return {
+      profile,
+      roof: pick(rng, profile === 'rowhouse' ? ['flat', 'gable', 'shed'] : ['gable', 'hip', 'shed']),
+      bodyRatio: 0.66 + rng() * 0.12,
+      wing: profile === 'villa' || profile === 'courtyard' || rng() > 0.58,
+      porch: rng() > 0.28,
+      garage: rng() > 0.62,
+      chimney: rng() > 0.36,
+      facade: pick(rng, ['brick', 'stucco', 'timber', 'painted']),
+    }
+  }
+
+  if (type === 'apartment') {
+    return {
+      profile: pick(rng, ['bar', 'terraced', 'l_block', 'balcony_stack']),
+      roof: pick(rng, ['flat', 'terrace', 'utility']),
+      podium: rng() > 0.52,
+      wing: rng() > 0.42,
+      balconies: true,
+      bodyRatio: 0.82 + rng() * 0.1,
+      facade: pick(rng, ['concrete', 'warm_panel', 'brick_base']),
+    }
+  }
+
+  if (type === 'office') {
+    return {
+      profile: pick(rng, ['slab', 'podium_tower', 'atrium', 'offset_core']),
+      roof: pick(rng, ['flat', 'green', 'mechanical']),
+      podium: true,
+      wing: rng() > 0.5,
+      balconies: false,
+      bodyRatio: 0.74 + rng() * 0.18,
+      facade: pick(rng, ['stone_grid', 'glass_band', 'metal_panel']),
+    }
+  }
+
+  return {
+    profile: pick(rng, ['needle', 'setback', 'twin_core', 'crown']),
+    roof: pick(rng, ['crown', 'antenna', 'mechanical']),
+    podium: true,
+    wing: rng() > 0.7,
+    balconies: false,
+    bodyRatio: 0.78 + rng() * 0.16,
+    facade: pick(rng, ['blue_glass', 'silver_glass', 'dark_glass']),
+    districtType: district.type,
+  }
 }
 
 function createTrees(rng, landmarks, roads) {

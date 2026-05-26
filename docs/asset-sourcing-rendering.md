@@ -48,5 +48,8 @@ Realcity stays procedural at the city scale and uses external assets only where 
 - Dense street furniture: crosswalks, lights, signals, benches, planters.
 - Better vehicle silhouettes: cabins, wheels, headlights, taillights.
 - Rooftop utility detail on tall buildings.
+- Procedural massing now separates towers, offices, apartments, and houses
+  with distinct profiles, roofs, wings, podiums, balconies, porches, garages,
+  chimneys, and antennas before any external model replacement.
 - Time-of-day lighting, moving cloud layer, fog, bloom, and ACES tone mapping.
 - CC0 character assets where permanent download links and browser loading are reliable.
