@@ -188,6 +188,8 @@ async function inspectCityNorms(page) {
       const expectedLane = car.road.axis === 'x' ? car.direction * expectedOffset : -car.direction * expectedOffset
       return car.laneRule !== 'right-hand' || Math.abs(car.lane - expectedLane) > 0.01
     })
+    const carBodyStyles = new Set(city.cars.map(car => car.bodyStyle).filter(Boolean))
+    const detailedCars = city.cars.filter(car => car.dimensions?.width > 0 && car.dimensions?.length > 0 && car.dimensions?.cabinLength > 0)
     const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
     const heightVariants = new Set(city.npcs.map(npc => npc.appearance?.heightScale?.toFixed(2)).filter(Boolean))
     const fashionVariants = new Set(city.npcs.map(npc => `${npc.appearance?.topColor}:${npc.appearance?.jacketColor}:${npc.appearance?.bottomStyle}:${npc.appearance?.hatStyle}`))
@@ -206,6 +208,8 @@ async function inspectCityNorms(page) {
       houseRoofs: roofKeys(houses),
       houseAccessoryCount: houses.filter(building => building.form?.porch || building.form?.garage || building.form?.chimney || building.form?.wing).length,
       laneViolations: laneViolations.length,
+      carBodyStyles: carBodyStyles.size,
+      detailedCars: detailedCars.length,
       appearanceReady: appearanceReady.length,
       npcCount: city.npcs.length,
       heightVariants: heightVariants.size,
@@ -226,6 +230,8 @@ async function inspectCityNorms(page) {
   assert(norms.houseAccessoryCount >= 20, 'Houses did not receive enough porches, garages, chimneys, or wings')
   assert(norms.laneViolations === 0, `${norms.laneViolations} cars violate right-hand lane placement`)
   assert(norms.trafficRules?.drivingSide === 'right-hand' && norms.trafficRules?.signals, 'Traffic rule metadata is incomplete')
+  assert(norms.detailedCars === 120, 'Vehicle style/dimension metadata is incomplete')
+  assert(norms.carBodyStyles >= 5, `Vehicle body style variation is too low: ${norms.carBodyStyles}`)
   assert(norms.appearanceReady === norms.npcCount, 'NPC appearance metadata is incomplete')
   assert(norms.heightVariants >= 8, `NPC height variation is too low: ${norms.heightVariants}`)
   assert(norms.fashionVariants >= 8, `NPC fashion variation is too low: ${norms.fashionVariants}`)
@@ -339,7 +345,7 @@ async function main() {
     await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
 
     const beforeTurn = await getPlayer(page)
-    await holdKey(page, 'KeyA', 550)
+    await holdKey(page, 'KeyA', 900)
     const afterTurn = await getPlayer(page)
     assert(Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)) > 0.18, 'A key did not rotate avatar heading')
     assert(positionDistance(afterTurn, beforeTurn) < 1.2, 'A key moved the avatar instead of only rotating heading')

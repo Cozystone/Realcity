@@ -509,9 +509,16 @@ function shouldStopForSignal(car, pose, roads, timeMinutes) {
 function Traffic({ cars, roads }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
+  const windshieldRef = useRef()
+  const sideWindowRef = useRef()
   const wheelRef = useRef()
+  const wheelHubRef = useRef()
   const headlightRef = useRef()
   const tailLightRef = useRef()
+  const bumperRef = useRef()
+  const grilleRef = useRef()
+  const mirrorRef = useRef()
+  const licenseRef = useRef()
   const taxiSignRef = useRef()
   const driverRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
@@ -520,7 +527,7 @@ function Traffic({ cars, roads }) {
   const yieldPulse = useRef(0)
 
   useFrame((state, delta) => {
-    if (!bodyRef.current || !cabinRef.current || !wheelRef.current || !headlightRef.current || !tailLightRef.current || !taxiSignRef.current || !driverRef.current) return
+    if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const pedestrians = [
@@ -557,28 +564,56 @@ function Traffic({ cars, roads }) {
       car.t = (car.t + (car.speed * wave * speedFactor * dt) / Math.max(1, car.road.to - car.road.from)) % 1
       const { x, z, yaw } = trafficPose(car)
 
+      const dim = car.dimensions || { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 }
       const y = terrainHeight(x, z) + 0.55
       const base = { x, y, z }
-      setLocalPart(bodyRef.current, i, dummy, base, yaw, [0, 0, 0], [2.1, 0.72, 4.35])
-      setLocalPart(cabinRef.current, i, dummy, base, yaw, [0, 0.72, -0.18], [1.56, 0.58, 1.82])
-      setLocalPart(driverRef.current, i, dummy, base, yaw, [-0.34, 1.1, 0.04], [0.22, 0.26, 0.22])
-      setLocalPart(wheelRef.current, i * 4, dummy, base, yaw, [-1.14, -0.36, 1.55], [0.34, 0.42, 0.72])
-      setLocalPart(wheelRef.current, i * 4 + 1, dummy, base, yaw, [1.14, -0.36, 1.55], [0.34, 0.42, 0.72])
-      setLocalPart(wheelRef.current, i * 4 + 2, dummy, base, yaw, [-1.14, -0.36, -1.55], [0.34, 0.42, 0.72])
-      setLocalPart(wheelRef.current, i * 4 + 3, dummy, base, yaw, [1.14, -0.36, -1.55], [0.34, 0.42, 0.72])
-      setLocalPart(headlightRef.current, i * 2, dummy, base, yaw, [-0.55, 0.08, 2.22], [0.24, 0.14, 0.08])
-      setLocalPart(headlightRef.current, i * 2 + 1, dummy, base, yaw, [0.55, 0.08, 2.22], [0.24, 0.14, 0.08])
-      setLocalPart(tailLightRef.current, i * 2, dummy, base, yaw, [-0.58, 0.05, -2.22], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
-      setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [0.58, 0.05, -2.22], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
-      setLocalPart(taxiSignRef.current, i, dummy, base, yaw, [0, 1.2, -0.12], car.kind === 'taxi' ? [0.9, 0.18, 0.45] : [0.001, 0.001, 0.001])
+      const front = dim.length / 2
+      const rear = -dim.length / 2
+      const wheelX = dim.width * 0.55
+      const wheelZ = dim.length * 0.34
+      const cabinZ = car.bodyStyle === 'van' || car.bodyStyle === 'minivan' ? -0.18 : car.bodyStyle === 'coupe' ? -0.34 : -0.12
+      setLocalPart(bodyRef.current, i, dummy, base, yaw, [0, 0, 0], [dim.width, dim.height, dim.length])
+      setLocalPart(cabinRef.current, i, dummy, base, yaw, [0, dim.height * 0.76, cabinZ], [dim.width * 0.72, dim.cabinHeight, dim.cabinLength])
+      setLocalPart(windshieldRef.current, i * 2, dummy, base, yaw, [0, dim.height + dim.cabinHeight * 0.2, cabinZ + dim.cabinLength * 0.52], [dim.width * 0.56, dim.cabinHeight * 0.46, 0.04], -0.22)
+      setLocalPart(windshieldRef.current, i * 2 + 1, dummy, base, yaw, [0, dim.height + dim.cabinHeight * 0.18, cabinZ - dim.cabinLength * 0.52], [dim.width * 0.5, dim.cabinHeight * 0.42, 0.04], 0.18)
+      setLocalPart(sideWindowRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.38, dim.height + dim.cabinHeight * 0.18, cabinZ], [0.045, dim.cabinHeight * 0.52, dim.cabinLength * 0.58])
+      setLocalPart(sideWindowRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.38, dim.height + dim.cabinHeight * 0.18, cabinZ], [0.045, dim.cabinHeight * 0.52, dim.cabinLength * 0.58])
+      setLocalPart(driverRef.current, i, dummy, base, yaw, [-dim.width * 0.16, dim.height + dim.cabinHeight * 0.48, cabinZ + 0.1], [0.2, 0.24, 0.2])
+      setLocalPart(wheelRef.current, i * 4, dummy, base, yaw, [-wheelX, -0.34, wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
+      setLocalPart(wheelRef.current, i * 4 + 1, dummy, base, yaw, [wheelX, -0.34, wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
+      setLocalPart(wheelRef.current, i * 4 + 2, dummy, base, yaw, [-wheelX, -0.34, -wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
+      setLocalPart(wheelRef.current, i * 4 + 3, dummy, base, yaw, [wheelX, -0.34, -wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
+      setLocalPart(wheelHubRef.current, i * 4, dummy, base, yaw, [-wheelX - 0.012, -0.34, wheelZ], [0.19, 0.035, 0.19], 0, Math.PI / 2)
+      setLocalPart(wheelHubRef.current, i * 4 + 1, dummy, base, yaw, [wheelX + 0.012, -0.34, wheelZ], [0.19, 0.035, 0.19], 0, Math.PI / 2)
+      setLocalPart(wheelHubRef.current, i * 4 + 2, dummy, base, yaw, [-wheelX - 0.012, -0.34, -wheelZ], [0.19, 0.035, 0.19], 0, Math.PI / 2)
+      setLocalPart(wheelHubRef.current, i * 4 + 3, dummy, base, yaw, [wheelX + 0.012, -0.34, -wheelZ], [0.19, 0.035, 0.19], 0, Math.PI / 2)
+      setLocalPart(headlightRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.27, 0.08, front + 0.035], [0.24, 0.14, 0.08])
+      setLocalPart(headlightRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.27, 0.08, front + 0.035], [0.24, 0.14, 0.08])
+      setLocalPart(tailLightRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.28, 0.05, rear - 0.035], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
+      setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.28, 0.05, rear - 0.035], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
+      setLocalPart(bumperRef.current, i * 2, dummy, base, yaw, [0, -0.04, front + 0.08], [dim.width * 0.84, 0.16, 0.11])
+      setLocalPart(bumperRef.current, i * 2 + 1, dummy, base, yaw, [0, -0.04, rear - 0.08], [dim.width * 0.84, 0.16, 0.11])
+      setLocalPart(grilleRef.current, i, dummy, base, yaw, [0, 0.11, front + 0.1], [dim.width * 0.42, 0.16, 0.035])
+      setLocalPart(mirrorRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.58, dim.height * 0.72, dim.length * 0.14], [0.075, 0.075, 0.18])
+      setLocalPart(mirrorRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.58, dim.height * 0.72, dim.length * 0.14], [0.075, 0.075, 0.18])
+      setLocalPart(licenseRef.current, i * 2, dummy, base, yaw, [0, 0.12, front + 0.125], [0.5, 0.13, 0.025])
+      setLocalPart(licenseRef.current, i * 2 + 1, dummy, base, yaw, [0, 0.12, rear - 0.125], [0.5, 0.13, 0.025])
+      setLocalPart(taxiSignRef.current, i, dummy, base, yaw, [0, dim.height + dim.cabinHeight + 0.05, cabinZ - 0.08], car.kind === 'taxi' ? [0.9, 0.18, 0.45] : [0.001, 0.001, 0.001])
     }
 
     bodyRef.current.instanceMatrix.needsUpdate = true
     cabinRef.current.instanceMatrix.needsUpdate = true
+    windshieldRef.current.instanceMatrix.needsUpdate = true
+    sideWindowRef.current.instanceMatrix.needsUpdate = true
     driverRef.current.instanceMatrix.needsUpdate = true
     wheelRef.current.instanceMatrix.needsUpdate = true
+    wheelHubRef.current.instanceMatrix.needsUpdate = true
     headlightRef.current.instanceMatrix.needsUpdate = true
     tailLightRef.current.instanceMatrix.needsUpdate = true
+    bumperRef.current.instanceMatrix.needsUpdate = true
+    grilleRef.current.instanceMatrix.needsUpdate = true
+    mirrorRef.current.instanceMatrix.needsUpdate = true
+    licenseRef.current.instanceMatrix.needsUpdate = true
     taxiSignRef.current.instanceMatrix.needsUpdate = true
   })
 
@@ -586,19 +621,31 @@ function Traffic({ cars, roads }) {
     <>
       <instancedMesh ref={bodyRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.28} metalness={0.48} />
+        <meshPhysicalMaterial color="#ffffff" vertexColors roughness={0.24} metalness={0.42} clearcoat={0.7} clearcoatRoughness={0.18} envMapIntensity={1.1} />
       </instancedMesh>
       <instancedMesh ref={cabinRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#101820" roughness={0.1} metalness={0.32} />
+        <meshPhysicalMaterial color="#111923" roughness={0.08} metalness={0.28} clearcoat={1} clearcoatRoughness={0.05} envMapIntensity={1.45} />
+      </instancedMesh>
+      <instancedMesh ref={windshieldRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshPhysicalMaterial color="#9edcff" roughness={0.035} metalness={0.12} transparent opacity={0.72} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={1.8} />
+      </instancedMesh>
+      <instancedMesh ref={sideWindowRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshPhysicalMaterial color="#83c7e7" roughness={0.04} metalness={0.16} transparent opacity={0.68} clearcoat={1} envMapIntensity={1.7} />
       </instancedMesh>
       <instancedMesh ref={driverRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
-        <sphereGeometry args={[1, 10, 8]} />
+        <sphereGeometry args={[1, 14, 10]} />
         <meshStandardMaterial color="#d4a17d" roughness={0.7} />
       </instancedMesh>
       <instancedMesh ref={wheelRef} args={[undefined, undefined, cars.length * 4]} castShadow frustumCulled={false}>
-        <boxGeometry args={[1, 1, 1]} />
+        <cylinderGeometry args={[1, 1, 1, 18]} />
         <meshStandardMaterial color="#08090b" roughness={0.56} metalness={0.18} />
+      </instancedMesh>
+      <instancedMesh ref={wheelHubRef} args={[undefined, undefined, cars.length * 4]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 16]} />
+        <meshStandardMaterial color="#c8cdd0" roughness={0.24} metalness={0.72} />
       </instancedMesh>
       <instancedMesh ref={headlightRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -607,6 +654,22 @@ function Traffic({ cars, roads }) {
       <instancedMesh ref={tailLightRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#ff2b2b" emissive="#ff1d18" emissiveIntensity={1.2} roughness={0.24} />
+      </instancedMesh>
+      <instancedMesh ref={bumperRef} args={[undefined, undefined, cars.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#cfd4d8" roughness={0.26} metalness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={grilleRef} args={[undefined, undefined, cars.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#15191d" roughness={0.32} metalness={0.42} />
+      </instancedMesh>
+      <instancedMesh ref={mirrorRef} args={[undefined, undefined, cars.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#12171d" roughness={0.18} metalness={0.36} />
+      </instancedMesh>
+      <instancedMesh ref={licenseRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f5f1df" roughness={0.42} metalness={0.08} />
       </instancedMesh>
       <instancedMesh ref={taxiSignRef} args={[undefined, undefined, cars.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -633,15 +696,19 @@ function NPCs({ city }) {
     return agent
   }), [city.npcs, places])
   const torsoRef = useRef()
+  const neckRef = useRef()
   const headRef = useRef()
   const legRef = useRef()
   const armRef = useRef()
+  const sleeveRef = useRef()
   const hairRef = useRef()
   const eyeRef = useRef()
+  const browRef = useRef()
   const noseRef = useRef()
   const mouthRef = useRef()
   const shoeRef = useRef()
   const chestRef = useRef()
+  const beltRef = useRef()
   const bagRef = useRef()
   const handRef = useRef()
   const earRef = useRef()
@@ -660,7 +727,7 @@ function NPCs({ city }) {
   }, [agents.length, city.cars.length, city.tiles.length])
 
   useFrame((state, delta) => {
-    if (!torsoRef.current || !headRef.current || !legRef.current || !armRef.current || !hairRef.current || !eyeRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current) return
+    if (!torsoRef.current || !neckRef.current || !headRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !beltRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -672,31 +739,41 @@ function NPCs({ city }) {
         const look = agentLook(agent)
         torsoRef.current.setColorAt(i, color.set(look.topColor))
         chestRef.current.setColorAt(i, color.set(look.jacketColor))
+        neckRef.current.setColorAt(i, color.set(skinTone(agent)))
         headRef.current.setColorAt(i, color.set(skinTone(agent)))
         hairRef.current.setColorAt(i, color.set(hairTone(agent)))
         armRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         armRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        sleeveRef.current.setColorAt(i * 2, color.set(look.topColor))
+        sleeveRef.current.setColorAt(i * 2 + 1, color.set(look.topColor))
         handRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         handRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         earRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         earRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        browRef.current.setColorAt(i * 2, color.set(hairTone(agent)))
+        browRef.current.setColorAt(i * 2 + 1, color.set(hairTone(agent)))
         legRef.current.setColorAt(i * 2, color.set(look.pantsColor))
         legRef.current.setColorAt(i * 2 + 1, color.set(look.pantsColor))
         shoeRef.current.setColorAt(i * 2, color.set(look.shoeColor))
         shoeRef.current.setColorAt(i * 2 + 1, color.set(look.shoeColor))
+        beltRef.current.setColorAt(i, color.set(look.accessoryColor))
         bagRef.current.setColorAt(i, color.set(look.accessoryColor))
         hatRef.current.setColorAt(i, color.set(look.accessoryColor))
         skirtRef.current.setColorAt(i, color.set(look.pantsColor))
       })
       if (torsoRef.current.instanceColor) torsoRef.current.instanceColor.needsUpdate = true
       if (chestRef.current.instanceColor) chestRef.current.instanceColor.needsUpdate = true
+      if (neckRef.current.instanceColor) neckRef.current.instanceColor.needsUpdate = true
       if (headRef.current.instanceColor) headRef.current.instanceColor.needsUpdate = true
       if (hairRef.current.instanceColor) hairRef.current.instanceColor.needsUpdate = true
       if (armRef.current.instanceColor) armRef.current.instanceColor.needsUpdate = true
+      if (sleeveRef.current.instanceColor) sleeveRef.current.instanceColor.needsUpdate = true
       if (handRef.current.instanceColor) handRef.current.instanceColor.needsUpdate = true
       if (earRef.current.instanceColor) earRef.current.instanceColor.needsUpdate = true
+      if (browRef.current.instanceColor) browRef.current.instanceColor.needsUpdate = true
       if (legRef.current.instanceColor) legRef.current.instanceColor.needsUpdate = true
       if (shoeRef.current.instanceColor) shoeRef.current.instanceColor.needsUpdate = true
+      if (beltRef.current.instanceColor) beltRef.current.instanceColor.needsUpdate = true
       if (bagRef.current.instanceColor) bagRef.current.instanceColor.needsUpdate = true
       if (hatRef.current.instanceColor) hatRef.current.instanceColor.needsUpdate = true
       if (skirtRef.current.instanceColor) skirtRef.current.instanceColor.needsUpdate = true
@@ -733,15 +810,19 @@ function NPCs({ city }) {
       const bagVisible = look.bagStyle && look.bagStyle !== 'none'
       const skirtVisible = look.bottomStyle === 'skirt'
       setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, 0.04 * height, 0], [0.2 * shoulder, (walking ? 0.5 : 0.46) * height * bodyScale, 0.16 * bodyScale])
+      setLocalPart(neckRef.current, i, dummy, base, agent.heading, [0, 0.49 * height, 0.01], [0.075 * headScale, 0.105 * height, 0.075 * headScale])
       setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, 0.72 * height, 0.025], [0.22 * headScale, 0.24 * headScale, 0.22 * headScale])
       setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, (hairLong ? 0.82 : 0.87) * height, hairLong ? -0.055 : -0.02], [0.245 * headScale, (hairBun ? 0.15 : hairLong ? 0.22 : 0.105) * headScale, 0.24 * headScale])
       setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
       setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
       setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
       setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
+      setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.792 * height, 0.231], [0.055, 0.008, 0.01], 0, -0.08)
+      setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.792 * height, 0.231], [0.055, 0.008, 0.01], 0, 0.08)
       setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.695 * height, 0.246], [0.024, 0.04, 0.024])
       setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, 0.632 * height, 0.238], [0.068, 0.01, 0.012])
       setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, 0.17 * height, 0.168], [0.15 * shoulder, 0.18 * height, 0.018])
+      setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, -0.17 * height, 0.158], [0.17 * shoulder, 0.02, 0.024])
       setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.19 * shoulder, 0.08 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
       setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
       setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.13 * height, 0], skirtVisible ? [0.19 * shoulder, 0.24 * height, 0.16] : [0.001, 0.001, 0.001])
@@ -749,6 +830,8 @@ function NPCs({ city }) {
       setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.085 * shoulder, -0.45 * height, 0], [0.052, 0.38 * height * legScale, 0.052], -stride)
       setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], -stride * 0.58)
       setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], stride * 0.58)
+      setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.225 * shoulder, 0.28 * height, 0.026], [0.056, 0.13 * height, 0.056], -stride * 0.38)
+      setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.225 * shoulder, 0.28 * height, 0.026], [0.056, 0.13 * height, 0.056], stride * 0.38)
       setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
       setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
       setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.085 * shoulder, -0.86 * height, 0.055], [0.064, 0.043, 0.11])
@@ -783,12 +866,15 @@ function NPCs({ city }) {
     }
 
     torsoRef.current.instanceMatrix.needsUpdate = true
+    neckRef.current.instanceMatrix.needsUpdate = true
     headRef.current.instanceMatrix.needsUpdate = true
     hairRef.current.instanceMatrix.needsUpdate = true
     eyeRef.current.instanceMatrix.needsUpdate = true
+    browRef.current.instanceMatrix.needsUpdate = true
     noseRef.current.instanceMatrix.needsUpdate = true
     mouthRef.current.instanceMatrix.needsUpdate = true
     chestRef.current.instanceMatrix.needsUpdate = true
+    beltRef.current.instanceMatrix.needsUpdate = true
     bagRef.current.instanceMatrix.needsUpdate = true
     handRef.current.instanceMatrix.needsUpdate = true
     earRef.current.instanceMatrix.needsUpdate = true
@@ -796,6 +882,7 @@ function NPCs({ city }) {
     skirtRef.current.instanceMatrix.needsUpdate = true
     legRef.current.instanceMatrix.needsUpdate = true
     armRef.current.instanceMatrix.needsUpdate = true
+    sleeveRef.current.instanceMatrix.needsUpdate = true
     shoeRef.current.instanceMatrix.needsUpdate = true
   })
 
@@ -911,24 +998,36 @@ function NPCs({ city }) {
   return (
     <>
       <instancedMesh ref={torsoRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
-        <capsuleGeometry args={[1, 2, 4, 8]} />
-        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.82} metalness={0.02} />
+        <capsuleGeometry args={[1, 2, 8, 14]} />
+        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.78} metalness={0.03} />
       </instancedMesh>
       <instancedMesh ref={chestRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#ffffff" vertexColors roughness={0.64} metalness={0.04} />
       </instancedMesh>
+      <instancedMesh ref={beltRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#473120" vertexColors roughness={0.62} metalness={0.12} />
+      </instancedMesh>
+      <instancedMesh ref={neckRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 12]} />
+        <meshStandardMaterial color="#efc29a" vertexColors roughness={0.72} />
+      </instancedMesh>
       <instancedMesh ref={headRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
-        <sphereGeometry args={[1, 10, 8]} />
+        <sphereGeometry args={[1, 16, 12]} />
         <meshStandardMaterial color="#efc29a" vertexColors roughness={0.72} />
       </instancedMesh>
       <instancedMesh ref={hairRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
-        <sphereGeometry args={[1, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.56]} />
+        <sphereGeometry args={[1, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.56]} />
         <meshStandardMaterial color="#19130f" vertexColors roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={eyeRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
         <meshStandardMaterial color="#05070a" roughness={0.38} />
+      </instancedMesh>
+      <instancedMesh ref={browRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#19130f" vertexColors roughness={0.7} />
       </instancedMesh>
       <instancedMesh ref={noseRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -955,15 +1054,19 @@ function NPCs({ city }) {
         <meshStandardMaterial color="#293241" vertexColors roughness={0.82} />
       </instancedMesh>
       <instancedMesh ref={legRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
-        <capsuleGeometry args={[1, 2, 4, 7]} />
+        <capsuleGeometry args={[1, 2, 6, 10]} />
         <meshStandardMaterial color="#1f2937" vertexColors roughness={0.84} />
       </instancedMesh>
       <instancedMesh ref={armRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
-        <capsuleGeometry args={[1, 2, 4, 7]} />
+        <capsuleGeometry args={[1, 2, 6, 10]} />
         <meshStandardMaterial color="#d7a17d" vertexColors roughness={0.7} />
       </instancedMesh>
+      <instancedMesh ref={sleeveRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <capsuleGeometry args={[1, 2, 5, 10]} />
+        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.78} metalness={0.03} />
+      </instancedMesh>
       <instancedMesh ref={handRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
-        <sphereGeometry args={[1, 8, 6]} />
+        <sphereGeometry args={[1, 10, 8]} />
         <meshStandardMaterial color="#d7a17d" vertexColors roughness={0.72} />
       </instancedMesh>
       <instancedMesh ref={shoeRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>

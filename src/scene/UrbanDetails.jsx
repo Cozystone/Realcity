@@ -412,6 +412,117 @@ function Bollards({ roads }) {
   )
 }
 
+function LaneReflectors({ roads }) {
+  const reflectorRef = useRef()
+  const arrowsRef = useRef()
+  const { mainVertical, mainHorizontal } = useRoadLayout(roads)
+  const details = useMemo(() => {
+    const reflectors = []
+    const arrows = []
+    const mainRoads = [...mainHorizontal, ...mainVertical]
+    for (const road of mainRoads) {
+      const laneOffset = road.width * 0.27
+      for (let p = road.from + 46; p < road.to - 46; p += 38) {
+        if (Math.hypot(road.axis === 'x' ? p : road.x, road.axis === 'x' ? road.z : p) > CITY_GRID_HALF * 0.88) continue
+        if (road.axis === 'x') {
+          reflectors.push({ x: p, z: road.z - laneOffset * 0.52, sx: 0.42, sz: 0.08, yaw: 0 })
+          reflectors.push({ x: p, z: road.z + laneOffset * 0.52, sx: 0.42, sz: 0.08, yaw: 0 })
+          if ((p + CITY_GRID_HALF) % 228 < 38) arrows.push({ x: p, z: road.z - laneOffset, sx: 1.1, sz: 2.4, yaw: Math.PI / 2 })
+        } else {
+          reflectors.push({ x: road.x - laneOffset * 0.52, z: p, sx: 0.08, sz: 0.42, yaw: 0 })
+          reflectors.push({ x: road.x + laneOffset * 0.52, z: p, sx: 0.08, sz: 0.42, yaw: 0 })
+          if ((p + CITY_GRID_HALF) % 228 < 38) arrows.push({ x: road.x + laneOffset, z: p, sx: 1.1, sz: 2.4, yaw: 0 })
+        }
+      }
+    }
+    return { reflectors: reflectors.slice(0, 1300), arrows: arrows.slice(0, 90) }
+  }, [mainHorizontal, mainVertical])
+
+  useLayoutEffect(() => {
+    if (!reflectorRef.current || !arrowsRef.current) return
+    const dummy = new THREE.Object3D()
+    details.reflectors.forEach((item, i) => {
+      setInstance(reflectorRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.205, item.z], [item.sx, 0.025, item.sz], item.yaw)
+    })
+    details.arrows.forEach((item, i) => {
+      setInstance(arrowsRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.212, item.z], [item.sx, 0.028, item.sz], item.yaw)
+    })
+    reflectorRef.current.instanceMatrix.needsUpdate = true
+    arrowsRef.current.instanceMatrix.needsUpdate = true
+  }, [details])
+
+  return (
+    <>
+      <instancedMesh ref={reflectorRef} args={[undefined, undefined, details.reflectors.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f7f3d8" emissive="#fff0a0" emissiveIntensity={0.18} roughness={0.34} />
+      </instancedMesh>
+      <instancedMesh ref={arrowsRef} args={[undefined, undefined, details.arrows.length]} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 3]} />
+        <meshStandardMaterial color="#e7ece9" emissive="#ffffff" emissiveIntensity={0.08} roughness={0.44} />
+      </instancedMesh>
+    </>
+  )
+}
+
+function StreetFurniture({ roads }) {
+  const kioskRef = useRef()
+  const screenRef = useRef()
+  const binRef = useRef()
+  const { mainHorizontal, mainVertical } = useRoadLayout(roads)
+  const items = useMemo(() => {
+    const placed = []
+    const roadsToUse = [...mainHorizontal, ...mainVertical]
+      .filter(road => Math.hypot(road.axis === 'x' ? 0 : road.x, road.axis === 'x' ? road.z : 0) < CITY_GRID_HALF * 0.68)
+    roadsToUse.forEach((road, i) => {
+      const step = ROAD_SPACING * 2.1
+      for (let p = road.from + 70 + (i % 3) * 19; p < road.to - 70 && placed.length < 110; p += step) {
+        const side = i % 2 ? -1 : 1
+        if (road.axis === 'x') {
+          placed.push({ x: p, z: road.z + side * (road.width * 0.86 + 4.4), yaw: side > 0 ? Math.PI : 0, tint: i + p })
+        } else {
+          placed.push({ x: road.x + side * (road.width * 0.86 + 4.4), z: p, yaw: side > 0 ? -Math.PI / 2 : Math.PI / 2, tint: i + p })
+        }
+      }
+    })
+    return placed
+  }, [mainHorizontal, mainVertical])
+
+  useLayoutEffect(() => {
+    if (!kioskRef.current || !screenRef.current || !binRef.current) return
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    const palette = ['#26323a', '#174e62', '#4b394f', '#2e4635', '#5a4334']
+    items.forEach((item, i) => {
+      setInstance(kioskRef.current, i, dummy, [item.x, CITY_BASE_Y + 1.0, item.z], [1.05, 2.0, 0.46], item.yaw)
+      setInstance(screenRef.current, i, dummy, [item.x + Math.sin(item.yaw) * 0.26, CITY_BASE_Y + 1.18, item.z + Math.cos(item.yaw) * 0.26], [0.76, 0.92, 0.035], item.yaw)
+      setInstance(binRef.current, i, dummy, [item.x - Math.sin(item.yaw) * 1.22, CITY_BASE_Y + 0.45, item.z - Math.cos(item.yaw) * 1.22], [0.32, 0.9, 0.32])
+      kioskRef.current.setColorAt(i, color.set(palette[Math.abs(Math.floor(item.tint)) % palette.length]))
+    })
+    kioskRef.current.instanceMatrix.needsUpdate = true
+    screenRef.current.instanceMatrix.needsUpdate = true
+    binRef.current.instanceMatrix.needsUpdate = true
+    if (kioskRef.current.instanceColor) kioskRef.current.instanceColor.needsUpdate = true
+  }, [items])
+
+  return (
+    <>
+      <instancedMesh ref={kioskRef} args={[undefined, undefined, items.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.38} metalness={0.34} />
+      </instancedMesh>
+      <instancedMesh ref={screenRef} args={[undefined, undefined, items.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#a7ecff" emissive="#30bfff" emissiveIntensity={0.46} roughness={0.18} metalness={0.16} />
+      </instancedMesh>
+      <instancedMesh ref={binRef} args={[undefined, undefined, items.length]} castShadow receiveShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 12]} />
+        <meshStandardMaterial color="#2d3438" roughness={0.5} metalness={0.32} />
+      </instancedMesh>
+    </>
+  )
+}
+
 function ParkedCars({ roads }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
@@ -650,9 +761,11 @@ export default function UrbanDetails({ city }) {
       <Crosswalks roads={city.roads} />
       <StreetLights roads={city.roads} />
       <TrafficSignals roads={city.roads} />
+      <LaneReflectors roads={city.roads} />
       <RoadNameSigns roads={city.roads} />
       <TransitAndTaxiStops roads={city.roads} />
       <Bollards roads={city.roads} />
+      <StreetFurniture roads={city.roads} />
       <ParkedCars roads={city.roads} />
       <PlantersAndBenches roads={city.roads} />
       <FacadeDetails buildings={city.buildings} />

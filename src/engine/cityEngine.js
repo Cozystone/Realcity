@@ -349,10 +349,21 @@ function createTraffic(rng, roads) {
     const laneOffset = road.width * (road.main ? 0.27 : 0.22)
     const lane = road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
     const taxi = rng() < 0.16
+    const bodyStyle = taxi ? pick(rng, ['sedan', 'minivan']) : pick(rng, ['sedan', 'hatchback', 'suv', 'van', 'coupe'])
+    const dimensions = {
+      sedan: { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 },
+      hatchback: { width: 1.95, height: 0.72, length: 3.85, cabinLength: 1.72, cabinHeight: 0.62 },
+      suv: { width: 2.18, height: 0.9, length: 4.55, cabinLength: 2.05, cabinHeight: 0.72 },
+      van: { width: 2.22, height: 0.96, length: 4.85, cabinLength: 2.58, cabinHeight: 0.78 },
+      minivan: { width: 2.16, height: 0.9, length: 4.78, cabinLength: 2.4, cabinHeight: 0.72 },
+      coupe: { width: 1.98, height: 0.64, length: 4.05, cabinLength: 1.42, cabinHeight: 0.48 },
+    }[bodyStyle]
     const driverName = `${pick(rng, GIVEN_NAMES)} ${pick(rng, FAMILY_NAMES)}`
     return {
       id: `car_${i}`,
       kind: taxi ? 'taxi' : 'private',
+      bodyStyle,
+      dimensions,
       driverName,
       driverTemperament: pick(rng, ['calm', 'careful', 'hurried', 'patient']),
       roadId: road.id,
