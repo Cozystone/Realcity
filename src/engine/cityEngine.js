@@ -30,6 +30,18 @@ const GIVEN_NAMES = ['Minji', 'Hana', 'Joon', 'Sora', 'Doyun', 'Ara', 'Hyun', 'Y
 const FAMILY_NAMES = ['Kim', 'Park', 'Lee', 'Choi', 'Jung', 'Seo', 'Han', 'Kang', 'Lim']
 const PERSONALITIES = ['warm', 'reserved', 'curious', 'direct', 'funny', 'tired', 'ambitious', 'careful', 'restless']
 
+const LANDMARK_INTERIORS = {
+  transit: { width: 64, depth: 30, height: 7.2, doorWidth: 14, lobbyDepth: 25, verticalCore: 'escalator' },
+  finance: { width: 30, depth: 30, height: 13.5, doorWidth: 9, lobbyDepth: 24, verticalCore: 'elevator' },
+  cafe: { width: 28, depth: 22, height: 7.2, doorWidth: 6, lobbyDepth: 17, verticalCore: 'stairs' },
+  hospital: { width: 42, depth: 30, height: 12.8, doorWidth: 12, lobbyDepth: 25, verticalCore: 'elevator' },
+  workshop: { width: 30, depth: 24, height: 8.4, doorWidth: 8, lobbyDepth: 20, verticalCore: 'stairs' },
+  retail: { width: 34, depth: 24, height: 8.2, doorWidth: 10, lobbyDepth: 20, verticalCore: 'escalator' },
+  school: { width: 38, depth: 28, height: 8.6, doorWidth: 10, lobbyDepth: 22, verticalCore: 'stairs' },
+  leisure: { width: 36, depth: 28, height: 9, doorWidth: 12, lobbyDepth: 23, verticalCore: 'escalator' },
+  logistics: { width: 58, depth: 34, height: 10.8, doorWidth: 13, lobbyDepth: 28, verticalCore: 'stairs' },
+}
+
 function mulberry32(seed) {
   let value = seed >>> 0
   return () => {
@@ -115,7 +127,17 @@ function roadGrid() {
 }
 
 function landmarkSet() {
-  return LANDMARK_BLUEPRINTS.map(place => ({ ...place, y: terrainHeight(place.x, place.z), radius: 26 * place.scale }))
+  return LANDMARK_BLUEPRINTS.map(place => ({
+    ...place,
+    y: terrainHeight(place.x, place.z),
+    radius: 26 * place.scale,
+    interior: place.kind === 'park' ? null : {
+      ...LANDMARK_INTERIORS[place.kind],
+      entranceSide: 'front',
+      solidWalls: true,
+      entryRule: 'front-door-only',
+    },
+  }))
 }
 
 function createBuildings(rng, landmarks) {

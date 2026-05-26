@@ -175,6 +175,40 @@ Priority assets:
 
 Guideline: keep collision simple. Use box/capsule colliders even when visible GLB geometry is detailed.
 
+## Building Interior Strategy
+
+Buildings should be treated as places with solid envelopes, not just visual props.
+The long-term target is that every meaningful building has an entrance, a door
+state, an interior zone, and vertical circulation.
+
+Current rules:
+
+1. Ordinary background buildings are solid collision volumes.
+2. Landmark buildings expose a front entrance and can only be entered through
+   that doorway.
+3. Landmark shells include a lobby floor, side/back/front wall segments, a solid
+   roof slab, glass door panels, a reception/service counter, and one vertical
+   circulation element.
+4. Vertical circulation can be an elevator, stair, or escalator depending on the
+   place type.
+5. Visual meshes may be detailed, but collision should remain simple and
+   intentional: solid walls, clear door openings, and separate interior zones.
+
+Long-term final version:
+
+- Add room graphs per building: lobby, corridors, offices, apartments, service
+  rooms, stairwells, elevators, shops, restrooms, loading bays, and restricted
+  rooms.
+- Add door state machines: locked, unlocked, automatic, held open, damaged,
+  staff-only, emergency-open.
+- Add NPC interior routines: enter building, wait for elevator, go to office,
+  meet someone, buy coffee, use stairs during crowding, leave by schedule.
+- Add interior navigation mesh and per-floor portals.
+- Add procedural interior LOD: nearby interiors are real rooms, distant interiors
+  are simulated as aggregate occupancy and window light.
+- Connect building access to social rules: reception desks, security, queues,
+  visitor permissions, employee-only zones, and closing hours.
+
 ## AI NPC City Layer
 
 NPC behavior should be tied to places, not just random movement.
@@ -246,3 +280,6 @@ The city design is working when:
 - Natural terrain is outside the urban floor, not mixed into the asphalt city base.
 - Traffic and NPC flows visibly prefer the civic spine and transit nodes.
 - External models enhance landmarks without breaking performance or collision.
+- Landmark walls are solid, and entry is possible only through visible doors.
+- Important buildings have at least a basic lobby plus elevator, stair, or
+  escalator concept.

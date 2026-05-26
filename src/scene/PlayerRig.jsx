@@ -58,7 +58,53 @@ function useKeys() {
   return keys
 }
 
-function resolveBuildingCollision(city, x, z) {
+function pushOutOfBox(px, pz, cx, cz, hw, hd) {
+  const dx = px - cx
+  const dz = pz - cz
+  const pushX = hw - Math.abs(dx)
+  const pushZ = hd - Math.abs(dz)
+  if (pushX < pushZ) return [cx + Math.sign(dx || 1) * hw, pz]
+  return [px, cz + Math.sign(dz || 1) * hd]
+}
+
+function resolveLandmarkCollision(city, previousX, previousZ, nextX, nextZ) {
+  let px = nextX
+  let pz = nextZ
+  const radius = 0.72
+
+  for (const place of city.landmarks) {
+    const interior = place.interior
+    if (!interior?.solidWalls) continue
+
+    const hw = interior.width / 2 + radius
+    const hd = interior.depth / 2 + radius
+    const prev = { x: previousX - place.x, z: previousZ - place.z }
+    const next = { x: px - place.x, z: pz - place.z }
+    const prevInside = Math.abs(prev.x) < hw && Math.abs(prev.z) < hd
+    const nextInside = Math.abs(next.x) < hw && Math.abs(next.z) < hd
+    if (!prevInside && !nextInside) continue
+
+    const doorHalf = interior.doorWidth / 2
+    const atFrontDoor = Math.abs(next.x) < doorHalf && next.z <= -interior.depth / 2 + 2.4
+
+    if (!prevInside && nextInside && !atFrontDoor) {
+      ;[px, pz] = pushOutOfBox(px, pz, place.x, place.z, hw, hd)
+      continue
+    }
+
+    if (prevInside && !nextInside) {
+      const exitsThroughDoor = Math.abs(prev.x) < doorHalf && next.z < -interior.depth / 2 + 2.4
+      if (!exitsThroughDoor) {
+        px = Math.max(place.x - hw + radius, Math.min(place.x + hw - radius, px))
+        pz = Math.max(place.z - hd + radius, Math.min(place.z + hd - radius, pz))
+      }
+    }
+  }
+
+  return [px, pz]
+}
+
+function resolveBuildingCollision(city, previousX, previousZ, x, z) {
   let px = x
   let pz = z
   const radius = 0.72
@@ -71,15 +117,11 @@ function resolveBuildingCollision(city, x, z) {
     const dx = px - building.x
     const dz = pz - building.z
     if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
-      const pushX = hw - Math.abs(dx)
-      const pushZ = hd - Math.abs(dz)
-      if (pushX < pushZ) {
-        px = building.x + Math.sign(dx || 1) * hw
-      } else {
-        pz = building.z + Math.sign(dz || 1) * hd
-      }
+      ;[px, pz] = pushOutOfBox(px, pz, building.x, building.z, hw, hd)
     }
   }
+
+  ;[px, pz] = resolveLandmarkCollision(city, previousX, previousZ, px, pz)
 
   px = Math.max(-CITY_HALF + 15, Math.min(CITY_HALF - 15, px))
   pz = Math.max(-CITY_HALF + 15, Math.min(CITY_HALF - 15, pz))
@@ -222,7 +264,7 @@ export default function PlayerRig({ city }) {
 
       const nextX = pos.current.x + move.x
       const nextZ = pos.current.z + move.z
-      const [safeX, safeZ] = resolveBuildingCollision(city, nextX, nextZ)
+      const [safeX, safeZ] = resolveBuildingCollision(city, pos.current.x, pos.current.z, nextX, nextZ)
       const groundY = terrainHeight(safeX, safeZ) + 1.1
       let nextY = pos.current.y + velocityY.current * dt
       if (nextY <= groundY) {

@@ -443,6 +443,124 @@ function Trees({ trees }) {
   )
 }
 
+function InteriorShell({ place, color }) {
+  const interior = place.interior
+  if (!interior) return null
+
+  const w = interior.width
+  const d = interior.depth
+  const h = interior.height
+  const t = 0.42
+  const door = interior.doorWidth
+  const sideWidth = (w - door) / 2
+  const frontZ = -d / 2
+  const backZ = d / 2
+  const wallColor = place.kind === 'hospital' ? '#dfe8ed' : place.kind === 'logistics' ? '#9fa7ac' : '#c7c0b3'
+
+  const verticalCore = interior.verticalCore === 'elevator'
+    ? (
+      <group position={[w * 0.25, 0, d * 0.25]}>
+        <mesh castShadow receiveShadow position={[0, h * 0.36, 0]}>
+          <boxGeometry args={[4.6, h * 0.72, 4.2]} />
+          <meshStandardMaterial color="#303941" roughness={0.36} metalness={0.28} />
+        </mesh>
+        <mesh position={[0, 2.2, -2.14]}>
+          <boxGeometry args={[3.2, 3.7, 0.16]} />
+          <meshStandardMaterial color="#b6c0c6" roughness={0.26} metalness={0.62} />
+        </mesh>
+        <mesh position={[0, 4.7, -2.24]}>
+          <boxGeometry args={[2.4, 0.34, 0.18]} />
+          <meshStandardMaterial color="#6be6ff" emissive="#3db8ff" emissiveIntensity={0.5} />
+        </mesh>
+      </group>
+    )
+    : interior.verticalCore === 'escalator'
+      ? (
+        <group position={[w * 0.22, 0.7, d * 0.18]} rotation={[0.18, 0, -0.35]}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[2.2, 0.38, 8.4]} />
+            <meshStandardMaterial color="#49515a" roughness={0.38} metalness={0.34} />
+          </mesh>
+          <mesh position={[-1.2, 0.32, 0]}>
+            <boxGeometry args={[0.18, 0.42, 8.8]} />
+            <meshStandardMaterial color="#d8e4ea" roughness={0.22} metalness={0.6} />
+          </mesh>
+          <mesh position={[1.2, 0.32, 0]}>
+            <boxGeometry args={[0.18, 0.42, 8.8]} />
+            <meshStandardMaterial color="#d8e4ea" roughness={0.22} metalness={0.6} />
+          </mesh>
+        </group>
+      )
+      : (
+        <group position={[w * 0.23, 0.25, d * 0.18]}>
+          {Array.from({ length: 7 }, (_, i) => (
+            <mesh key={i} castShadow receiveShadow position={[0, i * 0.22, i * 0.54]}>
+              <boxGeometry args={[4.5, 0.2, 0.5]} />
+              <meshStandardMaterial color="#7c858b" roughness={0.58} metalness={0.12} />
+            </mesh>
+          ))}
+          <mesh position={[2.35, 0.92, 1.7]}>
+            <boxGeometry args={[0.15, 1.4, 4.5]} />
+            <meshStandardMaterial color="#d8e4ea" roughness={0.24} metalness={0.58} />
+          </mesh>
+        </group>
+      )
+
+  return (
+    <group>
+      <mesh receiveShadow position={[0, 0.08, 0]}>
+        <boxGeometry args={[w, 0.16, d]} />
+        <meshStandardMaterial color={place.kind === 'logistics' ? '#697176' : '#bfc4c5'} roughness={0.48} metalness={0.06} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0, h / 2, backZ]}>
+        <boxGeometry args={[w, h, t]} />
+        <meshStandardMaterial color={wallColor} roughness={0.54} metalness={0.08} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[-w / 2, h / 2, 0]}>
+        <boxGeometry args={[t, h, d]} />
+        <meshStandardMaterial color={wallColor} roughness={0.54} metalness={0.08} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[w / 2, h / 2, 0]}>
+        <boxGeometry args={[t, h, d]} />
+        <meshStandardMaterial color={wallColor} roughness={0.54} metalness={0.08} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[-door / 2 - sideWidth / 2, h / 2, frontZ]}>
+        <boxGeometry args={[sideWidth, h, t]} />
+        <meshStandardMaterial color={wallColor} roughness={0.54} metalness={0.08} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[door / 2 + sideWidth / 2, h / 2, frontZ]}>
+        <boxGeometry args={[sideWidth, h, t]} />
+        <meshStandardMaterial color={wallColor} roughness={0.54} metalness={0.08} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0, h + 0.22, 0]}>
+        <boxGeometry args={[w + 1.8, 0.44, d + 1.8]} />
+        <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.16} />
+      </mesh>
+      <mesh position={[-door * 0.28, 2.1, frontZ - 0.12]}>
+        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
+        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
+      </mesh>
+      <mesh position={[door * 0.28, 2.1, frontZ - 0.12]}>
+        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
+        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
+      </mesh>
+      <mesh position={[0, 4.45, frontZ - 0.18]}>
+        <boxGeometry args={[door + 1.2, 0.48, 0.18]} />
+        <meshStandardMaterial color="#101820" emissive={color} emissiveIntensity={0.55} roughness={0.28} metalness={0.24} />
+      </mesh>
+      <mesh receiveShadow position={[0, 0.11, -d * 0.1]}>
+        <boxGeometry args={[Math.max(3, door * 0.8), 0.05, Math.max(6, interior.lobbyDepth)]} />
+        <meshStandardMaterial color="#d7dce0" roughness={0.32} metalness={0.04} />
+      </mesh>
+      <mesh position={[-w * 0.2, 1.25, d * 0.18]}>
+        <boxGeometry args={[4.8, 2.2, 1.0]} />
+        <meshStandardMaterial color="#5f6b72" roughness={0.56} metalness={0.14} />
+      </mesh>
+      {verticalCore}
+    </group>
+  )
+}
+
 function Landmark({ place }) {
   const color = {
     transit: '#55a7ff',
@@ -461,23 +579,16 @@ function Landmark({ place }) {
 
   return (
     <group position={[place.x, CITY_BASE_Y, place.z]}>
+      <InteriorShell place={place} color={color} />
       {place.kind === 'finance' ? (
         <>
-          <mesh castShadow receiveShadow position={[0, 18, 0]}>
-            <boxGeometry args={[24, 36, 24]} />
-            <meshStandardMaterial color="#9fb8c7" roughness={0.18} metalness={0.35} transparent opacity={0.88} />
-          </mesh>
-          <mesh castShadow receiveShadow position={[0, 43, 0]}>
+          <mesh castShadow receiveShadow position={[0, 42, 0]}>
             <boxGeometry args={[15, 50, 15]} />
             <meshStandardMaterial color="#9fb8c7" roughness={0.18} metalness={0.35} transparent opacity={0.88} />
           </mesh>
         </>
       ) : place.kind === 'transit' ? (
         <>
-          <mesh castShadow receiveShadow position={[0, 3.2, 0]}>
-            <boxGeometry args={[58, 6.4, 26]} />
-            <meshStandardMaterial color={color} roughness={0.42} metalness={0.18} />
-          </mesh>
           <mesh castShadow receiveShadow position={[0, 8.2, 0]}>
             <boxGeometry args={[64, 3.4, 30]} />
             <meshStandardMaterial color="#cfd7dd" roughness={0.32} metalness={0.18} />
@@ -500,10 +611,6 @@ function Landmark({ place }) {
         </>
       ) : place.kind === 'logistics' ? (
         <>
-          <mesh castShadow receiveShadow position={[0, 5.4, 0]}>
-            <boxGeometry args={[58, 10.8, 34]} />
-            <meshStandardMaterial color="#9fa7ac" roughness={0.58} metalness={0.08} />
-          </mesh>
           <mesh castShadow receiveShadow position={[0, 12.2, 0]}>
             <boxGeometry args={[63, 2.4, 39]} />
             <meshStandardMaterial color="#3e474f" roughness={0.44} metalness={0.18} />
@@ -535,10 +642,6 @@ function Landmark({ place }) {
         </>
       ) : place.kind === 'hospital' ? (
         <>
-          <mesh castShadow receiveShadow position={[0, 6.5, 0]}>
-            <boxGeometry args={[42, 13, 30]} />
-            <meshStandardMaterial color="#dfe8ed" roughness={0.48} metalness={0.05} />
-          </mesh>
           <mesh castShadow receiveShadow position={[0, 14.8, 0]}>
             <boxGeometry args={[31, 6, 22]} />
             <meshStandardMaterial color="#cbd9df" roughness={0.42} metalness={0.06} />
@@ -560,10 +663,6 @@ function Landmark({ place }) {
         </>
       ) : (
         <>
-          <mesh castShadow receiveShadow position={[0, 4.5, 0]}>
-            <boxGeometry args={[26, 9, 22]} />
-            <meshStandardMaterial color={color} roughness={0.42} metalness={0.18} />
-          </mesh>
           <mesh castShadow receiveShadow position={[0, 10.5, 0]}>
             <boxGeometry args={[22, 4, 18]} />
             <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.08} />

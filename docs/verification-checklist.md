@@ -38,6 +38,10 @@ audit has a clear finish line.
   must be visually distinguishable from private cars.
 - Place meaning: confirm every landmark has a visible form, map point, gameplay
   role, and is reachable by NPC/player movement.
+- Landmark interiors: confirm named buildings have solid wall shells, visible
+  door openings, a lobby/readable interior, and elevator/stair/escalator props.
+- Entry rules: verify the player cannot walk through landmark side/back walls
+  and can enter/exit through the front door opening.
 - Daily routine: accelerate or observe city time across morning, work, third
   place, and night slots; agents should change destinations by schedule.
 - Taxi route: request taxi escorts to at least three distant landmarks and

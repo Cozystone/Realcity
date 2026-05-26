@@ -1,4 +1,4 @@
-import { Suspense, useMemo } from 'react'
+import { Suspense, useEffect, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import * as THREE from 'three'
 import { createRealCity } from './engine/cityEngine'
@@ -7,6 +7,10 @@ import HUD from './ui/HUD'
 
 export default function App() {
   const city = useMemo(() => createRealCity(), [])
+
+  useEffect(() => {
+    if (import.meta.env.DEV) window.__REALCITY_CITY__ = city
+  }, [city])
 
   return (
     <main className="app">

@@ -153,6 +153,29 @@ async function inspectCanvas(page) {
   return { canvases, largest }
 }
 
+async function inspectLandmarkInteriors(page) {
+  const interiors = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    if (!city) return null
+    return city.landmarks
+      .filter(place => place.kind !== 'park')
+      .map(place => ({
+        id: place.id,
+        name: place.name,
+        kind: place.kind,
+        hasInterior: !!place.interior,
+        solidWalls: !!place.interior?.solidWalls,
+        doorWidth: place.interior?.doorWidth || 0,
+        verticalCore: place.interior?.verticalCore || '',
+      }))
+  })
+  assert(Array.isArray(interiors), 'City metadata was not exposed for interior verification')
+  assert(interiors.length >= 8, 'Expected landmark interiors for most named buildings')
+  const broken = interiors.filter(item => !item.hasInterior || !item.solidWalls || item.doorWidth <= 0 || !item.verticalCore)
+  assert(broken.length === 0, `Incomplete landmark interiors: ${broken.map(item => item.id).join(', ')}`)
+  return interiors
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -200,6 +223,7 @@ async function main() {
     await page.waitForTimeout(2500)
 
     const canvas = await inspectCanvas(page)
+    const interiors = await inspectLandmarkInteriors(page)
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
     const mapText = await page.locator('.full-map-panel').innerText({ timeout: 5000 })
@@ -268,6 +292,7 @@ async function main() {
       task,
       browser: executablePath,
       canvas,
+      interiors,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),
