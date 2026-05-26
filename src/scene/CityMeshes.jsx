@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
 import {
@@ -10,6 +11,7 @@ import {
   terrainHeight,
   terrainTone,
 } from '../engine/cityEngine'
+import { useCityStore } from '../engine/cityStore'
 
 function makeTerrainGeometry() {
   const segments = 140
@@ -443,6 +445,46 @@ function Trees({ trees }) {
   )
 }
 
+function AutomaticDoorPanels({ place, color }) {
+  const leftRef = useRef()
+  const rightRef = useRef()
+  const open = useRef(0)
+  const interior = place.interior
+
+  const door = interior.doorWidth
+  const frontZ = -interior.depth / 2
+
+  useFrame((_, delta) => {
+    const player = useCityStore.getState().player
+    const localX = player.x - place.x
+    const localZ = player.z - place.z
+    const nearDoor = Math.abs(localX) < door * 0.9 && Math.abs(localZ - frontZ) < 6.5
+    const insideLobby = Math.abs(localX) < interior.width / 2 && Math.abs(localZ) < interior.depth / 2
+    const target = nearDoor || insideLobby ? 1 : 0
+    open.current += (target - open.current) * (1 - Math.exp(-8 * Math.min(delta, 0.05)))
+    const slide = open.current * door * 0.42
+    if (leftRef.current) leftRef.current.position.x = -door * 0.28 - slide
+    if (rightRef.current) rightRef.current.position.x = door * 0.28 + slide
+  })
+
+  return (
+    <group>
+      <mesh ref={leftRef} position={[-door * 0.28, 2.1, frontZ - 0.12]}>
+        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
+        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
+      </mesh>
+      <mesh ref={rightRef} position={[door * 0.28, 2.1, frontZ - 0.12]}>
+        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
+        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
+      </mesh>
+      <mesh position={[0, 4.45, frontZ - 0.18]}>
+        <boxGeometry args={[door + 1.2, 0.48, 0.18]} />
+        <meshStandardMaterial color="#101820" emissive={color} emissiveIntensity={0.55} roughness={0.28} metalness={0.24} />
+      </mesh>
+    </group>
+  )
+}
+
 function InteriorShell({ place, color }) {
   const interior = place.interior
   if (!interior) return null
@@ -536,18 +578,7 @@ function InteriorShell({ place, color }) {
         <boxGeometry args={[w + 1.8, 0.44, d + 1.8]} />
         <meshStandardMaterial color="#343b42" roughness={0.45} metalness={0.16} />
       </mesh>
-      <mesh position={[-door * 0.28, 2.1, frontZ - 0.12]}>
-        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
-        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
-      </mesh>
-      <mesh position={[door * 0.28, 2.1, frontZ - 0.12]}>
-        <boxGeometry args={[door * 0.42, 3.8, 0.12]} />
-        <meshStandardMaterial color="#b8ecff" roughness={0.08} metalness={0.34} transparent opacity={0.45} />
-      </mesh>
-      <mesh position={[0, 4.45, frontZ - 0.18]}>
-        <boxGeometry args={[door + 1.2, 0.48, 0.18]} />
-        <meshStandardMaterial color="#101820" emissive={color} emissiveIntensity={0.55} roughness={0.28} metalness={0.24} />
-      </mesh>
+      <AutomaticDoorPanels place={place} color={color} />
       <mesh receiveShadow position={[0, 0.11, -d * 0.1]}>
         <boxGeometry args={[Math.max(3, door * 0.8), 0.05, Math.max(6, interior.lobbyDepth)]} />
         <meshStandardMaterial color="#d7dce0" roughness={0.32} metalness={0.04} />

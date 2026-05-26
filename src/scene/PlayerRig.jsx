@@ -104,6 +104,24 @@ function resolveLandmarkCollision(city, previousX, previousZ, nextX, nextZ) {
   return [px, pz]
 }
 
+function currentInterior(city, x, z) {
+  for (const place of city.landmarks) {
+    const interior = place.interior
+    if (!interior) continue
+    const localX = x - place.x
+    const localZ = z - place.z
+    if (Math.abs(localX) < interior.width / 2 && Math.abs(localZ) < interior.depth / 2) {
+      return {
+        id: place.id,
+        name: place.name,
+        kind: place.kind,
+        verticalCore: interior.verticalCore,
+      }
+    }
+  }
+  return null
+}
+
 function resolveBuildingCollision(city, previousX, previousZ, x, z) {
   let px = x
   let pz = z
@@ -205,6 +223,7 @@ export default function PlayerRig({ city }) {
   const move = useMemo(() => new THREE.Vector3(), [])
   const camTarget = useMemo(() => new THREE.Vector3(), [])
   const lookAt = useMemo(() => new THREE.Vector3(), [])
+  const lastPlace = useRef(null)
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
@@ -295,7 +314,15 @@ export default function PlayerRig({ city }) {
     state.camera.lookAt(lookAt)
 
     const district = city.districtAt(pos.current.x, pos.current.z).name
-    useCityStore.getState().setPlayer({
+    const place = currentInterior(city, pos.current.x, pos.current.z)
+    const storeNow = useCityStore.getState()
+    if ((place?.id || null) !== lastPlace.current) {
+      lastPlace.current = place?.id || null
+      if (place) {
+        storeNow.setPulse(`You entered ${place.name}. ${place.verticalCore === 'elevator' ? 'Elevators' : place.verticalCore === 'escalator' ? 'Escalators' : 'Stairs'} are visible from the lobby.`)
+      }
+    }
+    storeNow.setPlayer({
       x: pos.current.x,
       y: pos.current.y,
       z: pos.current.z,
@@ -303,6 +330,9 @@ export default function PlayerRig({ city }) {
       viewHeading,
       speed: moving.current ? (running.current ? RUN_SPEED : WALK_SPEED) : 0,
       district,
+      placeId: place?.id || null,
+      placeName: place?.name || null,
+      indoors: !!place,
     })
   })
 

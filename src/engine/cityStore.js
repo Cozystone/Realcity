@@ -12,6 +12,9 @@ export const useCityStore = create((set, get) => ({
     viewHeading: Math.PI,
     speed: 0,
     district: 'Central Core',
+    placeId: null,
+    placeName: null,
+    indoors: false,
   },
   weather: {
     label: 'Clear',
@@ -51,7 +54,9 @@ export const useCityStore = create((set, get) => ({
       Math.abs(player.z - current.z) < 0.12 &&
       Math.abs(player.heading - current.heading) < 0.008 &&
       Math.abs((player.viewHeading ?? player.heading) - (current.viewHeading ?? current.heading)) < 0.008 &&
-      Math.abs(player.speed - current.speed) < 0.2
+      Math.abs(player.speed - current.speed) < 0.2 &&
+      (player.placeId || null) === (current.placeId || null) &&
+      !!player.indoors === !!current.indoors
     ) return
 
     set({ player })

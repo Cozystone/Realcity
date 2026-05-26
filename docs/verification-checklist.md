@@ -42,6 +42,13 @@ audit has a clear finish line.
   door openings, a lobby/readable interior, and elevator/stair/escalator props.
 - Entry rules: verify the player cannot walk through landmark side/back walls
   and can enter/exit through the front door opening.
+- Automatic doors: approach a landmark entrance and confirm the glass panels
+  slide open, then close again after moving away.
+- Interior state: enter a landmark lobby and confirm the HUD location changes
+  from district to that building's interior.
+- Entrance routing: request taxi or walking escorts to solid landmarks and
+  confirm arrival happens at the entrance apron, not through the side wall or
+  building center.
 - Daily routine: accelerate or observe city time across morning, work, third
   place, and night slots; agents should change destinations by schedule.
 - Taxi route: request taxi escorts to at least three distant landmarks and

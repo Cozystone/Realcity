@@ -20,6 +20,59 @@ function scheduleFor(agent, timeMinutes) {
   return agent.schedule.find(slot => hour >= slot.start && hour < slot.end) || agent.schedule[0]
 }
 
+function entranceTargetFor(destination) {
+  const interior = destination?.interior
+  if (!interior) {
+    const x = destination.x
+    const z = destination.z
+    return {
+      x,
+      z,
+      y: destination.y ?? terrainHeight(x, z),
+      name: destination.name || 'destination',
+      kind: destination.kind,
+    }
+  }
+
+  const x = destination.x
+  const z = destination.z - interior.depth / 2 - 4.8
+  return {
+    x,
+    z,
+    y: terrainHeight(x, z),
+    name: `${destination.name || 'building'} entrance`,
+    placeName: destination.name,
+    kind: destination.kind,
+    interiorId: destination.id,
+  }
+}
+
+function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }) {
+  if (!place?.interior?.solidWalls) {
+    const x = place.x + offset.x
+    const z = place.z + offset.z
+    return {
+      x,
+      z,
+      y: terrainHeight(x, z),
+      name: place.name,
+    }
+  }
+
+  const entry = entranceTargetFor(place)
+  const lateral = Math.max(-place.interior.doorWidth * 0.42, Math.min(place.interior.doorWidth * 0.42, offset.x * 0.18))
+  const setback = 2.2 + Math.min(5.5, Math.abs(offset.z) * 0.18)
+  const x = entry.x + lateral
+  const z = entry.z - setback
+  return {
+    ...entry,
+    x,
+    z,
+    y: terrainHeight(x, z),
+    name: place.name,
+  }
+}
+
 function targetFor(agent, places, timeMinutes) {
   const slot = scheduleFor(agent, timeMinutes)
   if (slot.target === 'home') {
@@ -27,13 +80,7 @@ function targetFor(agent, places, timeMinutes) {
   }
   const id = slot.target === 'work' ? agent.workId : agent.thirdId
   const place = places.get(id) || [...places.values()][0]
-  return {
-    x: place.x + agent.offset.x,
-    z: place.z + agent.offset.z,
-    y: place.y,
-    name: place.name,
-    activity: slot.activity,
-  }
+  return { ...scheduleTargetForPlace(place, agent.offset), activity: slot.activity }
 }
 
 function moveAgentToward(agent, target, delta, speed) {
@@ -587,12 +634,7 @@ function NPCs({ city }) {
       }
 
       const destination = destinationFromPlan(plan, best, places, request)
-      const destinationTarget = {
-        x: destination.x,
-        z: destination.z,
-        y: destination.y ?? terrainHeight(destination.x, destination.z),
-        name: destination.name || 'destination',
-      }
+      const destinationTarget = entranceTargetFor(destination)
       const distance = Math.hypot(destinationTarget.x - store.player.x, destinationTarget.z - store.player.z)
       const mode = plan.mode === 'taxi' || distance > 420 ? 'taxi' : 'walk'
       const mission = {

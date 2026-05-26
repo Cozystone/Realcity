@@ -313,7 +313,7 @@ export default function HUD({ city }) {
       <section className="time-card">
         <h1>{clockLabel(timeMinutes)}</h1>
         <p>Day {day} / {weather.label} / {weather.tempC}C</p>
-        <span>{player.district}</span>
+        <span>{player.indoors ? `${player.placeName} interior` : player.district}</span>
       </section>
 
       <Compass heading={viewHeading} />

@@ -191,7 +191,13 @@ Current rules:
    circulation element.
 4. Vertical circulation can be an elevator, stair, or escalator depending on the
    place type.
-5. Visual meshes may be detailed, but collision should remain simple and
+5. Automatic front door panels open when the player approaches the entry axis or
+   stands in the lobby.
+6. NPC escort and taxi destinations snap to the entrance apron of solid
+   landmark buildings instead of the building center.
+7. Scheduled NPCs gather at entry aprons for solid landmarks until per-floor
+   interior navigation is added, avoiding visual wall clipping around landmarks.
+8. Visual meshes may be detailed, but collision should remain simple and
    intentional: solid walls, clear door openings, and separate interior zones.
 
 Long-term final version:
@@ -199,11 +205,16 @@ Long-term final version:
 - Add room graphs per building: lobby, corridors, offices, apartments, service
   rooms, stairwells, elevators, shops, restrooms, loading bays, and restricted
   rooms.
+- Extend interiors beyond landmarks so apartments, houses, warehouses, schools,
+  hospitals, shops, offices, and transit buildings all have authored or
+  procedural internal layouts.
 - Add door state machines: locked, unlocked, automatic, held open, damaged,
   staff-only, emergency-open.
 - Add NPC interior routines: enter building, wait for elevator, go to office,
   meet someone, buy coffee, use stairs during crowding, leave by schedule.
 - Add interior navigation mesh and per-floor portals.
+- Add elevator, stair, and escalator travel as real state transitions with
+  waiting, boarding, riding/climbing, exit choice, and crowd congestion.
 - Add procedural interior LOD: nearby interiors are real rooms, distant interiors
   are simulated as aggregate occupancy and window light.
 - Connect building access to social rules: reception desks, security, queues,
