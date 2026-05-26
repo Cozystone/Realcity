@@ -182,6 +182,15 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
 
   useEffect(() => () => stopAudio(audioRef.current), [])
 
+  useEffect(() => {
+    const openPhone = (event) => {
+      setOpen(true)
+      if (event.detail?.tab) setTab(event.detail.tab)
+    }
+    window.addEventListener('realcity:open-phone', openPhone)
+    return () => window.removeEventListener('realcity:open-phone', openPhone)
+  }, [])
+
   const appendThread = (contact, items) => {
     setThreads(prev => ({
       ...prev,

@@ -169,6 +169,21 @@ function InteractionPanel({ interaction }) {
   if (!interaction?.agent) return null
 
   const disabled = interaction.status === 'thinking'
+  const workLabel = interaction.agent.workAddress || interaction.agent.workName || 'your workplace'
+  const presets = [
+    {
+      label: '직장까지',
+      text: `나를 ${workLabel}까지 데려다줘요. 택시가 빠르면 택시를 타요.`,
+    },
+    {
+      label: '택시 이동',
+      text: '가까운 택시를 잡아서 목적지까지 같이 가줘요.',
+    },
+    {
+      label: '일정 묻기',
+      text: '지금 어디로 가는 중이고 오늘 일정은 어떻게 돼요?',
+    },
+  ]
   const submit = (event) => {
     event.preventDefault()
     const request = text.trim()
@@ -189,14 +204,110 @@ function InteractionPanel({ interaction }) {
         value={text}
         disabled={disabled}
         onChange={event => setText(event.target.value)}
-        placeholder="예: 나를 당신이 일하는 데까지 데려다줘요. 급하면 택시를 잡아도 돼요."
+        placeholder="예: 나를 당신이 일하는 곳까지 데려다줘요. 택시가 빠르면 택시를 타요."
         rows={3}
       />
+      <div className="request-presets" aria-label="Quick requests">
+        {presets.map(item => (
+          <button key={item.label} type="button" disabled={disabled} onClick={() => setText(item.text)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
       <div className="interaction-actions">
         <button type="submit" disabled={disabled || !text.trim()}>{disabled ? 'Thinking...' : 'Send'}</button>
         <button type="button" onClick={() => useCityStore.getState().closeInteraction()}>Close</button>
       </div>
     </form>
+  )
+}
+
+function openPhone(tab = 'messages') {
+  window.dispatchEvent(new CustomEvent('realcity:open-phone', { detail: { tab } }))
+}
+
+function pressTalk() {
+  window.dispatchEvent(new KeyboardEvent('keydown', {
+    code: 'KeyE',
+    key: 'e',
+    bubbles: true,
+    cancelable: true,
+  }))
+}
+
+function KeyPrompt({ keyName, label, detail, primary = false, onClick }) {
+  const Component = onClick ? 'button' : 'div'
+  return (
+    <Component
+      type={onClick ? 'button' : undefined}
+      className={`key-prompt ${primary ? 'primary' : ''}`}
+      onClick={onClick}
+    >
+      <kbd>{keyName}</kbd>
+      <span>{label}</span>
+      {detail ? <small>{detail}</small> : null}
+    </Component>
+  )
+}
+
+function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
+  const actions = []
+
+  if (mission) {
+    const phase = ride
+      ? 'In taxi'
+      : mission.phase === 'to_pickup'
+        ? 'Go to curb'
+        : mission.phase === 'taxi_boarding'
+          ? 'Boarding taxi'
+          : mission.phase === 'leading'
+            ? 'Follow agent'
+            : 'Active plan'
+    actions.push({
+      keyName: mission.mode === 'taxi' ? 'TAXI' : 'GO',
+      label: phase,
+      detail: mission.destination?.address || mission.destination?.name,
+      primary: true,
+    })
+  } else if (nearbyAgent) {
+    actions.push({
+      keyName: 'E',
+      label: `Talk to ${nearbyAgent.name.split(' ')[0]}`,
+      detail: `${Math.round(nearbyAgent.distance)}m`,
+      primary: true,
+      onClick: pressTalk,
+    })
+  } else {
+    actions.push({ keyName: 'E', label: 'Talk', detail: 'near NPC', primary: true })
+  }
+
+  actions.push(
+    { keyName: 'T', label: 'Taxi', detail: 'phone route', onClick: () => openPhone('taxi') },
+    { keyName: 'M', label: 'Map', detail: 'city', onClick: onOpenMap },
+    { keyName: 'P', label: 'Phone', detail: 'contacts', onClick: () => openPhone('messages') },
+  )
+
+  return (
+    <div className="prompt-stack" aria-label="Context actions">
+      <div className="prompt-actions">
+        {actions.map(action => (
+          <KeyPrompt
+            key={`${action.keyName}-${action.label}`}
+            keyName={action.keyName}
+            label={action.label}
+            detail={action.detail}
+            primary={action.primary}
+            onClick={action.onClick}
+          />
+        ))}
+      </div>
+      <div className="control-ribbon" aria-label="Movement controls">
+        <span><kbd>W/S</kbd> Move</span>
+        <span><kbd>A/D</kbd> Turn</span>
+        <span><kbd>←/→</kbd> Look</span>
+        <span><kbd>Space</kbd> Jump</span>
+      </div>
+    </div>
   )
 }
 
@@ -305,11 +416,35 @@ export default function HUD({ city }) {
   const stats = useCityStore(state => state.stats)
   const pulse = useCityStore(state => state.pulse)
   const focusedAgent = useCityStore(state => state.focusedAgent)
+  const nearbyAgent = useCityStore(state => state.nearbyAgent)
   const dialogue = useCityStore(state => state.dialogue)
   const interaction = useCityStore(state => state.interaction)
   const mission = useCityStore(state => state.mission)
   const ride = useCityStore(state => state.ride)
   const viewHeading = player.viewHeading ?? player.heading
+  const displayedAgent = focusedAgent || nearbyAgent
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.target?.closest?.('input, textarea, select, button')) return
+      if (event.code === 'KeyM') {
+        event.preventDefault()
+        setMapOpen(open => !open)
+      } else if (event.code === 'KeyP') {
+        event.preventDefault()
+        openPhone('messages')
+      } else if (event.code === 'KeyT') {
+        event.preventDefault()
+        openPhone('taxi')
+      } else if (event.code === 'Escape') {
+        setMapOpen(false)
+        useCityStore.getState().closeInteraction()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="hud">
@@ -320,10 +455,18 @@ export default function HUD({ city }) {
       </section>
 
       <Compass heading={viewHeading} />
-      <AgentCard agent={focusedAgent} stats={stats} pulse={pulse} />
+      <AgentCard agent={displayedAgent} stats={stats} pulse={pulse} />
       <Dialogue dialogue={dialogue} />
       <InteractionPanel interaction={interaction} />
       <MissionPanel mission={mission} ride={ride} />
+      {!interaction ? (
+        <ContextPrompts
+          nearbyAgent={nearbyAgent}
+          mission={mission}
+          ride={ride}
+          onOpenMap={() => setMapOpen(true)}
+        />
+      ) : null}
 
       <button type="button" className="map-shell" onClick={() => setMapOpen(true)} aria-label="Open full city map">
         <Minimap city={city} player={player} />

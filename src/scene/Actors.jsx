@@ -719,6 +719,7 @@ function NPCs({ city }) {
   const colorsReady = useRef(false)
   const socialClock = useRef(0)
   const statsClock = useRef(0)
+  const nearbyClock = useRef(0)
   const busy = useRef(false)
   const requestBusy = useRef(false)
 
@@ -732,6 +733,8 @@ function NPCs({ city }) {
     const store = useCityStore.getState()
     const time = store.timeMinutes
     let talks = 0
+    let nearestAgent = null
+    let nearestDistance = Infinity
     const player = new THREE.Vector3(store.player.x, store.player.y, store.player.z)
 
     if (!colorsReady.current) {
@@ -785,6 +788,10 @@ function NPCs({ city }) {
       const agentState = agent.update(dt, time, places, city.roads)
       if (agentState === 'talking') talks += 1
       const playerDistance = agent.pos.distanceTo(player)
+      if (!agent.mission && playerDistance < nearestDistance) {
+        nearestAgent = agent
+        nearestDistance = playerDistance
+      }
       if (!agent.mission && agentState !== 'walking' && agent.talkTimer <= 0 && playerDistance < 8.5) {
         const desired = Math.atan2(store.player.x - agent.pos.x, store.player.z - agent.pos.z)
         const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
@@ -840,6 +847,7 @@ function NPCs({ city }) {
 
     socialClock.current += dt
     statsClock.current += dt
+    nearbyClock.current += dt
 
     if (socialClock.current > 0.8) {
       socialClock.current = 0
@@ -863,6 +871,13 @@ function NPCs({ city }) {
         x: agent.pos.x,
         z: agent.pos.z,
       })))
+    }
+
+    if (nearbyClock.current > 0.22) {
+      nearbyClock.current = 0
+      store.setNearbyAgent(nearestAgent && nearestDistance <= 24
+        ? { ...nearestAgent.snapshot(places), distance: nearestDistance }
+        : null)
     }
 
     torsoRef.current.instanceMatrix.needsUpdate = true
@@ -914,7 +929,7 @@ function NPCs({ city }) {
       store.showDialogue({
         speaker: best.name,
         role: best.job,
-        text: '말씀하세요. 제가 가능한 일인지 판단하고 움직일게요.',
+        text: '말씀하세요. 제가 가능한 일인지 판단하고 같이 움직일게요.',
         agent,
       })
       window.setTimeout(() => { busy.current = false }, 450)

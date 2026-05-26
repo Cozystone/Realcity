@@ -288,6 +288,31 @@ select {
   box-shadow: 0 0 0 3px rgba(74, 173, 255, 0.14);
 }
 
+.request-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.request-presets button {
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(74, 173, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(74, 173, 255, 0.1);
+  color: rgba(238, 244, 255, 0.84);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.request-presets button:disabled {
+  cursor: default;
+  opacity: 0.44;
+}
+
 .interaction-actions {
   display: flex;
   justify-content: flex-end;
@@ -358,6 +383,110 @@ select {
 .mission-panel ol {
   margin: 9px 0 0;
   padding-left: 18px;
+}
+
+.prompt-stack {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  width: min(720px, calc(100vw - 260px));
+  transform: translateX(-50%);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.key-prompt {
+  min-width: 118px;
+  height: 42px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 1fr auto;
+  column-gap: 8px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(5, 12, 22, 0.72);
+  color: rgba(238, 244, 255, 0.84);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+}
+
+button.key-prompt {
+  cursor: pointer;
+}
+
+.key-prompt.primary {
+  min-width: 168px;
+  border-color: rgba(74, 173, 255, 0.46);
+  background: rgba(8, 20, 34, 0.86);
+  color: #f8fbff;
+}
+
+.key-prompt kbd,
+.control-ribbon kbd {
+  min-width: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-bottom-color: rgba(255, 255, 255, 0.42);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.key-prompt span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.key-prompt small {
+  grid-column: 2;
+  margin-top: -2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(238, 244, 255, 0.48);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.control-ribbon {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(5, 12, 22, 0.42);
+  backdrop-filter: blur(12px);
+  color: rgba(238, 244, 255, 0.58);
+  font-size: 11px;
+}
+
+.control-ribbon span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
 }
 
 .phone-shell {
@@ -1175,6 +1304,27 @@ select {
 
   .interaction-panel {
     bottom: 220px;
+  }
+
+  .prompt-stack {
+    bottom: 82px;
+    width: calc(100vw - 28px);
+  }
+
+  .prompt-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .key-prompt,
+  .key-prompt.primary {
+    min-width: 0;
+  }
+
+  .control-ribbon {
+    max-width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
   }
 
   .mission-panel {

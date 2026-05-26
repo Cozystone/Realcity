@@ -37,6 +37,7 @@ export const useCityStore = create((set, get) => ({
     llm: 'ollama',
   },
   focusedAgent: null,
+  nearbyAgent: null,
   dialogue: null,
   interaction: null,
   mission: null,
@@ -74,6 +75,25 @@ export const useCityStore = create((set, get) => ({
 
   setSky(sky) {
     set(state => ({ sky: { ...state.sky, ...sky } }))
+  },
+
+  setNearbyAgent(agent) {
+    const current = get().nearbyAgent
+    if (!agent) {
+      if (current) set({ nearbyAgent: null })
+      return
+    }
+
+    const currentDistance = current ? Math.round(current.distance || 0) : null
+    const nextDistance = Math.round(agent.distance || 0)
+    if (
+      current?.id === agent.id &&
+      currentDistance === nextDistance &&
+      current.activity === agent.activity &&
+      current.placeName === agent.placeName
+    ) return
+
+    set({ nearbyAgent: agent })
   },
 
   showDialogue(dialogue) {

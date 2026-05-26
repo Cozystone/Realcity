@@ -275,9 +275,30 @@ async function inspectCityNorms(page) {
   return norms
 }
 
+async function inspectSupportUX(page) {
+  await page.locator('.prompt-stack').waitFor({ state: 'visible', timeout: 10000 })
+  const promptText = await page.locator('.prompt-stack').innerText({ timeout: 5000 })
+  assert(promptText.includes('Taxi') && promptText.includes('Map') && promptText.includes('Phone'), `Context prompt actions are incomplete: ${promptText}`)
+  assert(promptText.includes('W/S') && promptText.includes('A/D') && promptText.includes('Space'), `Movement guide is incomplete: ${promptText}`)
+
+  await dispatchKey(page, 'KeyT', 'keydown')
+  await dispatchKey(page, 'KeyT', 'keyup')
+  await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+  const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(taxiText.includes('Taxi') && await page.locator('.phone-route-list button').count() > 0, `T key did not open the phone taxi app: ${taxiText}`)
+  await page.locator('.phone-close').click()
+  await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
+
+  return {
+    prompt: promptText.split(/\r?\n/).slice(0, 16),
+    taxiShortcut: taxiText.split(/\r?\n/).slice(0, 12),
+  }
+}
+
 async function inspectPhone(page) {
   await page.locator('.phone-toggle').click()
   await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+  await page.locator('.phone-tabs button[data-tab="messages"]').click()
   const homeText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(homeText.includes('RealPhone'), 'Phone shell did not open')
   assert(homeText.includes('Msg') && homeText.includes('People') && homeText.includes('Feed') && homeText.includes('Taxi') && homeText.includes('Music'), 'Phone app tabs were missing')
@@ -355,6 +376,7 @@ async function main() {
     const canvas = await inspectCanvas(page)
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
+    const supportUX = await inspectSupportUX(page)
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
@@ -443,6 +465,7 @@ async function main() {
       canvas,
       interiors,
       cityNorms,
+      supportUX,
       skyState,
       phone,
       controls: {
