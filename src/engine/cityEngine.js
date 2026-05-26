@@ -295,6 +295,64 @@ function createTraffic(rng, roads) {
   })
 }
 
+function buildingTypeLabel(type) {
+  if (type === 'skyscraper') return 'tower'
+  if (type === 'apartment') return 'residence'
+  if (type === 'house') return 'house'
+  if (type === 'office') return 'office'
+  return 'building'
+}
+
+function frontageForBuilding(building, roadsById) {
+  const road = roadsById.get(building.roadId)
+  const setback = 3.4
+  if (!road) {
+    return {
+      x: building.x,
+      z: building.z - building.d / 2 - setback,
+      y: terrainHeight(building.x, building.z - building.d / 2 - setback),
+    }
+  }
+
+  if (road.axis === 'x') {
+    const side = road.z >= building.z ? 1 : -1
+    const x = clamp(building.x, road.from + 4, road.to - 4)
+    const z = building.z + side * (building.d / 2 + setback)
+    return { x, z, y: terrainHeight(x, z) }
+  }
+
+  const side = road.x >= building.x ? 1 : -1
+  const x = building.x + side * (building.w / 2 + setback)
+  const z = clamp(building.z, road.from + 4, road.to - 4)
+  return { x, z, y: terrainHeight(x, z) }
+}
+
+function createAddressBook(buildings, roads) {
+  const roadsById = new Map(roads.map(road => [road.id, road]))
+  return buildings
+    .filter(building => building.address && building.roadName)
+    .map(building => {
+      const frontage = frontageForBuilding(building, roadsById)
+      const typeLabel = buildingTypeLabel(building.type)
+      return {
+        id: `addr_${building.id}`,
+        buildingId: building.id,
+        name: `${building.address} ${typeLabel}`,
+        kind: 'address',
+        buildingType: building.type,
+        district: building.district,
+        address: building.address,
+        roadId: building.roadId,
+        roadName: building.roadName,
+        addressNumber: building.addressNumber,
+        x: frontage.x,
+        z: frontage.z,
+        y: frontage.y,
+        entryRule: 'sidewalk-frontage',
+      }
+    })
+}
+
 function createSchedule(role) {
   if (role === 'doctor' || role === 'security' || role === 'courier') {
     return [
@@ -449,6 +507,7 @@ export function createRealCity(seed = 20260525) {
   const trees = createTrees(rng, landmarks, roads)
   const cars = createTraffic(rng, roads)
   const npcs = createNPCs(rng, buildings, landmarks)
+  const addressBook = createAddressBook(buildings, roads)
   const tiles = createTiles(buildings, landmarks)
   const geojson = createGeoJSON(roads, landmarks)
   const getNearbyBuildings = buildCollisionIndex(buildings)
@@ -459,6 +518,7 @@ export function createRealCity(seed = 20260525) {
     buildings,
     trees,
     landmarks,
+    addressBook,
     cars,
     npcs,
     tiles,
@@ -470,7 +530,7 @@ export function createRealCity(seed = 20260525) {
       pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings.',
       traffic: 'Cars own drive lanes, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
-      addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero.',
+      addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
     },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',

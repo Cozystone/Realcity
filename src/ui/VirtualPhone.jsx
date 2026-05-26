@@ -5,6 +5,7 @@ const PHONE_TABS = [
   { id: 'messages', label: 'Msg' },
   { id: 'contacts', label: 'People' },
   { id: 'social', label: 'Feed' },
+  { id: 'taxi', label: 'Taxi' },
   { id: 'music', label: 'Music' },
 ]
 
@@ -72,6 +73,24 @@ function buildContacts(city, focusedAgent, player) {
     })
 
   return base.slice(0, 10)
+}
+
+function buildRouteTargets(city, player) {
+  const landmarks = (city.landmarks || [])
+    .filter(place => place.address)
+    .slice(0, 6)
+  const nearbyAddresses = [...(city.addressBook || [])]
+    .sort((a, b) => Math.hypot(a.x - player.x, a.z - player.z) - Math.hypot(b.x - player.x, b.z - player.z))
+    .slice(0, 8)
+
+  return [...landmarks, ...nearbyAddresses].map(target => ({
+    id: target.id,
+    name: target.name,
+    address: target.address,
+    roadName: target.roadName,
+    kind: target.kind,
+    distance: Math.hypot(target.x - player.x, target.z - player.z),
+  }))
 }
 
 function seedThread(contact) {
@@ -150,6 +169,10 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     () => buildContacts(city, focusedAgent, player),
     [city, focusedAgent, player.x, player.z],
   )
+  const routeTargets = useMemo(
+    () => buildRouteTargets(city, player),
+    [city, player.x, player.z],
+  )
   const selected = contacts.find(contact => contact.id === selectedId) || contacts[0]
   const thread = selected ? (threads[selected.id] || seedThread(selected)) : []
 
@@ -186,6 +209,25 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
         detail: { agentId: selected.id, text },
       }))
     }
+  }
+
+  const requestTaxiToTarget = (target) => {
+    if (!selected || !target) return
+    const label = target.address || target.name
+    const text = `Take me to ${label}. Use a taxi and stay with me until we arrive.`
+    const reply = `I will route this as a taxi request to ${label}. Meet me at the curb.`
+    appendThread(selected, [
+      { from: 'me', text },
+      { from: 'them', text: reply },
+    ])
+    setTab('messages')
+
+    const store = useCityStore.getState()
+    store.setPulse(`Taxi route request sent to ${selected.name}: ${label}.`)
+    store.showDialogue({ speaker: selected.name, role: selected.job, text: reply, agent: phoneAgent(selected) })
+    window.dispatchEvent(new CustomEvent('realcity:npc-request', {
+      detail: { agentId: selected.id, text },
+    }))
   }
 
   const callContact = (contact = selected) => {
@@ -344,6 +386,28 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <footer>{contact.affinity} trust / {Math.round(contact.distance)}m memory distance</footer>
                 </article>
               ))}
+            </div>
+          ) : null}
+
+          {tab === 'taxi' ? (
+            <div className="phone-app phone-taxi">
+              <div className="phone-taxi-summary">
+                <strong>{selected ? selected.name : 'Dispatch'}</strong>
+                <small>{selected ? `${selected.relation} / ${selected.online ? 'online' : 'later'}` : 'Choose a contact first'}</small>
+              </div>
+              <div className="phone-route-list">
+                {routeTargets.map(target => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => requestTaxiToTarget(target)}
+                    disabled={!selected}
+                  >
+                    <strong>{target.address || target.name}</strong>
+                    <span>{target.kind} / {Math.round(target.distance)}m / {target.roadName || 'city road'}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 

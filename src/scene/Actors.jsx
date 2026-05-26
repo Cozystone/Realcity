@@ -325,16 +325,65 @@ function nearestRoadPickup(pos, roads) {
   return best || { x: pos.x + 4, z: pos.z + 4, y: terrainHeight(pos.x + 4, pos.z + 4), name: 'curbside' }
 }
 
-function destinationFromPlan(plan, agent, places, request = '') {
+function normalizeRouteText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function placeMatchesText(place, text) {
+  const normalized = normalizeRouteText(text)
+  const raw = String(text || '').toLowerCase()
+  return [place.id, place.name, place.kind, place.address, place.roadName, place.district, place.buildingType].some(value => {
+    if (!value) return false
+    const candidate = String(value).toLowerCase()
+    const normalizedCandidate = normalizeRouteText(value)
+    return raw.includes(candidate) || (normalizedCandidate && normalized.includes(normalizedCandidate))
+  })
+}
+
+function routePlacesForRequest(request, city, player) {
+  const landmarks = city.landmarks || []
+  const addresses = city.addressBook || []
+  const explicitAddresses = addresses.filter(place => placeMatchesText(place, request)).slice(0, 36)
+  const nearbyAddresses = [...addresses]
+    .sort((a, b) => Math.hypot(a.x - player.x, a.z - player.z) - Math.hypot(b.x - player.x, b.z - player.z))
+    .slice(0, 18)
+  const merged = new Map()
+
+  for (const place of [...explicitAddresses, ...landmarks, ...nearbyAddresses]) {
+    merged.set(place.id, {
+      id: place.id,
+      name: place.name,
+      kind: place.kind,
+      address: place.address,
+      roadName: place.roadName,
+      district: place.district,
+      buildingType: place.buildingType,
+      x: place.x,
+      z: place.z,
+    })
+  }
+
+  return [...merged.values()]
+}
+
+function destinationFromPlan(plan, agent, places, request = '', destinations = places) {
   if (plan.destination === 'named_place') {
-    const placeList = [...places.values()]
+    const placeList = [...destinations.values()]
     const targetId = typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : ''
-    const targetName = typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName.toLowerCase() : ''
-    const byId = targetId ? places.get(targetId) : null
+    const targetName = typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName : ''
+    const byId = targetId ? (destinations.get(targetId) || places.get(targetId)) : null
     if (byId) return byId
 
     if (targetName) {
-      const byName = placeList.find(place => [place.id, place.name, place.kind].some(value => String(value || '').toLowerCase().includes(targetName)))
+      const normalizedName = normalizeRouteText(targetName)
+      const byName = placeList.find(place => [place.id, place.name, place.kind, place.address, place.roadName, place.district, place.buildingType].some(value => {
+        const normalizedValue = normalizeRouteText(value)
+        return normalizedValue && (normalizedValue.includes(normalizedName) || normalizedName.includes(normalizedValue))
+      }))
       if (byName) return byName
     }
 
@@ -519,6 +568,7 @@ function Traffic({ cars }) {
 
 function NPCs({ city }) {
   const places = useMemo(() => new Map(city.landmarks.map(place => [place.id, place])), [city.landmarks])
+  const destinations = useMemo(() => new Map([...city.landmarks, ...(city.addressBook || [])].map(place => [place.id, place])), [city.landmarks, city.addressBook])
   const agents = useMemo(() => city.npcs.map((npc, i) => {
     const agent = new Agent(npc)
     const target = targetFor(agent, places, useCityStore.getState().timeMinutes)
@@ -700,15 +750,7 @@ function NPCs({ city }) {
       requestBusy.current = true
       const store = useCityStore.getState()
       const work = places.get(best.workId)
-      const cityPlaces = [...places.values()].map(place => ({
-        id: place.id,
-        name: place.name,
-        kind: place.kind,
-        address: place.address,
-        roadName: place.roadName,
-        x: place.x,
-        z: place.z,
-      }))
+      const cityPlaces = routePlacesForRequest(request, city, store.player)
       const distanceToWork = work ? Math.hypot(work.x - store.player.x, work.z - store.player.z) : 0
       const snapshot = best.snapshot(places)
       store.setInteraction({ status: 'thinking', request })
@@ -730,7 +772,7 @@ function NPCs({ city }) {
         return
       }
 
-      const destination = destinationFromPlan(plan, best, places, request)
+      const destination = destinationFromPlan(plan, best, places, request, destinations)
       const destinationTarget = entranceTargetFor(destination)
       const distance = Math.hypot(destinationTarget.x - store.player.x, destinationTarget.z - store.player.z)
       const mode = plan.mode === 'taxi' || distance > 420 ? 'taxi' : 'walk'
@@ -770,7 +812,7 @@ function NPCs({ city }) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('realcity:npc-request', onNpcRequest)
     }
-  }, [agents, city.roads, places])
+  }, [agents, city, city.roads, places, destinations])
 
   return (
     <>

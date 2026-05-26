@@ -87,8 +87,9 @@ Current rules:
    `Garden-ro`.
 2. Landmarks and procedural buildings receive road-name addresses such as
    `83 Station-daero`.
-3. Taxis and NPC route plans can carry destination addresses in addition to
-   place names.
+3. Taxis and NPC route plans can resolve destination addresses in addition to
+   place names; building addresses point to sidewalk frontage, not building
+   centers.
 4. Trees are filtered out of road reserves so they do not spawn in drive lanes
    or on immediate curb space.
 5. NPC pedestrians are pushed out of drive lanes unless they are near an
@@ -105,8 +106,8 @@ Long-term final version:
 - Add traffic law states: red lights, pedestrian priority, no-parking zones,
   bus stops, taxi ranks, loading bays, emergency lanes, school zones, and
   one-way streets.
-- Add an address resolver so players can tell a taxi a road-name address,
-  landmark alias, business name, or contact location.
+- Expand the address resolver so players can tell a taxi a road-name address,
+  landmark alias, business name, floor number, unit, or contact location.
 - Add civic services: police/security posts, clinics, schools, transit gates,
   trash pickup, deliveries, street cleaning, events, permits, and closing hours.
 - Keep visible layout and rules aligned: if the ground looks like a sidewalk,

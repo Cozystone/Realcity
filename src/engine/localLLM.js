@@ -132,19 +132,46 @@ function includesToken(text, tokens) {
   return tokens.some(token => token && text.includes(token.toLowerCase()))
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function includesPlaceCandidate(request, values) {
+  const raw = String(request || '').toLowerCase()
+  const normalized = normalizeText(request)
+  return values.some(value => {
+    if (!value) return false
+    const candidate = String(value).toLowerCase()
+    const normalizedCandidate = normalizeText(value)
+    return raw.includes(candidate) || (normalizedCandidate && normalized.includes(normalizedCandidate))
+  })
+}
+
 export function matchRequestedPlace(request, places = []) {
-  const text = String(request || '').toLowerCase()
   const list = Array.isArray(places) ? places : []
 
   for (const place of list) {
-    const candidates = [place.id, place.name, place.kind].filter(Boolean).map(value => String(value).toLowerCase())
-    if (includesToken(text, candidates)) return place
+    if (includesPlaceCandidate(request, [place.address])) return place
   }
 
+  for (const place of list) {
+    const candidates = [place.id, place.name, place.kind, place.district, place.buildingType]
+    if (includesPlaceCandidate(request, candidates)) return place
+  }
+
+  const text = String(request || '').toLowerCase()
   for (const group of PLACE_ALIASES) {
     if (!includesToken(text, group.aliases)) continue
     const byId = list.find(place => place.id === group.id)
     if (byId) return byId
+  }
+
+  for (const place of list) {
+    if (includesPlaceCandidate(request, [place.roadName])) return place
   }
 
   return null
@@ -164,23 +191,26 @@ function fallbackActionPlan(agent, request, context = {}) {
   const wantsEscort = /guide|take|lead|escort|bring|drive|walk|go to|\ub370\ub824|\uc548\ub0b4|\uac19\uc774|\ub530\ub77c|\uac00\uc790/.test(text)
   const wantsTaxi = /taxi|cab|car|ride|drive|\ud0dd\uc2dc|\ucc28|\uc2b9\ucc28|\ud0dc\uc6cc/.test(text)
   const asksIdentity = /who|name|job|work|identity|\ub204\uad6c|\uc774\ub984|\uc9c1\uc5c5/.test(text)
+  const namedAddress = targetPlace && includesPlaceCandidate(request, [targetPlace.address, targetPlace.roadName])
+  const asksLocation = /where|location|address|street|road|\uc5b4\ub514|\uc704\uce58|\uc8fc\uc18c|\ub3c4\ub85c\uba85|\uae38|\ub85c/.test(text)
 
-  if (targetPlace && (wantsEscort || wantsTaxi || /where|location|\uc5b4\ub514|\uc704\uce58/.test(text))) {
+  if (targetPlace && (wantsEscort || wantsTaxi || asksLocation || namedAddress)) {
     const tripDistance = distanceTo(targetPlace, context)
     const mode = wantsTaxi || tripDistance > 420 ? 'taxi' : 'walk'
+    const label = targetPlace.address || targetPlace.name
     return {
       intent: 'escort_to_place',
       decision: 'accept',
       mode,
       destination: 'named_place',
       targetPlaceId: targetPlace.id || '',
-      targetPlaceName: targetPlace.name || 'requested place',
+      targetPlaceName: targetPlace.name || label || 'requested place',
       speech: mode === 'taxi'
-        ? `I can take you to ${targetPlace.name}. Let's step to the curb, get a taxi, and ride there together.`
-        : `I can guide you to ${targetPlace.name}. Stay close and I will lead the way.`,
+        ? `I can take you to ${label}. Let's step to the curb, get a taxi, and ride there together.`
+        : `I can guide you to ${label}. Stay close and I will lead the way.`,
       steps: mode === 'taxi'
-        ? ['Move to the nearest curb', 'Hail a taxi', `Ride with the player to ${targetPlace.name}`, 'Confirm arrival at the entrance']
-        : ['Confirm the destination', `Walk toward ${targetPlace.name}`, 'Stop at the entrance and brief the player'],
+        ? ['Move to the nearest curb', 'Hail a taxi', `Ride with the player to ${label}`, 'Confirm arrival at the entrance']
+        : ['Confirm the destination', `Walk toward ${label}`, 'Stop at the entrance and brief the player'],
     }
   }
 
@@ -239,7 +269,11 @@ function resolvePlanPlace(plan, request, places = []) {
 
   const name = typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName.trim().toLowerCase() : ''
   if (name) {
-    const byName = list.find(place => [place.name, place.kind, place.id].some(value => String(value || '').toLowerCase().includes(name)))
+    const normalizedName = normalizeText(name)
+    const byName = list.find(place => [place.name, place.kind, place.id, place.address, place.roadName, place.district, place.buildingType].some(value => {
+      const normalizedValue = normalizeText(value)
+      return normalizedValue && (normalizedValue.includes(normalizedName) || normalizedName.includes(normalizedValue))
+    }))
     if (byName) return byName
   }
 
@@ -301,6 +335,9 @@ export async function planLocalNPCAction(agent, request, context = {}) {
   const parsed = extractJson(text)
   const safe = fallbackActionPlan(agent, request, context)
   const parsedPlace = resolvePlanPlace(parsed, request, places)
+  const safePlace = resolvePlanPlace(safe, request, places)
+  const safeAddressExact = safePlace?.address && includesPlaceCandidate(request, [safePlace.address])
+  const parsedMatchesSafeAddress = parsedPlace?.id && safePlace?.id && parsedPlace.id === safePlace.id
   const safeAcceptsRoute = safe.decision === 'accept' && safe.destination !== 'none'
   const parsedCanRoute = parsed && (
     parsed.destination === 'work' ||
@@ -308,7 +345,9 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     parsed.destination === 'third' ||
     (parsed.destination === 'named_place' && parsedPlace)
   )
-  const plan = parsedCanRoute || !safeAcceptsRoute ? (parsed || safe) : safe
+  const plan = safeAddressExact && !parsedMatchesSafeAddress
+    ? safe
+    : parsedCanRoute || !safeAcceptsRoute ? (parsed || safe) : safe
   const resolvedPlace = resolvePlanPlace(plan, request, places)
 
   return {

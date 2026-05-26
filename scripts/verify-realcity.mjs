@@ -189,6 +189,7 @@ async function inspectCityNorms(page) {
       namedRoads: city.roads.filter(road => road.name).length,
       landmarkAddresses: city.landmarks.filter(place => place.address && place.roadName).length,
       buildingAddresses: city.buildings.filter(building => building.address && building.roadName).length,
+      addressBookEntries: (city.addressBook || []).filter(place => place.address && place.roadName && typeof place.x === 'number' && typeof place.z === 'number').length,
       treeRoadConflicts: treeRoadConflicts.length,
       socialNorms: city.socialNorms,
     }
@@ -197,6 +198,7 @@ async function inspectCityNorms(page) {
   assert(norms.namedRoads === norms.roads, 'Not every road has a street name')
   assert(norms.landmarkAddresses >= 9, 'Landmarks did not receive road-name addresses')
   assert(norms.buildingAddresses > 100, 'Buildings did not receive road-name addresses')
+  assert(norms.addressBookEntries > 100, 'Address book did not expose routable street addresses')
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
   assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem, 'Social norm metadata is incomplete')
   return norms
@@ -207,7 +209,7 @@ async function inspectPhone(page) {
   await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
   const homeText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(homeText.includes('RealPhone'), 'Phone shell did not open')
-  assert(homeText.includes('Msg') && homeText.includes('People') && homeText.includes('Feed') && homeText.includes('Music'), 'Phone app tabs were missing')
+  assert(homeText.includes('Msg') && homeText.includes('People') && homeText.includes('Feed') && homeText.includes('Taxi') && homeText.includes('Music'), 'Phone app tabs were missing')
   assert(await page.locator('.phone-message-form input').count() === 1, 'Phone message composer was missing')
 
   await page.locator('.phone-tabs button[data-tab="contacts"]').click()
@@ -218,12 +220,17 @@ async function inspectPhone(page) {
   const musicText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(musicText.includes('Han River FM') && musicText.includes('Play'), 'Phone music app was incomplete')
 
+  await page.locator('.phone-tabs button[data-tab="taxi"]').click()
+  const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(taxiText.includes('Taxi') && await page.locator('.phone-route-list button').count() > 0, 'Phone taxi app did not expose route targets')
+
   await page.locator('.phone-close').click()
   await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
   return {
     home: homeText.split(/\r?\n/).slice(0, 12),
     contacts: contactsText.split(/\r?\n/).slice(0, 12),
     music: musicText.split(/\r?\n/).slice(0, 12),
+    taxi: taxiText.split(/\r?\n/).slice(0, 12),
   }
 }
 
@@ -250,7 +257,8 @@ async function main() {
   let browser
   const consoleErrors = []
   const pageErrors = []
-  const task = randomTasks[Math.floor(Math.random() * randomTasks.length)]
+  let task = randomTasks[Math.floor(Math.random() * randomTasks.length)]
+  let addressRoute = null
 
   try {
     await waitForServer()
@@ -276,6 +284,17 @@ async function main() {
     const canvas = await inspectCanvas(page)
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
+    addressRoute = await page.evaluate(() => {
+      const city = window.__REALCITY_CITY__
+      const player = window.__REALCITY_STORE__?.getState().player || { x: 0, z: 40 }
+      const target = [...(city?.addressBook || [])]
+        .filter(place => place.address && Math.hypot(place.x - player.x, place.z - player.z) > 520)
+        .sort((a, b) => Math.hypot(b.x - player.x, b.z - player.z) - Math.hypot(a.x - player.x, a.z - player.z))[0]
+      return target
+        ? { id: target.id, name: target.name, address: target.address, roadName: target.roadName }
+        : null
+    })
+    if (addressRoute?.address) task = `Take me to ${addressRoute.address}. Use a taxi and stay with me until we arrive.`
     const phone = await inspectPhone(page)
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
@@ -316,6 +335,7 @@ async function main() {
     await page.locator('.mission-panel').waitFor({ state: 'visible', timeout: 35000 })
     const missionText = await page.locator('.mission-panel').innerText({ timeout: 5000 })
     assert(/escort/i.test(missionText), `Mission panel did not describe an escort: ${missionText}`)
+    if (addressRoute?.address) assert(missionText.includes(addressRoute.address), `Mission panel did not resolve the requested address ${addressRoute.address}: ${missionText}`)
 
     await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 70000 })
     await page.waitForTimeout(700)
@@ -343,6 +363,7 @@ async function main() {
       checkedAt: new Date().toISOString(),
       url: baseUrl,
       task,
+      addressRoute,
       browser: executablePath,
       canvas,
       interiors,
