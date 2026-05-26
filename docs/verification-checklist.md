@@ -18,6 +18,8 @@ audit has a clear finish line.
 - NPC access: `E` opens a nearby NPC interaction panel.
 - Local LLM route: NPC request planning uses the configured local provider
   label, currently `ollama:dolphin3:latest`.
+- RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
+  apps, shows callable NPC contacts, and has a music app entry point.
 - Random avatar task: the harness chooses a random destination task, asks a
   nearby NPC to take the player there, waits for an escort mission, and verifies
   meaningful player travel plus arrival/completion text.
@@ -32,6 +34,8 @@ audit has a clear finish line.
   and visible movement state.
 - NPC social life: observe NPC-to-NPC talks near social places and confirm the
   city pulse reports nearby conversations.
+- Phone social layer: send messages to several contacts, place at least one
+  call, and confirm route-like text can trigger a contacted NPC action.
 - Social reactions: pass close to standing NPCs and confirm they glance toward
   the avatar instead of behaving like static props.
 - Traffic norms: step into a lane and confirm nearby drivers brake/yield; taxis

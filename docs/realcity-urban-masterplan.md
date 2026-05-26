@@ -136,6 +136,8 @@ The renderer should be organized from stable base layers to dynamic detail:
    - MapLibre minimap from city GeoJSON.
    - Compass.
    - City state panel.
+   - RealPhone lower-right smartphone for contacts, NPC messaging, social feed,
+     route requests, calls, and music.
    - Nearby agent card and dialogue overlay.
 
 ## GPT Image Role
@@ -250,6 +252,35 @@ Activation model:
 | Low-density activation | NPCs are simulated as aggregate counts and route events |
 
 This keeps the city feeling alive without trying to run a full LLM for every citizen every frame.
+
+## RealPhone Layer
+
+The phone is the persistent diegetic UI for joining the city socially. It should
+feel like a real device the player carries, not a detached settings menu.
+
+Current rules:
+
+1. The phone sits in the lower-right HUD and opens as an iPhone-like device.
+2. Contacts are generated from known NPC identities and relationship scores.
+3. Messages can be sent to contacts; route-like requests are forwarded into the
+   NPC action system so contacted agents can plan walking or taxi actions.
+4. Calls surface the selected NPC as an in-world dialogue response.
+5. The social feed shows NPC status, place, and relationship context.
+6. The music app can play simple generated ambient tones without requiring
+   external audio files.
+
+Long-term final version:
+
+- Persist contacts, message history, social affinity, call logs, blocked
+  contacts, and discovered profiles.
+- Let NPCs proactively message the player based on relationships, emergencies,
+  jobs, rumors, events, and schedule changes.
+- Connect phone location sharing to taxi dispatch, meetups, navigation pins, and
+  building entrances.
+- Add apps for city map, bank/payment, transit, taxi, camera, photos, news,
+  tasks, marketplace, and emergency services.
+- Use local LLM memory per contact so each NPC's phone style, response time,
+  boundaries, and willingness to help match their personality and current life.
 
 ## Implementation Priorities
 

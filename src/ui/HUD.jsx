@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
+import VirtualPhone from './VirtualPhone'
 
 function Minimap({ city, player }) {
   const container = useRef(null)
@@ -326,6 +327,7 @@ export default function HUD({ city }) {
         <Minimap city={city} player={player} />
       </button>
       {mapOpen ? <FullCityMap city={city} player={player} onClose={() => setMapOpen(false)} /> : null}
+      <VirtualPhone city={city} player={player} focusedAgent={focusedAgent} timeMinutes={timeMinutes} />
 
       <div className="vitals">
         <div><span>HP</span><i style={{ width: '100%' }} /></div>

@@ -176,6 +176,31 @@ async function inspectLandmarkInteriors(page) {
   return interiors
 }
 
+async function inspectPhone(page) {
+  await page.locator('.phone-toggle').click()
+  await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+  const homeText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(homeText.includes('RealPhone'), 'Phone shell did not open')
+  assert(homeText.includes('Msg') && homeText.includes('People') && homeText.includes('Feed') && homeText.includes('Music'), 'Phone app tabs were missing')
+  assert(await page.locator('.phone-message-form input').count() === 1, 'Phone message composer was missing')
+
+  await page.locator('.phone-tabs button[data-tab="contacts"]').click()
+  const contactsText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(contactsText.includes('Call'), 'Phone contacts did not expose calling')
+
+  await page.locator('.phone-tabs button[data-tab="music"]').click()
+  const musicText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(musicText.includes('Han River FM') && musicText.includes('Play'), 'Phone music app was incomplete')
+
+  await page.locator('.phone-close').click()
+  await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
+  return {
+    home: homeText.split(/\r?\n/).slice(0, 12),
+    contacts: contactsText.split(/\r?\n/).slice(0, 12),
+    music: musicText.split(/\r?\n/).slice(0, 12),
+  }
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -224,6 +249,7 @@ async function main() {
 
     const canvas = await inspectCanvas(page)
     const interiors = await inspectLandmarkInteriors(page)
+    const phone = await inspectPhone(page)
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
     const mapText = await page.locator('.full-map-panel').innerText({ timeout: 5000 })
@@ -293,6 +319,7 @@ async function main() {
       browser: executablePath,
       canvas,
       interiors,
+      phone,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),
