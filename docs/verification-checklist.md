@@ -20,6 +20,9 @@ audit has a clear finish line.
   label, currently `ollama:dolphin3:latest`.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
   apps, shows callable NPC contacts, and has a music app entry point.
+- Street norms: every road has a name, landmarks/buildings have road-name
+  addresses, trees do not overlap road reserves, and social norm metadata exists
+  for pedestrian/traffic/address rules.
 - Random avatar task: the harness chooses a random destination task, asks a
   nearby NPC to take the player there, waits for an escort mission, and verifies
   meaningful player travel plus arrival/completion text.
@@ -43,6 +46,11 @@ audit has a clear finish line.
   the avatar instead of behaving like static props.
 - Traffic norms: step into a lane and confirm nearby drivers brake/yield; taxis
   must be visually distinguishable from private cars.
+- Pedestrian norms: observe NPCs near roads and confirm they favor sidewalks,
+  plazas, entrances, and crosswalks instead of walking down the middle of a lane.
+- Address layer: open the full map and verify landmarks show road-name addresses;
+  ask for a taxi route and confirm the destination panel includes an address when
+  the target has one.
 - Place meaning: confirm every landmark has a visible form, map point, gameplay
   role, and is reachable by NPC/player movement.
 - Landmark interiors: confirm named buildings have solid wall shells, visible

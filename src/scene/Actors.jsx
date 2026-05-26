@@ -31,6 +31,8 @@ function entranceTargetFor(destination) {
       y: destination.y ?? terrainHeight(x, z),
       name: destination.name || 'destination',
       kind: destination.kind,
+      address: destination.address,
+      roadName: destination.roadName,
     }
   }
 
@@ -44,6 +46,8 @@ function entranceTargetFor(destination) {
     placeName: destination.name,
     kind: destination.kind,
     interiorId: destination.id,
+    address: destination.address,
+    roadName: destination.roadName,
   }
 }
 
@@ -83,7 +87,44 @@ function targetFor(agent, places, timeMinutes) {
   return { ...scheduleTargetForPlace(place, agent.offset), activity: slot.activity }
 }
 
-function moveAgentToward(agent, target, delta, speed) {
+function nearCrosswalk(x, z, road, roads) {
+  const crossRoads = roads.filter(item => item.axis !== road.axis)
+  for (const cross of crossRoads) {
+    if (road.axis === 'x') {
+      if (Math.abs(x - cross.x) < Math.max(road.width, cross.width) * 0.72) return true
+    } else if (Math.abs(z - cross.z) < Math.max(road.width, cross.width) * 0.72) {
+      return true
+    }
+  }
+  return false
+}
+
+function enforcePedestrianNorms(previous, next, roads = []) {
+  let x = next.x
+  let z = next.z
+
+  for (const road of roads) {
+    if (road.axis === 'x') {
+      if (x < road.from || x > road.to) continue
+      const lateral = z - road.z
+      if (Math.abs(lateral) >= road.width / 2 - 0.35) continue
+      if (nearCrosswalk(x, z, road, roads)) continue
+      const previousSide = previous.z >= road.z ? 1 : -1
+      z = road.z + previousSide * (road.width / 2 + 3.2)
+    } else {
+      if (z < road.from || z > road.to) continue
+      const lateral = x - road.x
+      if (Math.abs(lateral) >= road.width / 2 - 0.35) continue
+      if (nearCrosswalk(x, z, road, roads)) continue
+      const previousSide = previous.x >= road.x ? 1 : -1
+      x = road.x + previousSide * (road.width / 2 + 3.2)
+    }
+  }
+
+  return { x, z }
+}
+
+function moveAgentToward(agent, target, delta, speed, roads) {
   const dx = target.x - agent.pos.x
   const dz = target.z - agent.pos.z
   const distance = Math.hypot(dx, dz)
@@ -93,8 +134,14 @@ function moveAgentToward(agent, target, delta, speed) {
   const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
   agent.heading += turn * Math.min(1, delta * 3.5)
   const step = Math.min(distance, speed * delta)
-  agent.pos.x += Math.sin(agent.heading) * step
-  agent.pos.z += Math.cos(agent.heading) * step
+  const previous = { x: agent.pos.x, z: agent.pos.z }
+  const next = {
+    x: agent.pos.x + Math.sin(agent.heading) * step,
+    z: agent.pos.z + Math.cos(agent.heading) * step,
+  }
+  const safe = roads?.length ? enforcePedestrianNorms(previous, next, roads) : next
+  agent.pos.x = safe.x
+  agent.pos.z = safe.z
   agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
   return distance
 }
@@ -113,7 +160,7 @@ class Agent {
     this.mission = null
   }
 
-  update(delta, timeMinutes, places) {
+  update(delta, timeMinutes, places, roads) {
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
     this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
@@ -123,7 +170,7 @@ class Agent {
     }
     if (this.talkTimer > 0) this.talkTimer -= delta
 
-    if (this.mission) return this.updateMission(delta)
+    if (this.mission) return this.updateMission(delta, roads)
 
     const target = targetFor(this, places, timeMinutes)
     this.activity = target.activity
@@ -132,7 +179,7 @@ class Agent {
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (distance > 2.2) {
       const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace
-      moveAgentToward(this, target, delta, speed)
+      moveAgentToward(this, target, delta, speed, roads)
       return 'walking'
     }
 
@@ -140,7 +187,7 @@ class Agent {
     return 'dwelling'
   }
 
-  updateMission(delta) {
+  updateMission(delta, roads) {
     const store = useCityStore.getState()
     const mission = this.mission
     const destination = mission.destination
@@ -149,7 +196,7 @@ class Agent {
     if (mission.mode === 'taxi') {
       if (mission.phase === 'to_pickup') {
         this.activity = 'walking to taxi pickup'
-        const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace)
+        const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace, roads)
         if (distance < 2.6) {
           mission.phase = 'taxi_boarding'
           mission.boardingAt = performance.now()
@@ -174,7 +221,7 @@ class Agent {
             from: { x: player.x, z: player.z },
             to: { x: destination.x, z: destination.z },
             duration: Math.min(15, Math.max(7, Math.hypot(destination.x - player.x, destination.z - player.z) / 58)),
-            label: `${this.name} and you are taking a taxi to ${destination.name}.`,
+            label: `${this.name} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`,
             destinationName: destination.name,
           })
         }
@@ -207,7 +254,7 @@ class Agent {
     }
 
     this.activity = 'guiding player'
-    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace)
+    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace, roads)
     if (distance < 3.2) {
       this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
       store.finishMission(`${this.name} guided you to ${destination.name}.`)
@@ -243,8 +290,11 @@ class Agent {
       placeName: this.placeName,
       workId: this.workId,
       workName: work?.name,
+      workAddress: work?.address,
       thirdId: this.thirdId,
       thirdName: third?.name,
+      thirdAddress: third?.address,
+      homeAddress: this.home?.address,
       x: this.pos.x,
       z: this.pos.z,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
@@ -269,7 +319,7 @@ function nearestRoadPickup(pos, roads) {
     const distance = Math.hypot(pos.x - x, pos.z - z)
     if (distance < bestDistance) {
       bestDistance = distance
-      best = { x, z, y: terrainHeight(x, z), name: `${road.tier === 'primary' ? 'main road' : 'street'} curb` }
+      best = { x, z, y: terrainHeight(x, z), name: `${road.name} curb`, roadName: road.name }
     }
   }
   return best || { x: pos.x + 4, z: pos.z + 4, y: terrainHeight(pos.x + 4, pos.z + 4), name: 'curbside' }
@@ -532,7 +582,7 @@ function NPCs({ city }) {
 
     for (let i = 0; i < agents.length; i += 1) {
       const agent = agents[i]
-      const agentState = agent.update(dt, time, places)
+      const agentState = agent.update(dt, time, places, city.roads)
       if (agentState === 'talking') talks += 1
       const playerDistance = agent.pos.distanceTo(player)
       if (!agent.mission && agentState !== 'walking' && agent.talkTimer <= 0 && playerDistance < 8.5) {
@@ -654,6 +704,8 @@ function NPCs({ city }) {
         id: place.id,
         name: place.name,
         kind: place.kind,
+        address: place.address,
+        roadName: place.roadName,
         x: place.x,
         z: place.z,
       }))

@@ -176,6 +176,32 @@ async function inspectLandmarkInteriors(page) {
   return interiors
 }
 
+async function inspectCityNorms(page) {
+  const norms = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    if (!city) return null
+    const treeRoadConflicts = city.trees.filter(tree => city.roads.some(road => {
+      if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
+      return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
+    }))
+    return {
+      roads: city.roads.length,
+      namedRoads: city.roads.filter(road => road.name).length,
+      landmarkAddresses: city.landmarks.filter(place => place.address && place.roadName).length,
+      buildingAddresses: city.buildings.filter(building => building.address && building.roadName).length,
+      treeRoadConflicts: treeRoadConflicts.length,
+      socialNorms: city.socialNorms,
+    }
+  })
+  assert(norms, 'City metadata was not exposed for norm verification')
+  assert(norms.namedRoads === norms.roads, 'Not every road has a street name')
+  assert(norms.landmarkAddresses >= 9, 'Landmarks did not receive road-name addresses')
+  assert(norms.buildingAddresses > 100, 'Buildings did not receive road-name addresses')
+  assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem, 'Social norm metadata is incomplete')
+  return norms
+}
+
 async function inspectPhone(page) {
   await page.locator('.phone-toggle').click()
   await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
@@ -249,6 +275,7 @@ async function main() {
 
     const canvas = await inspectCanvas(page)
     const interiors = await inspectLandmarkInteriors(page)
+    const cityNorms = await inspectCityNorms(page)
     const phone = await inspectPhone(page)
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
@@ -319,6 +346,7 @@ async function main() {
       browser: executablePath,
       canvas,
       interiors,
+      cityNorms,
       phone,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),

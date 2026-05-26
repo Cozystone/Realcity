@@ -142,9 +142,10 @@ function makePavementTexture() {
   return texture
 }
 
-function UrbanBase() {
+function UrbanBase({ roads }) {
   const blockRef = useRef()
   const curbRef = useRef()
+  const sidewalkRef = useRef()
   const pavementTexture = useMemo(() => makePavementTexture(), [])
   const blocks = useMemo(() => {
     const items = []
@@ -158,9 +159,24 @@ function UrbanBase() {
     }
     return items
   }, [])
+  const sidewalks = useMemo(() => {
+    const width = 5.8
+    return roads.flatMap(road => {
+      if (road.axis === 'x') {
+        return [
+          { x: (road.from + road.to) / 2, z: road.z - road.width / 2 - width / 2 - 0.9, sx: road.to - road.from, sz: width },
+          { x: (road.from + road.to) / 2, z: road.z + road.width / 2 + width / 2 + 0.9, sx: road.to - road.from, sz: width },
+        ]
+      }
+      return [
+        { x: road.x - road.width / 2 - width / 2 - 0.9, z: (road.from + road.to) / 2, sx: width, sz: road.to - road.from },
+        { x: road.x + road.width / 2 + width / 2 + 0.9, z: (road.from + road.to) / 2, sx: width, sz: road.to - road.from },
+      ]
+    })
+  }, [roads])
 
   useLayoutEffect(() => {
-    if (!blockRef.current || !curbRef.current) return
+    if (!blockRef.current || !curbRef.current || !sidewalkRef.current) return
     const dummy = new THREE.Object3D()
     const color = new THREE.Color()
     blocks.forEach((block, i) => {
@@ -175,10 +191,17 @@ function UrbanBase() {
       dummy.updateMatrix()
       curbRef.current.setMatrixAt(i, dummy.matrix)
     })
+    sidewalks.forEach((sidewalk, i) => {
+      dummy.position.set(sidewalk.x, CITY_BASE_Y + 0.155, sidewalk.z)
+      dummy.scale.set(sidewalk.sx, 0.05, sidewalk.sz)
+      dummy.updateMatrix()
+      sidewalkRef.current.setMatrixAt(i, dummy.matrix)
+    })
     blockRef.current.instanceMatrix.needsUpdate = true
     curbRef.current.instanceMatrix.needsUpdate = true
+    sidewalkRef.current.instanceMatrix.needsUpdate = true
     if (blockRef.current.instanceColor) blockRef.current.instanceColor.needsUpdate = true
-  }, [blocks])
+  }, [blocks, sidewalks])
 
   return (
     <>
@@ -190,6 +213,10 @@ function UrbanBase() {
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial color="#343839" toneMapped={false} />
       </instancedMesh>
+      <instancedMesh ref={sidewalkRef} args={[undefined, undefined, sidewalks.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial map={pavementTexture} color="#f0eee4" toneMapped={false} />
+      </instancedMesh>
       <instancedMesh ref={blockRef} args={[undefined, undefined, blocks.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial map={pavementTexture} color="#ffffff" vertexColors toneMapped={false} />
@@ -200,6 +227,7 @@ function UrbanBase() {
 
 function RoadMarkings({ roads }) {
   const stripeRef = useRef()
+  const edgeRef = useRef()
   const stripes = useMemo(() => {
     const items = []
     for (const road of roads) {
@@ -212,9 +240,25 @@ function RoadMarkings({ roads }) {
     }
     return items
   }, [roads])
+  const edges = useMemo(() => roads.flatMap(road => {
+    if (road.axis === 'x') {
+      const x = (road.from + road.to) / 2
+      const sx = road.to - road.from
+      return [
+        { x, z: road.z - road.width / 2 + 0.18, sx, sz: 0.16 },
+        { x, z: road.z + road.width / 2 - 0.18, sx, sz: 0.16 },
+      ]
+    }
+    const z = (road.from + road.to) / 2
+    const sz = road.to - road.from
+    return [
+      { x: road.x - road.width / 2 + 0.18, z, sx: 0.16, sz },
+      { x: road.x + road.width / 2 - 0.18, z, sx: 0.16, sz },
+    ]
+  }), [roads])
 
   useLayoutEffect(() => {
-    if (!stripeRef.current) return
+    if (!stripeRef.current || !edgeRef.current) return
     const dummy = new THREE.Object3D()
     stripes.forEach((stripe, i) => {
       dummy.position.set(stripe.x, CITY_BASE_Y + 0.17, stripe.z)
@@ -222,14 +266,27 @@ function RoadMarkings({ roads }) {
       dummy.updateMatrix()
       stripeRef.current.setMatrixAt(i, dummy.matrix)
     })
+    edges.forEach((edge, i) => {
+      dummy.position.set(edge.x, CITY_BASE_Y + 0.185, edge.z)
+      dummy.scale.set(edge.sx, 0.028, edge.sz)
+      dummy.updateMatrix()
+      edgeRef.current.setMatrixAt(i, dummy.matrix)
+    })
     stripeRef.current.instanceMatrix.needsUpdate = true
-  }, [stripes])
+    edgeRef.current.instanceMatrix.needsUpdate = true
+  }, [stripes, edges])
 
   return (
-    <instancedMesh ref={stripeRef} args={[undefined, undefined, stripes.length]} frustumCulled={false}>
-      <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial color="#d9b84a" toneMapped={false} />
-    </instancedMesh>
+    <>
+      <instancedMesh ref={edgeRef} args={[undefined, undefined, edges.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#f2f4ec" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={stripeRef} args={[undefined, undefined, stripes.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#d9b84a" toneMapped={false} />
+      </instancedMesh>
+    </>
   )
 }
 
@@ -738,7 +795,7 @@ export default function CityMeshes({ city }) {
         <meshLambertMaterial vertexColors />
       </mesh>
 
-      <UrbanBase />
+      <UrbanBase roads={city.roads} />
 
       <mesh geometry={roads}>
         <meshBasicMaterial map={roadTexture} color="#ffffff" toneMapped={false} />

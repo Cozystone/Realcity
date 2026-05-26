@@ -76,6 +76,42 @@ Roads should be generated in three visible tiers.
 
 Implementation note: current road meshes already separate road surface from road markings. Keep lane markings as actual geometry for distance readability rather than relying only on texture.
 
+## Street Norms And Addressing
+
+The city should behave like a society with shared rules, not a free-for-all
+mesh field.
+
+Current rules:
+
+1. Every road has a virtual road name such as `Station-daero`, `Mirae-ro`, or
+   `Garden-ro`.
+2. Landmarks and procedural buildings receive road-name addresses such as
+   `83 Station-daero`.
+3. Taxis and NPC route plans can carry destination addresses in addition to
+   place names.
+4. Trees are filtered out of road reserves so they do not spawn in drive lanes
+   or on immediate curb space.
+5. NPC pedestrians are pushed out of drive lanes unless they are near an
+   intersection/crosswalk zone.
+6. The ground layer separates asphalt roads, curb lines, sidewalks, paved
+   blocks, crosswalks, and plaza surfaces.
+7. Road-name signs, taxi stands, bus stops, traffic lights, bollards, parked
+   cars, benches, planters, and storefront details create social street cues.
+
+Long-term final version:
+
+- Add a full pedestrian navigation graph with sidewalks, crossings, station
+  concourses, building entrances, floor portals, and inaccessible vehicle lanes.
+- Add traffic law states: red lights, pedestrian priority, no-parking zones,
+  bus stops, taxi ranks, loading bays, emergency lanes, school zones, and
+  one-way streets.
+- Add an address resolver so players can tell a taxi a road-name address,
+  landmark alias, business name, or contact location.
+- Add civic services: police/security posts, clinics, schools, transit gates,
+  trash pickup, deliveries, street cleaning, events, permits, and closing hours.
+- Keep visible layout and rules aligned: if the ground looks like a sidewalk,
+  NPCs should use it; if it looks like a road, cars should own it.
+
 ## Zoning Map
 
 Suggested coordinate layout for the current procedural world:

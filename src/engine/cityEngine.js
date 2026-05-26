@@ -29,6 +29,8 @@ const ROLE_LIBRARY = [
 const GIVEN_NAMES = ['Minji', 'Hana', 'Joon', 'Sora', 'Doyun', 'Ara', 'Hyun', 'Yujin', 'Noel', 'Mina', 'Taeyang', 'Rin']
 const FAMILY_NAMES = ['Kim', 'Park', 'Lee', 'Choi', 'Jung', 'Seo', 'Han', 'Kang', 'Lim']
 const PERSONALITIES = ['warm', 'reserved', 'curious', 'direct', 'funny', 'tired', 'ambitious', 'careful', 'restless']
+const EAST_WEST_STREETS = ['Harbor-ro', 'Depot-gil', 'Aster-daero', 'Market-ro', 'Station-daero', 'Mirae-ro', 'Hanbit-ro', 'Neon-gil', 'Hill-ro']
+const NORTH_SOUTH_STREETS = ['Sunset-ro', 'River-ro', 'Civic-daero', 'Jungang-ro', 'Glass-ro', 'School-gil', 'Workshop-ro', 'Garden-ro', 'Coast-ro']
 
 const LANDMARK_INTERIORS = {
   transit: { width: 64, depth: 30, height: 7.2, doorWidth: 14, lobbyDepth: 25, verticalCore: 'escalator' },
@@ -64,6 +66,13 @@ function clamp(value, min, max) {
 function smoothstep(edge0, edge1, x) {
   const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
   return t * t * (3 - 2 * t)
+}
+
+function streetName(axis, index, isMain) {
+  const names = axis === 'x' ? EAST_WEST_STREETS : NORTH_SOUTH_STREETS
+  const base = names[index % names.length]
+  if (isMain && !base.includes('daero')) return base.replace(/-ro|-gil/, '-daero')
+  return base
 }
 
 function hashNoise(x, z) {
@@ -119,18 +128,61 @@ function roadGrid() {
   for (let p = -CITY_GRID_HALF; p <= CITY_GRID_HALF + 1; p += ROAD_SPACING) {
     const isMain = Math.round((p + CITY_GRID_HALF) / ROAD_SPACING) % 4 === 0
     const tier = isMain ? ROAD_TIERS.primary : ROAD_TIERS.local
-    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight })
-    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight })
+    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight, name: streetName('x', index, isMain) })
+    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight, name: streetName('z', index, isMain) })
     index += 1
   }
   return roads
 }
 
-function landmarkSet() {
+function roadDistanceToPoint(road, x, z) {
+  if (road.axis === 'x') {
+    const px = clamp(x, road.from, road.to)
+    return Math.hypot(x - px, z - road.z)
+  }
+  const pz = clamp(z, road.from, road.to)
+  return Math.hypot(x - road.x, z - pz)
+}
+
+function addressInfoForPoint(x, z, roads) {
+  let best = roads[0]
+  let bestDistance = Infinity
+  for (const road of roads) {
+    const distance = roadDistanceToPoint(road, x, z)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = road
+    }
+  }
+  const along = best.axis === 'x' ? x : z
+  const block = Math.max(1, Math.floor((along + CITY_GRID_HALF) / 18) + 1)
+  const side = best.axis === 'x'
+    ? z >= best.z ? 0 : 1
+    : x >= best.x ? 0 : 1
+  const number = block * 2 + side
+  return {
+    address: `${number} ${best.name}`,
+    roadId: best.id,
+    roadName: best.name,
+    addressNumber: number,
+  }
+}
+
+function pointInRoadReserve(x, z, roads, margin = 0) {
+  return roads.some(road => {
+    if (road.axis === 'x') {
+      return x >= road.from - margin && x <= road.to + margin && Math.abs(z - road.z) <= road.width / 2 + margin
+    }
+    return z >= road.from - margin && z <= road.to + margin && Math.abs(x - road.x) <= road.width / 2 + margin
+  })
+}
+
+function landmarkSet(roads) {
   return LANDMARK_BLUEPRINTS.map(place => ({
     ...place,
     y: terrainHeight(place.x, place.z),
     radius: 26 * place.scale,
+    ...addressInfoForPoint(place.x, place.z, roads),
     interior: place.kind === 'park' ? null : {
       ...LANDMARK_INTERIORS[place.kind],
       entranceSide: 'front',
@@ -140,7 +192,7 @@ function landmarkSet() {
   }))
 }
 
-function createBuildings(rng, landmarks) {
+function createBuildings(rng, landmarks, roads) {
   const buildings = []
   const landmarkMask = (x, z) => landmarks.some(place => Math.hypot(x - place.x, z - place.z) < place.radius + 34)
   let id = 0
@@ -187,6 +239,7 @@ function createBuildings(rng, landmarks) {
           x: bx,
           z: bz,
           y: base,
+          ...addressInfoForPoint(bx, bz, roads),
           w,
           d,
           h: height,
@@ -202,7 +255,7 @@ function createBuildings(rng, landmarks) {
   return buildings
 }
 
-function createTrees(rng, landmarks) {
+function createTrees(rng, landmarks, roads) {
   const trees = []
   for (let i = 0; i < 760; i += 1) {
     const angle = rng() * TAU
@@ -210,7 +263,7 @@ function createTrees(rng, landmarks) {
     const x = Math.cos(angle) * radius + (rng() - 0.5) * 120
     const z = Math.sin(angle) * radius + (rng() - 0.5) * 120
     const nearPlace = landmarks.some(place => place.kind !== 'park' && Math.hypot(x - place.x, z - place.z) < place.radius + 16)
-    if (nearPlace) continue
+    if (nearPlace || pointInRoadReserve(x, z, roads, 8)) continue
     trees.push({ id: `tree_${i}`, x, z, y: terrainHeight(x, z), scale: 0.65 + rng() * 1.55, tint: rng() })
   }
   return trees
@@ -304,7 +357,7 @@ function createNPCs(rng, buildings, landmarks) {
       color: roleInfo.color,
       pace: roleInfo.pace,
       personality: pick(rng, PERSONALITIES),
-      home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence` },
+      home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence`, address: home.address, buildingId: home.id },
       workId: work.id,
       thirdId: third.id,
       schedule: createSchedule(roleInfo.role),
@@ -347,7 +400,7 @@ function createGeoJSON(roads, landmarks) {
     features: [
       ...roads.filter(road => road.main).map(road => ({
         type: 'Feature',
-        properties: { layer: 'road', id: road.id },
+        properties: { layer: 'road', id: road.id, name: road.name, tier: road.tier },
         geometry: {
           type: 'LineString',
           coordinates: road.axis === 'x'
@@ -357,7 +410,7 @@ function createGeoJSON(roads, landmarks) {
       })),
       ...landmarks.map(place => ({
         type: 'Feature',
-        properties: { layer: 'place', id: place.id, kind: place.kind, name: place.name },
+        properties: { layer: 'place', id: place.id, kind: place.kind, name: place.name, address: place.address },
         geometry: { type: 'Point', coordinates: worldToLngLat(place.x, place.z) },
       })),
     ],
@@ -391,9 +444,9 @@ function buildCollisionIndex(buildings) {
 export function createRealCity(seed = 20260525) {
   const rng = mulberry32(seed)
   const roads = roadGrid()
-  const landmarks = landmarkSet()
-  const buildings = createBuildings(rng, landmarks)
-  const trees = createTrees(rng, landmarks)
+  const landmarks = landmarkSet(roads)
+  const buildings = createBuildings(rng, landmarks, roads)
+  const trees = createTrees(rng, landmarks, roads)
   const cars = createTraffic(rng, roads)
   const npcs = createNPCs(rng, buildings, landmarks)
   const tiles = createTiles(buildings, landmarks)
@@ -413,6 +466,12 @@ export function createRealCity(seed = 20260525) {
     worldToLngLat,
     districtAt,
     getNearbyBuildings,
+    socialNorms: {
+      pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings.',
+      traffic: 'Cars own drive lanes, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
+      planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
+      addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero.',
+    },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',
       cesium3DTiles: `${tiles.length} procedural tiles with 3D Tiles-style metadata`,

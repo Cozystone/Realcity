@@ -209,6 +209,7 @@ function MissionPanel({ mission, ride }) {
       <div className="eyebrow">Active Plan</div>
       <h2>{mission.agentName}</h2>
       <p>{mission.mode === 'taxi' ? 'Taxi escort' : 'Walking escort'} to {mission.destination?.name}</p>
+      {mission.destination?.address ? <small>{mission.destination.address}</small> : null}
       <small>{phase}</small>
       <ol>
         {(mission.steps || []).slice(0, 4).map(step => <li key={step}>{step}</li>)}
@@ -281,6 +282,7 @@ function FullCityMap({ city, player, onClose }) {
               <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
                 <circle r={place.kind === 'park' ? 25 : 17} fill={placeColor(place.kind)} />
                 <text x="24" y="7">{place.name}</text>
+                {place.address ? <text className="address" x="24" y="29">{place.address}</text> : null}
               </g>
             ))}
           </g>

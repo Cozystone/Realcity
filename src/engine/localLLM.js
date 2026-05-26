@@ -260,7 +260,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
   }
 
   const knownPlaces = places
-    .map(place => `${place.id}: ${place.name} (${place.kind})`)
+    .map(place => `${place.id}: ${place.name} (${place.kind})${place.address ? ` at ${place.address}` : ''}`)
     .join('\n')
 
   const system = [

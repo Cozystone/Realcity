@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
 import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH } from '../engine/cityEngine'
 
@@ -183,6 +184,111 @@ function TrafficSignals({ roads }) {
         <sphereGeometry args={[1, 8, 6]} />
         <meshStandardMaterial color="#64ffa6" emissive="#1fd86d" emissiveIntensity={1.15} />
       </instancedMesh>
+    </>
+  )
+}
+
+function RoadNameSigns({ roads }) {
+  const { mainVertical, mainHorizontal } = useRoadLayout(roads)
+  const signs = useMemo(() => {
+    const items = []
+    let count = 0
+    for (const h of mainHorizontal) {
+      for (const v of mainVertical) {
+        if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.62) continue
+        if (count % 2 === 0) items.push({ x: v.x + v.width * 0.82, z: h.z + h.width * 0.82, primary: h.name, secondary: v.name })
+        count += 1
+      }
+    }
+    return items.slice(0, 28)
+  }, [mainHorizontal, mainVertical])
+
+  return (
+    <>
+      {signs.map(sign => (
+        <group key={`${sign.primary}-${sign.secondary}-${sign.x}-${sign.z}`} position={[sign.x, CITY_BASE_Y, sign.z]}>
+          <mesh castShadow position={[0, 1.6, 0]}>
+            <cylinderGeometry args={[0.035, 0.035, 3.2, 8]} />
+            <meshStandardMaterial color="#384147" roughness={0.42} metalness={0.55} />
+          </mesh>
+          <Billboard position={[0, 3.3, 0]}>
+            <mesh castShadow>
+              <boxGeometry args={[6.6, 1.05, 0.12]} />
+              <meshStandardMaterial color="#175f54" roughness={0.36} metalness={0.16} />
+            </mesh>
+            <Text position={[0, 0.18, 0.08]} fontSize={0.32} maxWidth={6} textAlign="center" color="#f8fbff">
+              {sign.primary}
+            </Text>
+            <Text position={[0, -0.22, 0.08]} fontSize={0.26} maxWidth={6} textAlign="center" color="#cfeee8">
+              {sign.secondary}
+            </Text>
+          </Billboard>
+        </group>
+      ))}
+    </>
+  )
+}
+
+function TransitAndTaxiStops({ roads }) {
+  const shelterRef = useRef()
+  const poleRef = useRef()
+  const signRef = useRef()
+  const { mainHorizontal, mainVertical } = useRoadLayout(roads)
+  const stops = useMemo(() => {
+    const items = []
+    const major = [...mainHorizontal, ...mainVertical]
+      .filter(road => Math.hypot(road.axis === 'x' ? 0 : road.x, road.axis === 'x' ? road.z : 0) < CITY_GRID_HALF * 0.72)
+    for (let i = 0; i < major.length; i += 2) {
+      const road = major[i]
+      const taxi = i % 4 === 0
+      if (road.axis === 'x') {
+        const x = -CITY_GRID_HALF * 0.62 + (i % 7) * ROAD_SPACING * 1.9
+        items.push({ x, z: road.z + road.width * 1.24, yaw: Math.PI / 2, taxi, roadName: road.name })
+      } else {
+        const z = -CITY_GRID_HALF * 0.62 + (i % 7) * ROAD_SPACING * 1.9
+        items.push({ x: road.x - road.width * 1.24, z, yaw: 0, taxi, roadName: road.name })
+      }
+    }
+    return items.slice(0, 30)
+  }, [mainHorizontal, mainVertical])
+
+  useLayoutEffect(() => {
+    if (!shelterRef.current || !poleRef.current || !signRef.current) return
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    stops.forEach((stop, i) => {
+      setInstance(shelterRef.current, i, dummy, [stop.x, CITY_BASE_Y + 1.25, stop.z], [3.8, 2.5, 0.22], stop.yaw)
+      setInstance(poleRef.current, i, dummy, [stop.x + Math.sin(stop.yaw) * 2.55, CITY_BASE_Y + 1.7, stop.z + Math.cos(stop.yaw) * 2.55], [0.055, 3.4, 0.055])
+      setInstance(signRef.current, i, dummy, [stop.x + Math.sin(stop.yaw) * 2.55, CITY_BASE_Y + 3.38, stop.z + Math.cos(stop.yaw) * 2.55], [0.58, 0.58, 0.08], stop.yaw)
+      signRef.current.setColorAt(i, color.set(stop.taxi ? '#f6c445' : '#4aadff'))
+    })
+    shelterRef.current.instanceMatrix.needsUpdate = true
+    poleRef.current.instanceMatrix.needsUpdate = true
+    signRef.current.instanceMatrix.needsUpdate = true
+    if (signRef.current.instanceColor) signRef.current.instanceColor.needsUpdate = true
+  }, [stops])
+
+  return (
+    <>
+      <instancedMesh ref={shelterRef} args={[undefined, undefined, stops.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#26323a" roughness={0.32} metalness={0.28} transparent opacity={0.82} />
+      </instancedMesh>
+      <instancedMesh ref={poleRef} args={[undefined, undefined, stops.length]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 8]} />
+        <meshStandardMaterial color="#d1d7d9" roughness={0.36} metalness={0.58} />
+      </instancedMesh>
+      <instancedMesh ref={signRef} args={[undefined, undefined, stops.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" vertexColors emissive="#17212b" emissiveIntensity={0.12} roughness={0.34} metalness={0.18} />
+      </instancedMesh>
+      {stops.slice(0, 12).map(stop => (
+        <Billboard key={`label-${stop.x}-${stop.z}`} position={[stop.x + Math.sin(stop.yaw) * 2.55, CITY_BASE_Y + 4.15, stop.z + Math.cos(stop.yaw) * 2.55]}>
+          <Text fontSize={0.36} maxWidth={4.4} textAlign="center" color={stop.taxi ? '#fff7b0' : '#d9efff'} outlineWidth={0.035} outlineColor="#07111d">
+            {stop.taxi ? 'TAXI' : 'BUS'}
+          </Text>
+        </Billboard>
+      ))}
     </>
   )
 }
@@ -465,6 +571,8 @@ export default function UrbanDetails({ city }) {
       <Crosswalks roads={city.roads} />
       <StreetLights roads={city.roads} />
       <TrafficSignals roads={city.roads} />
+      <RoadNameSigns roads={city.roads} />
+      <TransitAndTaxiStops roads={city.roads} />
       <Bollards roads={city.roads} />
       <ParkedCars roads={city.roads} />
       <PlantersAndBenches roads={city.roads} />

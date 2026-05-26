@@ -984,6 +984,13 @@ select {
   stroke-width: 5px;
 }
 
+.full-map-landmarks text.address {
+  fill: rgba(215, 228, 232, 0.78);
+  font-size: 15px;
+  font-weight: 650;
+  stroke-width: 4px;
+}
+
 .full-map-player circle {
   fill: rgba(74, 173, 255, 0.18);
   stroke: #4aadff;

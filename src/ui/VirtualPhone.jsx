@@ -51,8 +51,10 @@ function contactFromNpc(npc, city, focusedAgent, player) {
     placeName: active?.placeName || work?.name || third?.name || npc.home?.name || 'RealCity',
     workId: npc.workId,
     workName: work?.name,
+    workAddress: work?.address,
     thirdId: npc.thirdId,
     thirdName: third?.name,
+    thirdAddress: third?.address,
     relation: relation.label,
     affinity: relation.score,
     distance,
@@ -76,7 +78,7 @@ function seedThread(contact) {
   return [
     {
       from: 'them',
-      text: `I am around ${contact.placeName}. Message me if you need a route, a favor, or a quick update.`,
+      text: `I am around ${contact.placeName}${contact.workAddress ? ` near ${contact.workAddress}` : ''}. Message me if you need a route, a favor, or a quick update.`,
     },
   ]
 }
@@ -111,8 +113,10 @@ function phoneAgent(contact) {
     placeName: contact.placeName,
     workId: contact.workId,
     workName: contact.workName,
+    workAddress: contact.workAddress,
     thirdId: contact.thirdId,
     thirdName: contact.thirdName,
+    thirdAddress: contact.thirdAddress,
   }
 }
 
@@ -318,7 +322,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     <span>{contact.name.slice(0, 1)}</span>
                     <div>
                       <strong>{contact.name}</strong>
-                      <small>{contact.job} / {contact.relation}</small>
+                  <small>{contact.job} / {contact.workAddress || contact.relation}</small>
                     </div>
                   </button>
                   <button type="button" onClick={() => callContact(contact)}>Call</button>
@@ -334,7 +338,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <div>
                     <span>{contact.name.slice(0, 1)}</span>
                     <strong>{contact.name}</strong>
-                    <small>{contact.placeName}</small>
+                  <small>{contact.workAddress || contact.placeName}</small>
                   </div>
                   <p>{contact.personality}. Today I am {contact.activity} around {contact.placeName}.</p>
                   <footer>{contact.affinity} trust / {Math.round(contact.distance)}m memory distance</footer>
