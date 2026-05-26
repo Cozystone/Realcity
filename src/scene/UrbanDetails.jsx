@@ -1,7 +1,9 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
-import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH } from '../engine/cityEngine'
+import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH, trafficSignalForAxis } from '../engine/cityEngine'
+import { useCityStore } from '../engine/cityStore'
 
 function setInstance(mesh, index, dummy, position, scale, rotationY = 0) {
   dummy.position.set(position[0], position[1], position[2])
@@ -137,6 +139,7 @@ function TrafficSignals({ roads }) {
   const poleRef = useRef()
   const headRef = useRef()
   const redRef = useRef()
+  const yellowRef = useRef()
   const greenRef = useRef()
   const { mainVertical, mainHorizontal } = useRoadLayout(roads)
   const signals = useMemo(() => {
@@ -144,27 +147,50 @@ function TrafficSignals({ roads }) {
     for (const h of mainHorizontal) {
       for (const v of mainVertical) {
         if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.86) continue
-        items.push({ x: v.x - v.width * 0.68, z: h.z - h.width * 0.68, yaw: Math.PI / 4 })
-        items.push({ x: v.x + v.width * 0.68, z: h.z + h.width * 0.68, yaw: -Math.PI * 0.75 })
+        items.push({ x: v.x - v.width * 0.68, z: h.z - h.width * 0.68, yaw: Math.PI / 2, axis: 'x' })
+        items.push({ x: v.x + v.width * 0.68, z: h.z + h.width * 0.68, yaw: -Math.PI / 2, axis: 'x' })
+        items.push({ x: v.x + v.width * 0.68, z: h.z - h.width * 0.68, yaw: 0, axis: 'z' })
+        items.push({ x: v.x - v.width * 0.68, z: h.z + h.width * 0.68, yaw: Math.PI, axis: 'z' })
       }
     }
     return items
   }, [mainHorizontal, mainVertical])
 
   useLayoutEffect(() => {
-    if (!poleRef.current || !headRef.current || !redRef.current || !greenRef.current) return
+    if (!poleRef.current || !headRef.current || !redRef.current || !yellowRef.current || !greenRef.current) return
     const dummy = new THREE.Object3D()
     signals.forEach((signal, i) => {
       setInstance(poleRef.current, i, dummy, [signal.x, CITY_BASE_Y + 2.05, signal.z], [0.08, 4.1, 0.08])
       setInstance(headRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.02, signal.z], [0.52, 0.9, 0.22], signal.yaw)
-      setInstance(redRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.26, signal.z], [0.09, 0.09, 0.09])
-      setInstance(greenRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.82, signal.z], [0.09, 0.09, 0.09])
+      setInstance(redRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.28, signal.z], [0.09, 0.09, 0.09])
+      setInstance(yellowRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.04, signal.z], [0.09, 0.09, 0.09])
+      setInstance(greenRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.8, signal.z], [0.09, 0.09, 0.09])
     })
     poleRef.current.instanceMatrix.needsUpdate = true
     headRef.current.instanceMatrix.needsUpdate = true
     redRef.current.instanceMatrix.needsUpdate = true
+    yellowRef.current.instanceMatrix.needsUpdate = true
     greenRef.current.instanceMatrix.needsUpdate = true
   }, [signals])
+
+  useFrame(() => {
+    if (!redRef.current || !yellowRef.current || !greenRef.current) return
+    const timeMinutes = useCityStore.getState().timeMinutes
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < signals.length; i += 1) {
+      const signal = signals[i]
+      const state = trafficSignalForAxis(signal.axis, timeMinutes)
+      const redScale = state === 'red' ? 1 : 0.26
+      const yellowScale = state === 'yellow' ? 1 : 0.18
+      const greenScale = state === 'green' ? 1 : 0.26
+      setInstance(redRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.28, signal.z], [0.09 * redScale, 0.09 * redScale, 0.09 * redScale])
+      setInstance(yellowRef.current, i, dummy, [signal.x, CITY_BASE_Y + 4.04, signal.z], [0.09 * yellowScale, 0.09 * yellowScale, 0.09 * yellowScale])
+      setInstance(greenRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.8, signal.z], [0.09 * greenScale, 0.09 * greenScale, 0.09 * greenScale])
+    }
+    redRef.current.instanceMatrix.needsUpdate = true
+    yellowRef.current.instanceMatrix.needsUpdate = true
+    greenRef.current.instanceMatrix.needsUpdate = true
+  })
 
   return (
     <>
@@ -179,6 +205,10 @@ function TrafficSignals({ roads }) {
       <instancedMesh ref={redRef} args={[undefined, undefined, signals.length]} frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
         <meshStandardMaterial color="#ff6a60" emissive="#ff2f29" emissiveIntensity={1.3} />
+      </instancedMesh>
+      <instancedMesh ref={yellowRef} args={[undefined, undefined, signals.length]} frustumCulled={false}>
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshStandardMaterial color="#ffd45e" emissive="#ffb300" emissiveIntensity={1.2} />
       </instancedMesh>
       <instancedMesh ref={greenRef} args={[undefined, undefined, signals.length]} frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
@@ -435,11 +465,15 @@ function ParkedCars({ roads }) {
 }
 
 function FacadeDetails({ buildings }) {
+  const windowRef = useRef()
+  const trimRef = useRef()
   const balconyRef = useRef()
   const railRef = useRef()
   const awningRef = useRef()
   const signRef = useRef()
   const details = useMemo(() => {
+    const windows = []
+    const trims = []
     const balconies = []
     const rails = []
     const awnings = []
@@ -449,6 +483,39 @@ function FacadeDetails({ buildings }) {
       .slice(0, 360)
       .forEach((building, i) => {
         const front = building.d / 2 + 0.16
+        const columns = building.type === 'skyscraper' ? 5 : building.type === 'office' ? 4 : building.type === 'apartment' ? 3 : 2
+        const rows = building.type === 'skyscraper'
+          ? Math.min(14, Math.max(5, Math.floor(building.h / 5.4)))
+          : building.type === 'office'
+            ? Math.min(8, Math.max(3, Math.floor(building.h / 5.2)))
+            : building.type === 'apartment'
+              ? Math.min(6, Math.max(2, Math.floor(building.h / 4.6)))
+              : 2
+        const panelWidth = Math.min(2.2, building.w * 0.54 / columns)
+        const panelHeight = building.type === 'house' ? 1.0 : 1.35
+        for (let row = 0; row < rows; row += 1) {
+          const y = building.type === 'house' ? 2.0 + row * 2.0 : 3.2 + row * ((building.h - 4.8) / Math.max(1, rows))
+          if (y > building.h - 1.1) continue
+          for (let col = 0; col < columns; col += 1) {
+            if ((i + row * 3 + col) % 7 === 0 && building.type !== 'skyscraper') continue
+            const localX = ((col + 0.5) / columns - 0.5) * building.w * 0.58
+            windows.push({
+              building,
+              local: [localX, y, front + 0.24],
+              scale: [panelWidth, panelHeight, 0.055],
+            })
+          }
+          if (building.type !== 'house' && row % 2 === 0) {
+            trims.push({
+              building,
+              local: [0, y - panelHeight * 0.82, front + 0.19],
+              scale: [building.w * 0.72, 0.055, 0.09],
+            })
+          }
+        }
+        if (building.type === 'house') {
+          trims.push({ building, local: [0, 1.32, front + 0.2], scale: [building.w * 0.62, 0.08, 0.1] })
+        }
         if (building.type === 'apartment') {
           const floors = Math.min(4, Math.max(2, Math.floor(building.h / 7)))
           for (let floor = 1; floor <= floors; floor += 1) {
@@ -470,16 +537,20 @@ function FacadeDetails({ buildings }) {
           awnings.push({ building, local: [0, 2.5, front + 0.3], scale: [Math.min(4.2, building.w * 0.42), 0.14, 0.75] })
         }
       })
-    return { balconies, rails, awnings, signs }
+    return { windows, trims, balconies, rails, awnings, signs }
   }, [buildings])
 
   useLayoutEffect(() => {
-    if (!balconyRef.current || !railRef.current || !awningRef.current || !signRef.current) return
+    if (!windowRef.current || !trimRef.current || !balconyRef.current || !railRef.current || !awningRef.current || !signRef.current) return
     const dummy = new THREE.Object3D()
+    details.windows.forEach((item, i) => setLocalInstance(windowRef.current, i, dummy, item.building, item.local, item.scale))
+    details.trims.forEach((item, i) => setLocalInstance(trimRef.current, i, dummy, item.building, item.local, item.scale))
     details.balconies.forEach((item, i) => setLocalInstance(balconyRef.current, i, dummy, item.building, item.local, item.scale))
     details.rails.forEach((item, i) => setLocalInstance(railRef.current, i, dummy, item.building, item.local, item.scale))
     details.awnings.forEach((item, i) => setLocalInstance(awningRef.current, i, dummy, item.building, item.local, item.scale))
     details.signs.forEach((item, i) => setLocalInstance(signRef.current, i, dummy, item.building, item.local, item.scale))
+    windowRef.current.instanceMatrix.needsUpdate = true
+    trimRef.current.instanceMatrix.needsUpdate = true
     balconyRef.current.instanceMatrix.needsUpdate = true
     railRef.current.instanceMatrix.needsUpdate = true
     awningRef.current.instanceMatrix.needsUpdate = true
@@ -488,17 +559,25 @@ function FacadeDetails({ buildings }) {
 
   return (
     <>
+      <instancedMesh ref={windowRef} args={[undefined, undefined, details.windows.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshPhysicalMaterial color="#bfefff" roughness={0.055} metalness={0.28} transparent opacity={0.78} clearcoat={1} clearcoatRoughness={0.07} envMapIntensity={1.55} />
+      </instancedMesh>
+      <instancedMesh ref={trimRef} args={[undefined, undefined, details.trims.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#e3ddd0" roughness={0.42} metalness={0.18} />
+      </instancedMesh>
       <instancedMesh ref={balconyRef} args={[undefined, undefined, details.balconies.length]} castShadow receiveShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#6f767a" roughness={0.36} metalness={0.36} />
+        <meshStandardMaterial color="#aab1b5" roughness={0.32} metalness={0.42} />
       </instancedMesh>
       <instancedMesh ref={railRef} args={[undefined, undefined, details.rails.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#d7dde0" roughness={0.3} metalness={0.58} />
+        <meshStandardMaterial color="#e6ecef" roughness={0.26} metalness={0.64} />
       </instancedMesh>
       <instancedMesh ref={awningRef} args={[undefined, undefined, details.awnings.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#c54949" roughness={0.7} metalness={0.02} />
+        <meshStandardMaterial color="#b54545" roughness={0.62} metalness={0.04} />
       </instancedMesh>
       <instancedMesh ref={signRef} args={[undefined, undefined, details.signs.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />

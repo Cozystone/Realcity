@@ -296,23 +296,33 @@ function makeWindowTexture(type) {
   canvas.height = 512
   const ctx = canvas.getContext('2d')
   const wall = {
-    skyscraper: '#5f7f90',
-    office: '#8c9693',
-    apartment: '#aa967f',
-    house: '#b1846b',
-  }[type] || '#63717a'
+    skyscraper: ['#7ca2b8', '#506c7c'],
+    office: ['#b5c0bd', '#87918f'],
+    apartment: ['#cdb394', '#9f8062'],
+    house: ['#c88f72', '#956552'],
+  }[type] || ['#7b8991', '#57656e']
   const cols = type === 'skyscraper' ? 8 : type === 'house' ? 3 : 6
   const rows = type === 'skyscraper' ? 24 : type === 'house' ? 5 : 15
-  ctx.fillStyle = wall
+  const gradient = ctx.createLinearGradient(0, 0, 256, 512)
+  gradient.addColorStop(0, wall[0])
+  gradient.addColorStop(0.58, wall[1])
+  gradient.addColorStop(1, wall[0])
+  ctx.fillStyle = gradient
   ctx.fillRect(0, 0, 256, 512)
 
-  ctx.fillStyle = 'rgba(255,255,255,0.045)'
-  for (let i = 0; i < 180; i += 1) {
+  ctx.fillStyle = 'rgba(255,255,255,0.055)'
+  for (let i = 0; i < 260; i += 1) {
     const x = (i * 47) % 256
     const y = (i * 83) % 512
-    ctx.fillRect(x, y, 1 + (i % 7), 1)
+    ctx.fillRect(x, y, 1 + (i % 9), 1)
   }
-  ctx.strokeStyle = type === 'house' ? 'rgba(80,54,40,0.34)' : 'rgba(255,255,255,0.13)'
+  ctx.fillStyle = type === 'house' ? 'rgba(76, 47, 35, 0.12)' : 'rgba(255,255,255,0.06)'
+  for (let r = 0; r < rows; r += 1) {
+    const y = (r / rows) * 512
+    ctx.fillRect(0, y, 256, 2)
+    if (type !== 'house' && r % 4 === 0) ctx.fillRect(0, y + 4, 256, 1)
+  }
+  ctx.strokeStyle = type === 'house' ? 'rgba(80,54,40,0.42)' : 'rgba(255,255,255,0.18)'
   ctx.lineWidth = 2
   for (let c = 0; c <= cols; c += 1) {
     const x = (c / cols) * 256
@@ -330,23 +340,37 @@ function makeWindowTexture(type) {
       const y = r * cellH + cellH * 0.25
       const w = cellW * 0.58
       const h = cellH * 0.5
-      ctx.fillStyle = 'rgba(8,13,18,0.28)'
+      ctx.fillStyle = 'rgba(7,12,18,0.38)'
       ctx.fillRect(x - 2, y - 2, w + 4, h + 4)
-      ctx.fillStyle = lit ? '#eac46f' : '#1e2a33'
+      ctx.fillStyle = lit ? (type === 'house' ? '#f1c978' : '#dcefff') : '#16212a'
       ctx.fillRect(x, y, w, h)
-      ctx.fillStyle = lit ? 'rgba(255,255,255,0.22)' : 'rgba(111,158,184,0.12)'
-      ctx.fillRect(x + w * 0.12, y + h * 0.1, w * 0.18, h * 0.78)
+      ctx.fillStyle = lit ? 'rgba(255,255,255,0.36)' : 'rgba(111,158,184,0.18)'
+      ctx.fillRect(x + w * 0.08, y + h * 0.08, w * 0.18, h * 0.82)
+      ctx.fillStyle = 'rgba(255,255,255,0.14)'
+      ctx.fillRect(x + w * 0.54, y + h * 0.08, w * 0.08, h * 0.82)
+      if (type === 'apartment' && r % 3 === 1) {
+        ctx.fillStyle = 'rgba(240,244,245,0.42)'
+        ctx.fillRect(x - 5, y + h + 3, w + 10, 3)
+      }
     }
   }
   ctx.strokeStyle = type === 'apartment' || type === 'house' ? 'rgba(68,45,32,0.42)' : 'rgba(20,28,35,0.28)'
   ctx.lineWidth = 3
   for (let r = 1; r < rows; r += 1) {
     const y = (r / rows) * 512
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(256, y)
-    ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(256, y)
+      ctx.stroke()
   }
+  ctx.strokeStyle = type === 'house' ? 'rgba(255,245,225,0.16)' : 'rgba(255,255,255,0.22)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(14, 0)
+  ctx.lineTo(14, 512)
+  ctx.moveTo(242, 0)
+  ctx.lineTo(242, 512)
+  ctx.stroke()
   const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping
   texture.repeat.set(1, type === 'skyscraper' ? 3.2 : type === 'office' ? 2.1 : type === 'apartment' ? 1.55 : 1)
@@ -383,25 +407,25 @@ function worldOffset(building, lx = 0, lz = 0) {
 
 function bodyColor(type) {
   return {
-    skyscraper: '#a8c3d2',
-    office: '#c1c7c2',
-    apartment: '#c9ad8b',
-    house: '#c18a6d',
+    skyscraper: '#b6d4e4',
+    office: '#cbd3cf',
+    apartment: '#d4b99a',
+    house: '#d29a79',
   }[type] || '#b9c0c2'
 }
 
 function roofColor(building) {
   if (building.type === 'house') {
     return {
-      brick: '#6f2f27',
-      stucco: '#7c5041',
-      timber: '#4b3b31',
-      painted: '#2f4654',
-    }[building.form?.facade] || '#5b3e35'
+      brick: '#9a4f3d',
+      stucco: '#9b6b58',
+      timber: '#6d5749',
+      painted: '#446a80',
+    }[building.form?.facade] || '#825642'
   }
-  if (building.type === 'skyscraper') return '#1f3542'
-  if (building.type === 'office') return '#56646a'
-  return '#6b6258'
+  if (building.type === 'skyscraper') return '#2d4b5c'
+  if (building.type === 'office') return '#697981'
+  return '#82796e'
 }
 
 function partFromBuilding(building, { lx = 0, lz = 0, yOffset = 0, sx = building.w, sy = building.h, sz = building.d, rx = 0, rz = 0, color = bodyColor(building.type), textureType = building.type }) {
@@ -650,12 +674,18 @@ function applyPart(mesh, index, part, dummy, color) {
   dummy.scale.set(part.sx, part.sy, part.sz)
   dummy.updateMatrix()
   mesh.setMatrixAt(index, dummy.matrix)
-  if (color) mesh.setColorAt(index, color.set(part.color).lerp(new THREE.Color('#44525c'), (part.building?.tint || 0) * 0.08))
+  if (color) {
+    const lift = part.textureType === 'house' ? 0.5 : part.textureType === 'apartment' ? 0.36 : part.textureType ? 0.24 : 0
+    color.set(part.color)
+    if (lift) color.lerp(new THREE.Color('#fbf7ed'), lift)
+    mesh.setColorAt(index, color.lerp(new THREE.Color('#44525c'), (part.building?.tint || 0) * 0.04))
+  }
 }
 
 function Buildings({ buildings }) {
   const refs = useRef({})
   const detailRefs = useRef({})
+  const materialRefs = useRef({})
   const textures = useMemo(() => ({
     skyscraper: makeWindowTexture('skyscraper'),
     office: makeWindowTexture('office'),
@@ -687,6 +717,24 @@ function Buildings({ buildings }) {
     }
   }, [renderData])
 
+  useFrame(() => {
+    const sky = useCityStore.getState().sky
+    const reflection = sky?.reflection ?? 1
+    const sunlight = sky?.sunlight ?? 1
+    const nightBoost = sky?.phase === 'night' ? 1.7 : sky?.phase === 'golden-hour' || sky?.phase === 'dawn' ? 1.2 : 1
+    const settings = {
+      skyscraper: { env: 1.65, emissive: 0.22 },
+      office: { env: 0.92, emissive: 0.13 },
+      apartment: { env: 0.58, emissive: 0.16 },
+      house: { env: 0.5, emissive: 0.18 },
+    }
+    for (const [type, material] of Object.entries(materialRefs.current)) {
+      const setting = settings[type] || settings.office
+      material.envMapIntensity = setting.env * reflection
+      material.emissiveIntensity = setting.emissive * nightBoost * Math.max(0.92, 1.18 - sunlight * 0.18)
+    }
+  })
+
   return (
     <>
       {Object.entries(renderData.bodies).map(([type, items]) => {
@@ -701,14 +749,15 @@ function Buildings({ buildings }) {
           >
             <boxGeometry args={[1, 1, 1]} />
             <meshStandardMaterial
+              ref={node => { if (node) materialRefs.current[type] = node }}
               map={textures[type]}
               color="#ffffff"
               vertexColors
-              roughness={isGlass ? 0.22 : type === 'house' ? 0.76 : 0.52}
-              metalness={isGlass ? 0.42 : type === 'office' ? 0.16 : 0.04}
+              roughness={isGlass ? 0.16 : type === 'office' ? 0.3 : type === 'house' ? 0.64 : 0.52}
+              metalness={isGlass ? 0.56 : type === 'office' ? 0.24 : type === 'apartment' ? 0.08 : 0.05}
               emissive={isGlass ? '#1c3342' : type === 'apartment' ? '#2f241b' : type === 'house' ? '#4a2b1e' : '#202728'}
-              emissiveIntensity={isGlass ? 0.28 : type === 'house' ? 0.3 : 0.18}
-              envMapIntensity={isGlass ? 1.25 : 0.45}
+              emissiveIntensity={isGlass ? 0.24 : type === 'house' ? 0.22 : type === 'apartment' ? 0.18 : 0.15}
+              envMapIntensity={isGlass ? 1.65 : type === 'office' ? 0.92 : type === 'apartment' ? 0.58 : 0.5}
             />
           </instancedMesh>
         )
@@ -733,19 +782,19 @@ function Buildings({ buildings }) {
       ) : null}
       {renderData.gableRoofs.length ? (
         <instancedMesh ref={node => { if (node) detailRefs.current.gableRoofs = node }} args={[gableGeometry, undefined, renderData.gableRoofs.length]} castShadow frustumCulled={false}>
-          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.74} metalness={0.04} emissive="#321d17" emissiveIntensity={0.16} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.66} metalness={0.06} emissive="#4a281d" emissiveIntensity={0.2} />
         </instancedMesh>
       ) : null}
       {renderData.hipRoofs.length ? (
         <instancedMesh ref={node => { if (node) detailRefs.current.hipRoofs = node }} args={[undefined, undefined, renderData.hipRoofs.length]} castShadow frustumCulled={false}>
           <coneGeometry args={[1, 1, 4]} />
-          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.74} metalness={0.04} emissive="#321d17" emissiveIntensity={0.16} flatShading />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.66} metalness={0.06} emissive="#4a281d" emissiveIntensity={0.2} flatShading />
         </instancedMesh>
       ) : null}
       {renderData.shedRoofs.length ? (
         <instancedMesh ref={node => { if (node) detailRefs.current.shedRoofs = node }} args={[undefined, undefined, renderData.shedRoofs.length]} castShadow frustumCulled={false}>
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.68} metalness={0.05} emissive="#321d17" emissiveIntensity={0.16} />
+          <meshStandardMaterial color="#ffffff" vertexColors roughness={0.62} metalness={0.07} emissive="#4a281d" emissiveIntensity={0.2} />
         </instancedMesh>
       ) : null}
       {renderData.crowns.length ? (

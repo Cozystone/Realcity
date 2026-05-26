@@ -27,7 +27,7 @@ export default function App() {
           precision: 'highp',
           powerPreference: 'high-performance',
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 0.72,
+          toneMappingExposure: 0.84,
           outputColorSpace: THREE.SRGBColorSpace,
           logarithmicDepthBuffer: true,
         }}

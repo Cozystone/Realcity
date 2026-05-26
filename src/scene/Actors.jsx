@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { terrainHeight } from '../engine/cityEngine'
+import { terrainHeight, trafficSignalForAxis } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
 import { askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction } from '../engine/localLLM'
 
@@ -430,6 +430,25 @@ function hairTone(agent) {
   return tones[hashValue(`${agent.id}_hair`) % tones.length]
 }
 
+function agentLook(agent) {
+  return agent.appearance || {
+    heightScale: 1,
+    shoulderScale: 1,
+    bodyScale: 1,
+    legScale: 1,
+    headScale: 1,
+    hairStyle: 'short',
+    hatStyle: 'none',
+    bagStyle: 'backpack',
+    bottomStyle: 'pants',
+    topColor: agent.color || '#2f6f9f',
+    jacketColor: '#d9e2ea',
+    pantsColor: '#1f2937',
+    shoeColor: '#10151c',
+    accessoryColor: '#473120',
+  }
+}
+
 function trafficPose(car, tValue = car.t) {
   const t = car.direction > 0 ? tValue : 1 - tValue
   const span = car.road.to - car.road.from
@@ -462,7 +481,32 @@ function shouldYieldToPedestrian(car, pose, pedestrians) {
   return null
 }
 
-function Traffic({ cars }) {
+function distanceToSignalStop(car, pose, roads) {
+  const crossRoads = roads.filter(road => road.axis !== car.road.axis && road.main)
+  let nearest = Infinity
+  for (const cross of crossRoads) {
+    if (car.road.axis === 'x') {
+      if (cross.x < car.road.from || cross.x > car.road.to) continue
+      const distance = car.direction > 0 ? cross.x - pose.x : pose.x - cross.x
+      if (distance > 0 && distance < nearest) nearest = distance
+    } else {
+      if (cross.z < car.road.from || cross.z > car.road.to) continue
+      const distance = car.direction > 0 ? cross.z - pose.z : pose.z - cross.z
+      if (distance > 0 && distance < nearest) nearest = distance
+    }
+  }
+  return nearest
+}
+
+function shouldStopForSignal(car, pose, roads, timeMinutes) {
+  const signal = trafficSignalForAxis(car.road.axis, timeMinutes)
+  if (signal === 'green') return null
+  const stopDistance = distanceToSignalStop(car, pose, roads)
+  if (stopDistance > 4 && stopDistance < 30) return { signal, stopDistance }
+  return null
+}
+
+function Traffic({ cars, roads }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
   const wheelRef = useRef()
@@ -495,12 +539,18 @@ function Traffic({ cars }) {
       const car = cars[i]
       const currentPose = trafficPose(car)
       const hazard = shouldYieldToPedestrian(car, currentPose, pedestrians)
-      car.brake = hazard
-        ? Math.min(1, (car.brake || 0) + dt * (car.driverTemperament === 'hurried' ? 2.8 : 4.2))
+      const signalStop = shouldStopForSignal(car, currentPose, roads, store.timeMinutes)
+      const shouldBrake = hazard || signalStop
+      car.brake = shouldBrake
+        ? Math.min(1, (car.brake || 0) + dt * (signalStop ? 5.2 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
       if (hazard?.player && yieldPulse.current <= 0) {
         yieldPulse.current = 5
         store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'A driver'} yields as you step into the lane.`)
+      }
+      if (signalStop && yieldPulse.current <= 0) {
+        yieldPulse.current = 4
+        store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'Traffic'} stops for a ${signalStop.signal} light on ${car.road.name}.`)
       }
       const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
       const speedFactor = Math.max(0, 1 - car.brake * 0.98)
@@ -593,6 +643,10 @@ function NPCs({ city }) {
   const shoeRef = useRef()
   const chestRef = useRef()
   const bagRef = useRef()
+  const handRef = useRef()
+  const earRef = useRef()
+  const hatRef = useRef()
+  const skirtRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
   const colorsReady = useRef(false)
@@ -606,7 +660,7 @@ function NPCs({ city }) {
   }, [agents.length, city.cars.length, city.tiles.length])
 
   useFrame((state, delta) => {
-    if (!torsoRef.current || !headRef.current || !legRef.current || !armRef.current || !hairRef.current || !eyeRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !bagRef.current) return
+    if (!torsoRef.current || !headRef.current || !legRef.current || !armRef.current || !hairRef.current || !eyeRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -615,18 +669,37 @@ function NPCs({ city }) {
 
     if (!colorsReady.current) {
       agents.forEach((agent, i) => {
-        torsoRef.current.setColorAt(i, color.set(agent.color))
-        chestRef.current.setColorAt(i, color.set(agent.role === 'doctor' ? '#e8edf0' : agent.role === 'security' ? '#202833' : '#d9e2ea'))
+        const look = agentLook(agent)
+        torsoRef.current.setColorAt(i, color.set(look.topColor))
+        chestRef.current.setColorAt(i, color.set(look.jacketColor))
         headRef.current.setColorAt(i, color.set(skinTone(agent)))
         hairRef.current.setColorAt(i, color.set(hairTone(agent)))
         armRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         armRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        handRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
+        handRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        earRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
+        earRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        legRef.current.setColorAt(i * 2, color.set(look.pantsColor))
+        legRef.current.setColorAt(i * 2 + 1, color.set(look.pantsColor))
+        shoeRef.current.setColorAt(i * 2, color.set(look.shoeColor))
+        shoeRef.current.setColorAt(i * 2 + 1, color.set(look.shoeColor))
+        bagRef.current.setColorAt(i, color.set(look.accessoryColor))
+        hatRef.current.setColorAt(i, color.set(look.accessoryColor))
+        skirtRef.current.setColorAt(i, color.set(look.pantsColor))
       })
       if (torsoRef.current.instanceColor) torsoRef.current.instanceColor.needsUpdate = true
       if (chestRef.current.instanceColor) chestRef.current.instanceColor.needsUpdate = true
       if (headRef.current.instanceColor) headRef.current.instanceColor.needsUpdate = true
       if (hairRef.current.instanceColor) hairRef.current.instanceColor.needsUpdate = true
       if (armRef.current.instanceColor) armRef.current.instanceColor.needsUpdate = true
+      if (handRef.current.instanceColor) handRef.current.instanceColor.needsUpdate = true
+      if (earRef.current.instanceColor) earRef.current.instanceColor.needsUpdate = true
+      if (legRef.current.instanceColor) legRef.current.instanceColor.needsUpdate = true
+      if (shoeRef.current.instanceColor) shoeRef.current.instanceColor.needsUpdate = true
+      if (bagRef.current.instanceColor) bagRef.current.instanceColor.needsUpdate = true
+      if (hatRef.current.instanceColor) hatRef.current.instanceColor.needsUpdate = true
+      if (skirtRef.current.instanceColor) skirtRef.current.instanceColor.needsUpdate = true
       colorsReady.current = true
     }
 
@@ -648,21 +721,38 @@ function NPCs({ city }) {
       const walking = agentState === 'walking'
       const stride = Math.sin(state.clock.elapsedTime * (walking ? 7.6 : 1.2) * agent.pace + i * 0.83) * (walking ? 0.46 : 0.035)
       const base = agent.pos
-      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, 0.04, 0], [0.22, walking ? 0.49 : 0.45, 0.17])
-      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, 0.7, 0.025], [0.235, 0.235, 0.235])
-      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, 0.86, -0.02], [0.245, 0.105, 0.235])
-      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.075, 0.73, 0.245], [0.022, 0.022, 0.012])
-      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.075, 0.73, 0.245], [0.022, 0.022, 0.012])
-      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.675, 0.258], [0.025, 0.042, 0.026])
-      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, 0.61, 0.248], [0.07, 0.011, 0.012])
-      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, 0.15, 0.177], [0.145, 0.18, 0.018])
-      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.19, 0.08, -0.13], [0.1, 0.22, 0.055])
-      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.09, -0.43, 0], [0.055, 0.38, 0.055], stride)
-      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.09, -0.43, 0], [0.055, 0.38, 0.055], -stride)
-      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.245, 0.13, 0.02], [0.047, 0.32, 0.047], -stride * 0.58)
-      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.245, 0.13, 0.02], [0.047, 0.32, 0.047], stride * 0.58)
-      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.09, -0.84, 0.05], [0.065, 0.045, 0.105])
-      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.09, -0.84, 0.05], [0.065, 0.045, 0.105])
+      const look = agentLook(agent)
+      const height = look.heightScale || 1
+      const shoulder = look.shoulderScale || 1
+      const bodyScale = look.bodyScale || 1
+      const legScale = look.legScale || 1
+      const headScale = look.headScale || 1
+      const hairLong = look.hairStyle === 'long' || look.hairStyle === 'bob'
+      const hairBun = look.hairStyle === 'bun'
+      const hatVisible = (look.hatStyle && look.hatStyle !== 'none') || look.hairStyle === 'cap'
+      const bagVisible = look.bagStyle && look.bagStyle !== 'none'
+      const skirtVisible = look.bottomStyle === 'skirt'
+      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, 0.04 * height, 0], [0.2 * shoulder, (walking ? 0.5 : 0.46) * height * bodyScale, 0.16 * bodyScale])
+      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, 0.72 * height, 0.025], [0.22 * headScale, 0.24 * headScale, 0.22 * headScale])
+      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, (hairLong ? 0.82 : 0.87) * height, hairLong ? -0.055 : -0.02], [0.245 * headScale, (hairBun ? 0.15 : hairLong ? 0.22 : 0.105) * headScale, 0.24 * headScale])
+      setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
+      setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
+      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
+      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
+      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.695 * height, 0.246], [0.024, 0.04, 0.024])
+      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, 0.632 * height, 0.238], [0.068, 0.01, 0.012])
+      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, 0.17 * height, 0.168], [0.15 * shoulder, 0.18 * height, 0.018])
+      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.19 * shoulder, 0.08 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
+      setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
+      setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.13 * height, 0], skirtVisible ? [0.19 * shoulder, 0.24 * height, 0.16] : [0.001, 0.001, 0.001])
+      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.085 * shoulder, -0.45 * height, 0], [0.052, 0.38 * height * legScale, 0.052], stride)
+      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.085 * shoulder, -0.45 * height, 0], [0.052, 0.38 * height * legScale, 0.052], -stride)
+      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], -stride * 0.58)
+      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], stride * 0.58)
+      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
+      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
+      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.085 * shoulder, -0.86 * height, 0.055], [0.064, 0.043, 0.11])
+      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.085 * shoulder, -0.86 * height, 0.055], [0.064, 0.043, 0.11])
     }
 
     socialClock.current += dt
@@ -700,6 +790,10 @@ function NPCs({ city }) {
     mouthRef.current.instanceMatrix.needsUpdate = true
     chestRef.current.instanceMatrix.needsUpdate = true
     bagRef.current.instanceMatrix.needsUpdate = true
+    handRef.current.instanceMatrix.needsUpdate = true
+    earRef.current.instanceMatrix.needsUpdate = true
+    hatRef.current.instanceMatrix.needsUpdate = true
+    skirtRef.current.instanceMatrix.needsUpdate = true
     legRef.current.instanceMatrix.needsUpdate = true
     armRef.current.instanceMatrix.needsUpdate = true
     shoeRef.current.instanceMatrix.needsUpdate = true
@@ -844,21 +938,37 @@ function NPCs({ city }) {
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#6e2f2f" roughness={0.7} />
       </instancedMesh>
+      <instancedMesh ref={earRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshStandardMaterial color="#efc29a" vertexColors roughness={0.72} />
+      </instancedMesh>
       <instancedMesh ref={bagRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#473120" roughness={0.78} />
+        <meshStandardMaterial color="#473120" vertexColors roughness={0.78} />
+      </instancedMesh>
+      <instancedMesh ref={hatRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 12]} />
+        <meshStandardMaterial color="#27313d" vertexColors roughness={0.74} metalness={0.04} />
+      </instancedMesh>
+      <instancedMesh ref={skirtRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <coneGeometry args={[1, 1, 8]} />
+        <meshStandardMaterial color="#293241" vertexColors roughness={0.82} />
       </instancedMesh>
       <instancedMesh ref={legRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <capsuleGeometry args={[1, 2, 4, 7]} />
-        <meshStandardMaterial color="#1f2937" roughness={0.84} />
+        <meshStandardMaterial color="#1f2937" vertexColors roughness={0.84} />
       </instancedMesh>
       <instancedMesh ref={armRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <capsuleGeometry args={[1, 2, 4, 7]} />
         <meshStandardMaterial color="#d7a17d" vertexColors roughness={0.7} />
       </instancedMesh>
+      <instancedMesh ref={handRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshStandardMaterial color="#d7a17d" vertexColors roughness={0.72} />
+      </instancedMesh>
       <instancedMesh ref={shoeRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#10151c" roughness={0.82} />
+        <meshStandardMaterial color="#10151c" vertexColors roughness={0.82} />
       </instancedMesh>
     </>
   )
@@ -867,7 +977,7 @@ function NPCs({ city }) {
 export default function Actors({ city }) {
   return (
     <>
-      <Traffic cars={city.cars} />
+      <Traffic cars={city.cars} roads={city.roads} />
       <NPCs city={city} />
     </>
   )

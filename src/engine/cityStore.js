@@ -23,6 +23,12 @@ export const useCityStore = create((set, get) => ({
     windSpeed: 5.8,
     clouds: 0.44,
   },
+  sky: {
+    phase: 'day',
+    sunElevation: 0.75,
+    sunlight: 1,
+    reflection: 1,
+  },
   stats: {
     npcs: 0,
     cars: 0,
@@ -64,6 +70,10 @@ export const useCityStore = create((set, get) => ({
 
   setStats(stats) {
     set(state => ({ stats: { ...state.stats, ...stats } }))
+  },
+
+  setSky(sky) {
+    set(state => ({ sky: { ...state.sky, ...sky } }))
   },
 
   showDialogue(dialogue) {

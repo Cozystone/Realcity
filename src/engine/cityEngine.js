@@ -10,6 +10,8 @@ export const ROAD_WIDTH = 11
 export const TILE_SIZE = 240
 export const DAY_MINUTES = 24 * 60
 export const CITY_BASE_Y = 0
+export const TRAFFIC_SIGNAL_CYCLE_SECONDS = 54
+export const TRAFFIC_SIGNAL_YELLOW_SECONDS = 4.5
 
 const ROLE_LIBRARY = [
   { role: 'banker', job: 'Banker', workplace: 'aster_exchange', color: '#2c5f8a', pace: 1.05 },
@@ -31,6 +33,15 @@ const FAMILY_NAMES = ['Kim', 'Park', 'Lee', 'Choi', 'Jung', 'Seo', 'Han', 'Kang'
 const PERSONALITIES = ['warm', 'reserved', 'curious', 'direct', 'funny', 'tired', 'ambitious', 'careful', 'restless']
 const EAST_WEST_STREETS = ['Harbor-ro', 'Depot-gil', 'Aster-daero', 'Market-ro', 'Station-daero', 'Mirae-ro', 'Hanbit-ro', 'Neon-gil', 'Hill-ro']
 const NORTH_SOUTH_STREETS = ['Sunset-ro', 'River-ro', 'Civic-daero', 'Jungang-ro', 'Glass-ro', 'School-gil', 'Workshop-ro', 'Garden-ro', 'Coast-ro']
+
+const FASHION_PALETTES = [
+  { top: '#2f6f9f', jacket: '#e8f1f4', pants: '#17203a', shoes: '#0d1118', accessory: '#5a3f2f' },
+  { top: '#6f3f8f', jacket: '#2b2633', pants: '#1f2937', shoes: '#111827', accessory: '#c59b53' },
+  { top: '#3f7d55', jacket: '#d8e0d4', pants: '#2f3a2d', shoes: '#1b201b', accessory: '#704c33' },
+  { top: '#ba6a3f', jacket: '#f0d4bd', pants: '#384252', shoes: '#1c1d21', accessory: '#7c3f2f' },
+  { top: '#425e80', jacket: '#202833', pants: '#111827', shoes: '#05070a', accessory: '#46515c' },
+  { top: '#b84f70', jacket: '#f3dce6', pants: '#3d2430', shoes: '#171217', accessory: '#8b5d35' },
+]
 
 const LANDMARK_INTERIORS = {
   transit: { width: 64, depth: 30, height: 7.2, doorWidth: 14, lobbyDepth: 25, verticalCore: 'escalator' },
@@ -109,6 +120,15 @@ export function terrainTone(x, z) {
   if (distance < 940) return [0.24, 0.245, 0.24]
   if (h > 70) return [0.29, 0.31, 0.28]
   return [0.19, 0.36, 0.22]
+}
+
+export function trafficSignalForAxis(axis, timeMinutes = 0) {
+  const second = (timeMinutes * 60) % TRAFFIC_SIGNAL_CYCLE_SECONDS
+  const half = TRAFFIC_SIGNAL_CYCLE_SECONDS / 2
+  const activeAxis = second < half ? 'x' : 'z'
+  const phaseSecond = second < half ? second : second - half
+  if (axis !== activeAxis) return 'red'
+  return phaseSecond > half - TRAFFIC_SIGNAL_YELLOW_SECONDS ? 'yellow' : 'green'
 }
 
 function districtAt(x, z) {
@@ -326,7 +346,8 @@ function createTraffic(rng, roads) {
   return Array.from({ length: 120 }, (_, i) => {
     const road = pick(rng, candidates)
     const direction = rng() > 0.5 ? 1 : -1
-    const lane = (rng() > 0.5 ? 1 : -1) * (road.width * 0.24)
+    const laneOffset = road.width * (road.main ? 0.27 : 0.22)
+    const lane = road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
     const taxi = rng() < 0.16
     const driverName = `${pick(rng, GIVEN_NAMES)} ${pick(rng, FAMILY_NAMES)}`
     return {
@@ -338,6 +359,7 @@ function createTraffic(rng, roads) {
       road,
       direction,
       lane,
+      laneRule: 'right-hand',
       t: rng(),
       speed: 7 + rng() * 10,
       brake: 0,
@@ -345,6 +367,30 @@ function createTraffic(rng, roads) {
       color: taxi ? '#f6c445' : pick(rng, ['#e8504f', '#f3f4f6', '#1f2937', '#3b82f6', '#16a34a', '#f59e0b', '#7c3aed', '#94a3b8']),
     }
   })
+}
+
+function createAppearance(rng, role, gender, age) {
+  const palette = pick(rng, FASHION_PALETTES)
+  const ageBand = age < 24 ? 'young' : age > 62 ? 'senior' : 'adult'
+  const roleBag = ['courier', 'student', 'teacher', 'engineer'].includes(role)
+  const formal = ['banker', 'security', 'doctor'].includes(role)
+  return {
+    heightScale: clamp(0.9 + rng() * 0.22 + (ageBand === 'senior' ? -0.04 : 0), 0.86, 1.16),
+    shoulderScale: 0.88 + rng() * 0.28,
+    bodyScale: 0.9 + rng() * 0.18,
+    legScale: 0.9 + rng() * 0.2,
+    headScale: 0.92 + rng() * 0.16,
+    ageBand,
+    hairStyle: pick(rng, gender === 'man' ? ['short', 'cap', 'swept', 'shaved'] : ['bob', 'long', 'bun', 'cap']),
+    hatStyle: role === 'courier' || role === 'security' || rng() > 0.82 ? pick(rng, ['cap', 'beanie']) : 'none',
+    bagStyle: roleBag || rng() > 0.6 ? pick(rng, ['backpack', 'shoulder', 'briefcase']) : 'none',
+    bottomStyle: !formal && rng() > 0.72 ? 'skirt' : 'pants',
+    topColor: formal ? role === 'doctor' ? '#e9f1f4' : role === 'security' ? '#1d2633' : '#2b3342' : palette.top,
+    jacketColor: formal ? role === 'doctor' ? '#f7fbff' : role === 'security' ? '#202833' : '#d7dde5' : palette.jacket,
+    pantsColor: formal ? '#18202c' : palette.pants,
+    shoeColor: palette.shoes,
+    accessoryColor: palette.accessory,
+  }
 }
 
 function buildingTypeLabel(type) {
@@ -457,16 +503,19 @@ function createNPCs(rng, buildings, landmarks) {
     const hx = home.x + (rng() - 0.5) * home.w
     const hz = home.z + (rng() - 0.5) * home.d
 
+    const age = 18 + Math.floor(rng() * 57)
+
     return {
       id: `npc_${i}`,
       name,
       gender,
-      age: 18 + Math.floor(rng() * 57),
+      age,
       role: roleInfo.role,
       job: roleInfo.job,
       color: roleInfo.color,
       pace: roleInfo.pace,
       personality: pick(rng, PERSONALITIES),
+      appearance: createAppearance(rng, roleInfo.role, gender, age),
       home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence`, address: home.address, buildingId: home.id },
       workId: work.id,
       thirdId: third.id,
@@ -580,9 +629,15 @@ export function createRealCity(seed = 20260525) {
     getNearbyBuildings,
     socialNorms: {
       pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings.',
-      traffic: 'Cars own drive lanes, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
+      traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
+    },
+    trafficRules: {
+      drivingSide: 'right-hand',
+      laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',
+      signals: `Main intersections alternate east-west and north-south green phases every ${TRAFFIC_SIGNAL_CYCLE_SECONDS / 2} seconds with a ${TRAFFIC_SIGNAL_YELLOW_SECONDS} second yellow interval.`,
+      yielding: 'Drivers brake for pedestrians in or near a lane and stop at red/yellow signal approaches.',
     },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',

@@ -183,6 +183,14 @@ async function inspectCityNorms(page) {
     const formKeys = buildings => [...new Set(buildings.map(building => building.form?.profile).filter(Boolean))]
     const roofKeys = buildings => [...new Set(buildings.map(building => building.form?.roof).filter(Boolean))]
     const houses = city.buildings.filter(building => building.type === 'house')
+    const laneViolations = city.cars.filter(car => {
+      const expectedOffset = car.road.width * (car.road.main ? 0.27 : 0.22)
+      const expectedLane = car.road.axis === 'x' ? car.direction * expectedOffset : -car.direction * expectedOffset
+      return car.laneRule !== 'right-hand' || Math.abs(car.lane - expectedLane) > 0.01
+    })
+    const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
+    const heightVariants = new Set(city.npcs.map(npc => npc.appearance?.heightScale?.toFixed(2)).filter(Boolean))
+    const fashionVariants = new Set(city.npcs.map(npc => `${npc.appearance?.topColor}:${npc.appearance?.jacketColor}:${npc.appearance?.bottomStyle}:${npc.appearance?.hatStyle}`))
     const treeRoadConflicts = city.trees.filter(tree => city.roads.some(road => {
       if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
       return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
@@ -197,8 +205,14 @@ async function inspectCityNorms(page) {
       houseProfiles: formKeys(houses),
       houseRoofs: roofKeys(houses),
       houseAccessoryCount: houses.filter(building => building.form?.porch || building.form?.garage || building.form?.chimney || building.form?.wing).length,
+      laneViolations: laneViolations.length,
+      appearanceReady: appearanceReady.length,
+      npcCount: city.npcs.length,
+      heightVariants: heightVariants.size,
+      fashionVariants: fashionVariants.size,
       treeRoadConflicts: treeRoadConflicts.length,
       socialNorms: city.socialNorms,
+      trafficRules: city.trafficRules,
     }
   })
   assert(norms, 'City metadata was not exposed for norm verification')
@@ -210,6 +224,11 @@ async function inspectCityNorms(page) {
   assert(norms.houseProfiles.length >= 4, `House profiles are not diverse enough: ${norms.houseProfiles.join(', ')}`)
   assert(norms.houseRoofs.length >= 3, `House roof styles are not diverse enough: ${norms.houseRoofs.join(', ')}`)
   assert(norms.houseAccessoryCount >= 20, 'Houses did not receive enough porches, garages, chimneys, or wings')
+  assert(norms.laneViolations === 0, `${norms.laneViolations} cars violate right-hand lane placement`)
+  assert(norms.trafficRules?.drivingSide === 'right-hand' && norms.trafficRules?.signals, 'Traffic rule metadata is incomplete')
+  assert(norms.appearanceReady === norms.npcCount, 'NPC appearance metadata is incomplete')
+  assert(norms.heightVariants >= 8, `NPC height variation is too low: ${norms.heightVariants}`)
+  assert(norms.fashionVariants >= 8, `NPC fashion variation is too low: ${norms.fashionVariants}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
   assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem, 'Social norm metadata is incomplete')
   return norms
@@ -295,6 +314,10 @@ async function main() {
     const canvas = await inspectCanvas(page)
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
+    const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
+    assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
+    const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
+    await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
       const city = window.__REALCITY_CITY__
       const player = window.__REALCITY_STORE__?.getState().player || { x: 0, z: 40 }
@@ -379,6 +402,7 @@ async function main() {
       canvas,
       interiors,
       cityNorms,
+      skyState,
       phone,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
@@ -394,6 +418,7 @@ async function main() {
       consoleErrors,
       pageErrors,
       serverLogTail: server.logs.join('').split(/\r?\n/).slice(-30),
+      initialScreenshotPath,
       screenshotPath,
     }
     writeFileSync(path.join(artifactsDir, 'realcity-last-run.json'), JSON.stringify(report, null, 2))
