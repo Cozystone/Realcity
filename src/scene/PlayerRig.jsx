@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { CITY_HALF, terrainHeight } from '../engine/cityEngine'
+import { terrainHeight } from '../engine/cityEngine'
+import { currentInterior, resolveBuildingCollision } from '../engine/collision'
 import { useCityStore } from '../engine/cityStore'
 import { sampleRoute } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
@@ -58,94 +59,6 @@ function useKeys() {
   }, [])
 
   return keys
-}
-
-function pushOutOfBox(px, pz, cx, cz, hw, hd) {
-  const dx = px - cx
-  const dz = pz - cz
-  const pushX = hw - Math.abs(dx)
-  const pushZ = hd - Math.abs(dz)
-  if (pushX < pushZ) return [cx + Math.sign(dx || 1) * hw, pz]
-  return [px, cz + Math.sign(dz || 1) * hd]
-}
-
-function resolveLandmarkCollision(city, previousX, previousZ, nextX, nextZ) {
-  let px = nextX
-  let pz = nextZ
-  const radius = 0.72
-
-  for (const place of city.landmarks) {
-    const interior = place.interior
-    if (!interior?.solidWalls) continue
-
-    const hw = interior.width / 2 + radius
-    const hd = interior.depth / 2 + radius
-    const prev = { x: previousX - place.x, z: previousZ - place.z }
-    const next = { x: px - place.x, z: pz - place.z }
-    const prevInside = Math.abs(prev.x) < hw && Math.abs(prev.z) < hd
-    const nextInside = Math.abs(next.x) < hw && Math.abs(next.z) < hd
-    if (!prevInside && !nextInside) continue
-
-    const doorHalf = interior.doorWidth / 2
-    const atFrontDoor = Math.abs(next.x) < doorHalf && next.z <= -interior.depth / 2 + 2.4
-
-    if (!prevInside && nextInside && !atFrontDoor) {
-      ;[px, pz] = pushOutOfBox(px, pz, place.x, place.z, hw, hd)
-      continue
-    }
-
-    if (prevInside && !nextInside) {
-      const exitsThroughDoor = Math.abs(prev.x) < doorHalf && next.z < -interior.depth / 2 + 2.4
-      if (!exitsThroughDoor) {
-        px = Math.max(place.x - hw + radius, Math.min(place.x + hw - radius, px))
-        pz = Math.max(place.z - hd + radius, Math.min(place.z + hd - radius, pz))
-      }
-    }
-  }
-
-  return [px, pz]
-}
-
-function currentInterior(city, x, z) {
-  for (const place of city.landmarks) {
-    const interior = place.interior
-    if (!interior) continue
-    const localX = x - place.x
-    const localZ = z - place.z
-    if (Math.abs(localX) < interior.width / 2 && Math.abs(localZ) < interior.depth / 2) {
-      return {
-        id: place.id,
-        name: place.name,
-        kind: place.kind,
-        verticalCore: interior.verticalCore,
-      }
-    }
-  }
-  return null
-}
-
-function resolveBuildingCollision(city, previousX, previousZ, x, z) {
-  let px = x
-  let pz = z
-  const radius = 0.72
-  const colliders = city.getNearbyBuildings(px, pz)
-
-  for (const building of colliders) {
-    if (building.h < 3) continue
-    const hw = building.w / 2 + radius
-    const hd = building.d / 2 + radius
-    const dx = px - building.x
-    const dz = pz - building.z
-    if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
-      ;[px, pz] = pushOutOfBox(px, pz, building.x, building.z, hw, hd)
-    }
-  }
-
-  ;[px, pz] = resolveLandmarkCollision(city, previousX, previousZ, px, pz)
-
-  px = Math.max(-CITY_HALF + 15, Math.min(CITY_HALF - 15, px))
-  pz = Math.max(-CITY_HALF + 15, Math.min(CITY_HALF - 15, pz))
-  return [px, pz]
 }
 
 function vehicleLocal(sample, x, z) {

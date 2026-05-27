@@ -413,11 +413,30 @@ async function inspectCollisionAndMaterials(page) {
 
   const result = await page.evaluate(() => {
     const state = window.__REALCITY_STORE__?.getState()
+    const city = window.__REALCITY_CITY__
+    const samples = state?.pedestrianSamples || []
+    const npcWallViolations = city
+      ? samples.filter(sample => {
+          const buildingHit = (city.getNearbyBuildings?.(sample.x, sample.z) || city.buildings || []).some(building => {
+            if (building.h < 3) return false
+            return Math.abs(sample.x - building.x) < building.w / 2 + 0.72 &&
+              Math.abs(sample.z - building.z) < building.d / 2 + 0.72
+          })
+          if (buildingHit) return true
+          return (city.landmarks || []).some(place => {
+            const interior = place.interior
+            if (!interior?.solidWalls) return false
+            return Math.abs(sample.x - place.x) < interior.width / 2 + 0.72 &&
+              Math.abs(sample.z - place.z) < interior.depth / 2 + 0.72
+          })
+        })
+      : []
     return {
       rules: state?.collisionRules || null,
-      pedestrianSamples: state?.pedestrianSamples?.length || 0,
+      pedestrianSamples: samples.length,
       vehicleSamples: state?.vehicleSamples?.length || 0,
-      activePedestrianStates: [...new Set((state?.pedestrianSamples || []).map(sample => sample.state).filter(Boolean))].slice(0, 12),
+      activePedestrianStates: [...new Set(samples.map(sample => sample.state).filter(Boolean))].slice(0, 12),
+      npcWallViolations: npcWallViolations.map(sample => ({ id: sample.id, x: Number(sample.x.toFixed(2)), z: Number(sample.z.toFixed(2)), state: sample.state })).slice(0, 8),
       vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
       vehicleBoundsReady: (state?.vehicleSamples || []).filter(sample => sample.width > 0 && sample.length > 0 && typeof sample.yaw === 'number').length,
       clouds: window.__REALCITY_CLOUDS__ || null,
@@ -426,8 +445,10 @@ async function inspectCollisionAndMaterials(page) {
   })
 
   assert(result.rules?.solidObjects?.includes('pedestrians') && result.rules?.solidObjects?.includes('vehicles'), 'Dynamic pedestrian/vehicle collision rules are missing')
+  assert(result.rules?.solidObjects?.includes('buildings') && result.rules?.solidObjects?.includes('landmarks'), 'Static building/landmark collision rules are missing')
   assert(result.rules?.reactions?.includes('push-away') && result.rules?.reactions?.includes('fall') && result.rules?.reactions?.includes('driver-brake'), 'Collision reaction metadata is incomplete')
   assert(result.pedestrianSamples > 100, `Pedestrian collision samples are too sparse: ${result.pedestrianSamples}`)
+  assert(result.npcWallViolations.length === 0, `NPCs are inside solid building walls: ${JSON.stringify(result.npcWallViolations)}`)
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
   assert(result.vehicleBoundsReady === result.vehicleSamples, 'Vehicle collision samples do not expose oriented bounds')
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)

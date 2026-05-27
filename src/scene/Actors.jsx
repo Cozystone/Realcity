@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { terrainHeight, trafficSignalForAxis } from '../engine/cityEngine'
+import { resolveBuildingCollision } from '../engine/collision'
 import { useCityStore } from '../engine/cityStore'
 import { fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, sampleRoute, taxiSpawnForPickup } from '../engine/taxiRouting'
@@ -126,7 +127,41 @@ function enforcePedestrianNorms(previous, next, roads = []) {
   return { x, z }
 }
 
-function moveAgentToward(agent, target, delta, speed, roads) {
+function resolveAgentMovement(agent, previous, next, target, cityOrRoads) {
+  const city = Array.isArray(cityOrRoads) ? null : cityOrRoads
+  const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads?.roads
+  let safe = roads?.length ? enforcePedestrianNorms(previous, next, roads) : next
+
+  if (!city?.getNearbyBuildings) return safe
+
+  const [fullX, fullZ] = resolveBuildingCollision(city, previous.x, previous.z, safe.x, safe.z, 0.68)
+  const collided = Math.hypot(fullX - safe.x, fullZ - safe.z) > 0.03
+  if (!collided) return { x: fullX, z: fullZ }
+
+  const [xOnlyX, xOnlyZ] = resolveBuildingCollision(city, previous.x, previous.z, safe.x, previous.z, 0.68)
+  const [zOnlyX, zOnlyZ] = resolveBuildingCollision(city, previous.x, previous.z, previous.x, safe.z, 0.68)
+  const candidates = [
+    { x: fullX, z: fullZ },
+    { x: xOnlyX, z: xOnlyZ },
+    { x: zOnlyX, z: zOnlyZ },
+    previous,
+  ]
+  let best = candidates[0]
+  let bestScore = Infinity
+  for (const candidate of candidates) {
+    const progress = Math.hypot(candidate.x - previous.x, candidate.z - previous.z)
+    const score = Math.hypot(target.x - candidate.x, target.z - candidate.z) - progress * 0.35
+    if (score < bestScore) {
+      best = candidate
+      bestScore = score
+    }
+  }
+  if (best === previous) agent.heading += 1.35 * delta
+  else if (collided) agent.heading += Math.sin(agent.id.length + performance.now() * 0.001) * delta * 1.8
+  return best
+}
+
+function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
   const dx = target.x - agent.pos.x
   const dz = target.z - agent.pos.z
   const distance = Math.hypot(dx, dz)
@@ -141,7 +176,7 @@ function moveAgentToward(agent, target, delta, speed, roads) {
     x: agent.pos.x + Math.sin(agent.heading) * step,
     z: agent.pos.z + Math.cos(agent.heading) * step,
   }
-  const safe = roads?.length ? enforcePedestrianNorms(previous, next, roads) : next
+  const safe = resolveAgentMovement(agent, previous, next, target, cityOrRoads)
   agent.pos.x = safe.x
   agent.pos.z = safe.z
   agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
@@ -216,19 +251,20 @@ class Agent {
     this.fallTimer = 0
   }
 
-  update(delta, timeMinutes, places, roads) {
+  update(delta, timeMinutes, places, city) {
+    const roads = city.roads || city
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
     this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
     if (this.fallTimer > 0) {
       this.fallTimer = Math.max(0, this.fallTimer - delta)
-      this.applyBump(delta * 0.42, roads)
+      this.applyBump(delta * 0.42, city)
       this.activity = this.fallTimer > 0.25 ? 'knocked down' : 'getting back up'
       return 'fallen'
     }
     if (this.bumpTimer > 0) {
       this.bumpTimer = Math.max(0, this.bumpTimer - delta)
-      this.applyBump(delta, roads)
+      this.applyBump(delta, city)
       this.activity = 'stumbling after contact'
       return 'stumbling'
     }
@@ -238,7 +274,7 @@ class Agent {
     }
     if (this.talkTimer > 0) this.talkTimer -= delta
 
-    if (this.mission) return this.updateMission(delta, roads)
+    if (this.mission) return this.updateMission(delta, city)
 
     const target = targetFor(this, places, timeMinutes)
     this.activity = target.activity
@@ -247,7 +283,7 @@ class Agent {
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (distance > 2.2) {
       const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace
-      moveAgentToward(this, target, delta, speed, roads)
+      moveAgentToward(this, target, delta, speed, city)
       return 'walking'
     }
 
@@ -255,7 +291,8 @@ class Agent {
     return 'dwelling'
   }
 
-  updateMission(delta, roads) {
+  updateMission(delta, city) {
+    const roads = city.roads || city
     const store = useCityStore.getState()
     const mission = this.mission
     const destination = mission.destination
@@ -264,7 +301,7 @@ class Agent {
     if (mission.mode === 'taxi') {
       if (mission.phase === 'to_pickup') {
         this.activity = 'walking to taxi pickup'
-        const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace, roads)
+        const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace, city)
         if (distance < 2.6) {
           beginTaxiDispatch(this, mission, store, roads)
           return 'talking'
@@ -284,7 +321,7 @@ class Agent {
       if (mission.phase === 'taxi_dispatch') {
         this.activity = 'waiting for taxi'
         const curbDistance = Math.hypot(this.pos.x - mission.pickup.x, this.pos.z - mission.pickup.z)
-        if (curbDistance > 2.2) moveAgentToward(this, mission.pickup, delta, 1.6 * this.pace, roads)
+        if (curbDistance > 2.2) moveAgentToward(this, mission.pickup, delta, 1.6 * this.pace, city)
 
         const taxi = mission.taxi
         if (taxi) {
@@ -393,7 +430,7 @@ class Agent {
     }
 
     this.activity = 'guiding player'
-    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace, roads)
+    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace, city)
     if (distance < 3.2) {
       this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
       store.finishMission(`${this.name} guided you to ${destination.name}.`)
@@ -409,14 +446,14 @@ class Agent {
     return 'walking'
   }
 
-  applyBump(delta, roads) {
+  applyBump(delta, cityOrRoads) {
     if (this.bumpVelocity.lengthSq() < 0.002) return
     const previous = { x: this.pos.x, z: this.pos.z }
     const next = {
       x: this.pos.x + this.bumpVelocity.x * delta,
       z: this.pos.z + this.bumpVelocity.y * delta,
     }
-    const safe = roads?.length ? enforcePedestrianNorms(previous, next, roads) : next
+    const safe = resolveAgentMovement(this, previous, next, next, cityOrRoads)
     this.pos.x = safe.x
     this.pos.z = safe.z
     this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
@@ -1132,7 +1169,7 @@ function NPCs({ city }) {
 
     for (let i = 0; i < agents.length; i += 1) {
       const agent = agents[i]
-      const agentState = agent.update(dt, time, places, city.roads)
+      const agentState = agent.update(dt, time, places, city)
       if (agentState === 'talking') talks += 1
       const playerDistance = agent.pos.distanceTo(player)
       if (!agent.mission && playerDistance < nearestDistance) {
