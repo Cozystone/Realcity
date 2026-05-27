@@ -45,6 +45,7 @@ export const useCityStore = create((set, get) => ({
   interaction: null,
   mission: null,
   ride: null,
+  cityEvents: [],
   pedestrianSamples: [],
   vehicleSamples: [],
   collisionRules: {
@@ -171,6 +172,35 @@ export const useCityStore = create((set, get) => ({
 
   setPulse(pulse) {
     set({ pulse })
+  },
+
+  addCityEvent(event) {
+    if (!event?.text) return
+    set(state => {
+      const now = Date.now()
+      const entry = {
+        id: event.id || `event_${now}_${state.cityEvents.length}`,
+        timeMinutes: state.timeMinutes,
+        day: state.day,
+        createdAt: now,
+        kind: event.kind || 'city',
+        agentId: event.agentId || null,
+        agentName: event.agentName || null,
+        placeName: event.placeName || null,
+        text: String(event.text).slice(0, 180),
+      }
+      const duplicate = state.cityEvents[0]
+      if (
+        duplicate &&
+        duplicate.agentId === entry.agentId &&
+        duplicate.kind === entry.kind &&
+        duplicate.text === entry.text &&
+        now - duplicate.createdAt < 2500
+      ) {
+        return state
+      }
+      return { cityEvents: [entry, ...state.cityEvents].slice(0, 24) }
+    })
   },
 
   setPedestrianSamples(pedestrianSamples) {

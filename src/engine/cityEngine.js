@@ -73,6 +73,23 @@ const WALK_STYLES = [
   { id: 'easygoing', cadence: 0.78, stride: 0.92, armSwing: 0.7, speed: 0.88 },
 ]
 
+const DAILY_GOALS = {
+  banker: ['close a client report', 'check the morning market board', 'meet a colleague near the exchange'],
+  doctor: ['finish rounds without delaying triage', 'check on an emergency handoff', 'take a short quiet break after shift'],
+  teacher: ['prepare the next class', 'walk students safely across campus', 'grade assignments before evening'],
+  courier: ['finish a timed delivery loop', 'avoid late traffic near the depot', 'confirm the next pickup address'],
+  barista: ['restock cups before lunch', 'remember a regular customer order', 'close the cafe cleanly tonight'],
+  engineer: ['test a street sensor prototype', 'bring parts back to Maker Yard', 'debug a delivery robot route'],
+  artist: ['sketch a new facade detail', 'meet friends near Neon Square', 'find good evening light for a mural'],
+  security: ['keep station entrances clear', 'watch the crosswalk rush', 'help a lost visitor find the platform'],
+  student: ['make it to class on time', 'meet a friend after school', 'study before heading home'],
+  shopkeeper: ['open the front display', 'track a delivery from the depot', 'check foot traffic after work'],
+  gardener: ['water the hill path planters', 'inspect trees near the road edge', 'clear leaves from a park entrance'],
+  retiree: ['take a steady morning walk', 'chat near the park benches', 'buy groceries before sunset'],
+}
+
+const RELATIONSHIP_STYLES = ['neighborly', 'private', 'helpful', 'busy-but-kind', 'curious', 'formal', 'chatty', 'practical']
+
 const SPEECH_STYLES = [
   { id: 'polite_brief', label: 'polite and brief', prefix: '네, ', flavor: '짧고 정중하게 말함' },
   { id: 'warm_chatty', label: 'warm and chatty', prefix: '좋아요, ', flavor: '상대 기분을 살피며 부드럽게 말함' },
@@ -950,6 +967,14 @@ function createNPCs(rng, buildings, landmarks) {
     const personality = pick(rng, PERSONALITIES)
     const speechStyle = createSpeechStyle(rng, roleInfo.role, personality, i)
     const appearance = createAppearance(rng, roleInfo.role, gender, age, i)
+    const dailyGoals = DAILY_GOALS[roleInfo.role] || ['follow today schedule', 'check in with a friend', 'return home safely']
+    const dailyGoal = dailyGoals[(i + Math.floor(rng() * dailyGoals.length)) % dailyGoals.length]
+    const needProfile = {
+      energy: clamp(0.52 + rng() * 0.42 - (age > 62 ? 0.08 : 0), 0.25, 0.98),
+      hunger: clamp(0.18 + rng() * 0.38, 0.05, 0.78),
+      social: clamp(0.28 + rng() * 0.56, 0.08, 0.96),
+      urgency: clamp(roleInfo.pace * 0.42 + rng() * 0.34, 0.12, 0.94),
+    }
 
     return {
       id: `npc_${i}`,
@@ -965,6 +990,13 @@ function createNPCs(rng, buildings, landmarks) {
       voice: speechStyle.voice,
       gestureStyle: speechStyle.gesture,
       appearance,
+      autonomy: {
+        dailyGoal,
+        needProfile,
+        relationshipStyle: RELATIONSHIP_STYLES[(i + Math.floor(rng() * RELATIONSHIP_STYLES.length)) % RELATIONSHIP_STYLES.length],
+        memoryStyle: personality,
+        routineTolerance: clamp(0.35 + rng() * 0.56, 0.18, 0.96),
+      },
       personaSignature: `${personality}-${speechStyle.signature}`,
       styleBrief: `${appearance.styleBrief}, ${speechStyle.label}, ${speechStyle.voice}`,
       home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence`, address: home.address, buildingId: home.id },
@@ -1085,6 +1117,7 @@ export function createRealCity(seed = 20260525) {
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
       zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
       npcDiversity: 'Every NPC carries a distinct name, body archetype, walking cadence, outfit/accessory signature, voice register, gesture style, and speech flavor.',
+      npcAutonomy: 'Every NPC has a daily goal, mutable needs, relationship style, and short memory feed that can surface as live city events.',
       collision: 'Buildings, landmark interiors, pedestrians, and vehicles are treated as solid bodies; contacts push actors apart, make pedestrians stumble or fall, and force drivers to brake.',
       streetHierarchy: 'Sidewalks are segmented before intersections, curbs mark the road edge, and zebra crosswalks with stop bars are the only pedestrian surfaces crossing traffic lanes.',
       facadeSystem: 'Procedural facades use bright wall palettes, mullion grids, reflective/lit window cells, balcony rails, and trim so buildings read as walls and glass rather than black blocks.',

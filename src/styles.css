@@ -867,6 +867,42 @@ button.key-prompt {
   overflow-y: auto;
 }
 
+.phone-city-events {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid rgba(98, 216, 166, 0.2);
+  border-radius: 8px;
+  background: rgba(98, 216, 166, 0.07);
+}
+
+.phone-city-events > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #f8fff9;
+  font-size: 12px;
+}
+
+.phone-city-events article {
+  margin-bottom: 7px;
+  padding: 8px;
+  border-color: rgba(98, 216, 166, 0.2);
+  background: rgba(3, 16, 25, 0.38);
+}
+
+.phone-city-events article:last-child {
+  margin-bottom: 0;
+}
+
+.phone-city-events article small {
+  display: block;
+  color: rgba(98, 216, 166, 0.82);
+  font-size: 10px;
+}
+
+.phone-city-events article p {
+  margin-top: 5px;
+}
+
 .phone-feed article {
   margin-bottom: 9px;
   padding: 10px;

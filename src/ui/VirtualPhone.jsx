@@ -179,6 +179,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
   const [trackIndex, setTrackIndex] = useState(0)
   const [musicPlaying, setMusicPlaying] = useState(false)
   const audioRef = useRef(null)
+  const cityEvents = useCityStore(state => state.cityEvents)
 
   const contacts = useMemo(
     () => buildContacts(city, focusedAgent, player),
@@ -408,6 +409,21 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
 
           {tab === 'social' ? (
             <div className="phone-app phone-feed">
+              <section className="phone-city-events" aria-label="Live city events">
+                <strong>Live city</strong>
+                {!(cityEvents || []).length ? (
+                  <article>
+                    <small>{clockLabel(timeMinutes)} / listening</small>
+                    <p>Waiting for city memories and NPC routines to surface.</p>
+                  </article>
+                ) : null}
+                {(cityEvents || []).slice(0, 4).map(event => (
+                  <article key={event.id} className={`event-${event.kind}`}>
+                    <small>{clockLabel(event.timeMinutes || timeMinutes)} / {event.kind}</small>
+                    <p>{event.text}</p>
+                  </article>
+                ))}
+              </section>
               {contacts.slice(0, 6).map(contact => (
                 <article key={contact.id}>
                   <div>

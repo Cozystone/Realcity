@@ -350,6 +350,15 @@ async function inspectCityNorms(page) {
     const bodyArchetypes = new Set(city.npcs.map(npc => npc.appearance?.bodyArchetype).filter(Boolean))
     const walkStyles = new Set(city.npcs.map(npc => npc.appearance?.walkStyle?.id).filter(Boolean))
     const accessoryVariants = new Set(city.npcs.map(npc => npc.appearance?.accessory).filter(Boolean))
+    const autonomyReady = city.npcs.filter(npc =>
+      npc.autonomy?.dailyGoal &&
+      npc.autonomy?.relationshipStyle &&
+      npc.autonomy?.memoryStyle &&
+      typeof npc.autonomy?.routineTolerance === 'number' &&
+      ['energy', 'hunger', 'social', 'urgency'].every(key => typeof npc.autonomy?.needProfile?.[key] === 'number')
+    )
+    const autonomyGoals = new Set(city.npcs.map(npc => npc.autonomy?.dailyGoal).filter(Boolean))
+    const relationshipStyles = new Set(city.npcs.map(npc => npc.autonomy?.relationshipStyle).filter(Boolean))
     const treeRoadConflicts = city.trees.filter(tree => city.roads.some(road => {
       if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
       return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
@@ -397,6 +406,9 @@ async function inspectCityNorms(page) {
       bodyArchetypes: bodyArchetypes.size,
       walkStyles: walkStyles.size,
       accessoryVariants: accessoryVariants.size,
+      autonomyReady: autonomyReady.length,
+      autonomyGoals: autonomyGoals.size,
+      relationshipStyles: relationshipStyles.size,
       treeRoadConflicts: treeRoadConflicts.length,
       socialNorms: city.socialNorms,
       trafficRules: city.trafficRules,
@@ -441,8 +453,11 @@ async function inspectCityNorms(page) {
   assert(norms.skinVariants >= 8, `NPC skin tone variation is too low: ${norms.skinVariants}`)
   assert(norms.hairVariants >= 8, `NPC hair tone variation is too low: ${norms.hairVariants}`)
   assert(norms.accessoryVariants >= 7, `NPC accessory variation is too low: ${norms.accessoryVariants}`)
+  assert(norms.autonomyReady === norms.npcCount, `NPC autonomy metadata is incomplete: ${norms.autonomyReady}/${norms.npcCount}`)
+  assert(norms.autonomyGoals >= 20, `NPC daily goal variation is too low: ${norms.autonomyGoals}`)
+  assert(norms.relationshipStyles >= 6, `NPC relationship style variation is too low: ${norms.relationshipStyles}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.npcAutonomy && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -479,6 +494,10 @@ async function inspectPhone(page) {
   const contactsText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(contactsText.includes('Call'), 'Phone contacts did not expose calling')
 
+  await page.locator('.phone-tabs button[data-tab="social"]').click()
+  const socialText = await page.locator('.phone-device').innerText({ timeout: 5000 })
+  assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
+
   await page.locator('.phone-tabs button[data-tab="music"]').click()
   const musicText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(musicText.includes('Han River FM') && musicText.includes('Play'), 'Phone music app was incomplete')
@@ -492,6 +511,7 @@ async function inspectPhone(page) {
   return {
     home: homeText.split(/\r?\n/).slice(0, 12),
     contacts: contactsText.split(/\r?\n/).slice(0, 12),
+    social: socialText.split(/\r?\n/).slice(0, 16),
     music: musicText.split(/\r?\n/).slice(0, 12),
     taxi: taxiText.split(/\r?\n/).slice(0, 12),
   }
@@ -591,6 +611,52 @@ async function inspectCollisionAndMaterials(page) {
   return result
 }
 
+async function inspectAgentAutonomy(page) {
+  await page.waitForFunction(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const samples = state?.pedestrianSamples || []
+    return (state?.cityEvents || []).length >= 3 &&
+      samples.length > 100 &&
+      samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0)
+  }, null, { timeout: 22000 })
+
+  const result = await page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const samples = state?.pedestrianSamples || []
+    const cityEvents = state?.cityEvents || []
+    const autonomousSamples = samples.filter(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0)
+    return {
+      cityEvents: cityEvents.length,
+      eventKinds: [...new Set(cityEvents.map(event => event.kind).filter(Boolean))],
+      latestEvents: cityEvents.slice(0, 5).map(event => ({
+        kind: event.kind,
+        agentName: event.agentName,
+        placeName: event.placeName,
+        text: event.text,
+      })),
+      autonomousSamples: autonomousSamples.length,
+      memorySamples: samples.filter(sample => sample.lastMemory).length,
+      needSamples: samples.filter(sample => typeof sample.energy === 'number' && typeof sample.hunger === 'number' && typeof sample.socialNeed === 'number').length,
+      relationshipStyles: [...new Set(samples.map(sample => sample.relationshipStyle).filter(Boolean))],
+      intentSamples: autonomousSamples.slice(0, 5).map(sample => ({
+        id: sample.id,
+        currentIntent: sample.currentIntent,
+        autonomyGoal: sample.autonomyGoal,
+        memoryCount: sample.memoryCount,
+        lastMemory: sample.lastMemory,
+      })),
+    }
+  })
+
+  assert(result.cityEvents >= 3, `Live city event feed is too sparse: ${result.cityEvents}`)
+  assert(result.autonomousSamples > 100, `NPC runtime autonomy samples are incomplete: ${result.autonomousSamples}`)
+  assert(result.memorySamples > 100, `NPC memory samples are incomplete: ${result.memorySamples}`)
+  assert(result.needSamples > 100, `NPC need samples are incomplete: ${result.needSamples}`)
+  assert(result.relationshipStyles.length >= 6, `Runtime relationship styles are too sparse: ${result.relationshipStyles.join(', ')}`)
+  assert(result.latestEvents.every(event => event.text && event.agentName), `Live city events are missing agent context: ${JSON.stringify(result.latestEvents)}`)
+  return result
+}
+
 async function inspectStreetRendering(page) {
   await page.waitForFunction(() => {
     const rendering = window.__REALCITY_RENDERING__
@@ -665,6 +731,7 @@ async function main() {
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
+    const agentAutonomy = await inspectAgentAutonomy(page)
     const streetRendering = await inspectStreetRendering(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
@@ -816,6 +883,7 @@ async function main() {
       supportUX,
       skyState,
       collisionAndMaterials,
+      agentAutonomy,
       streetRendering,
       phone,
       controls: {

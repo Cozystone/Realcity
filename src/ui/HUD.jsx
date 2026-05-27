@@ -188,6 +188,8 @@ function AgentCard({ agent, stats, pulse }) {
         <h2>{agent.name}</h2>
         <p>{agent.job} / {agent.age} / {agent.gender}</p>
         <p>{agent.activity} at {agent.placeName}</p>
+        {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
+        {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}
       </aside>
     )
   }

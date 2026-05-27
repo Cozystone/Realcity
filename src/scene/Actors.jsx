@@ -695,10 +695,25 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
 class Agent {
   constructor(data) {
     Object.assign(this, data)
+    const autonomy = data.autonomy || {}
     this.pos = new THREE.Vector3(data.home.x, data.home.y + 0.95, data.home.z)
     this.heading = Math.random() * Math.PI * 2
     this.activity = 'starting day'
     this.placeName = data.home.name
+    this.autonomy = autonomy
+    this.needs = {
+      energy: autonomy.needProfile?.energy ?? 0.72,
+      hunger: autonomy.needProfile?.hunger ?? 0.24,
+      social: autonomy.needProfile?.social ?? 0.5,
+      urgency: autonomy.needProfile?.urgency ?? 0.36,
+    }
+    this.currentIntent = autonomy.dailyGoal ? `Today: ${autonomy.dailyGoal}` : 'following schedule'
+    this.memories = [{
+      kind: 'goal',
+      text: this.currentIntent,
+      placeName: data.home.name,
+      weight: 0.55,
+    }]
     this.talkTimer = 0
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
@@ -714,6 +729,7 @@ class Agent {
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
     this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
+    this.updateNeeds(delta)
     if (this.fallTimer > 0) {
       this.fallTimer = Math.max(0, this.fallTimer - delta)
       this.applyBump(delta * 0.42, city)
@@ -737,6 +753,7 @@ class Agent {
     const target = targetFor(this, places, timeMinutes, roads)
     this.activity = target.activity
     this.placeName = target.name
+    this.currentIntent = this.intentFor(target, timeMinutes)
 
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (distance > 2.2) {
@@ -755,6 +772,7 @@ class Agent {
     const mission = this.mission
     const destination = mission.destination
     this.placeName = destination.name
+    this.currentIntent = `helping the player reach ${destination.name}`
 
     if (mission.mode === 'taxi') {
       if (mission.phase === 'to_pickup') {
@@ -878,6 +896,35 @@ class Agent {
     return 'walking'
   }
 
+  updateNeeds(delta) {
+    const walking = /walking|commuting|guiding|pickup/.test(this.activity)
+    const resting = /resting|home|break|dwelling/.test(this.activity)
+    const working = /shift|class|working|customers|rush/.test(this.activity)
+    this.needs.energy = clampValue(this.needs.energy + (resting ? 0.004 : walking ? -0.0045 : working ? -0.0025 : -0.001) * delta, 0, 1)
+    this.needs.hunger = clampValue(this.needs.hunger + (/cafe|break|home/.test(this.placeName?.toLowerCase?.() || '') ? -0.006 : 0.0022) * delta, 0, 1)
+    this.needs.social = clampValue(this.needs.social - (working ? 0.0016 : 0.0009) * delta, 0, 1)
+    this.needs.urgency = clampValue(this.needs.urgency + (walking ? -0.003 : working ? 0.0012 : -0.0008) * delta, 0, 1)
+  }
+
+  intentFor(target, timeMinutes) {
+    if (this.needs.hunger > 0.78) return `looking for food after ${target.activity}`
+    if (this.needs.energy < 0.28) return `saving energy while ${target.activity}`
+    if (this.needs.social < 0.22) return `hoping to talk with someone near ${target.name}`
+    if (target.activity === 'commuting') return `commuting toward ${target.name}`
+    if (target.activity === 'class') return `getting through class at ${target.name}`
+    if (target.activity === 'working' || target.activity === 'on shift') return `working toward: ${this.autonomy?.dailyGoal || 'today schedule'}`
+    if (timeMinutes > 18 * 60) return `wrapping up: ${this.autonomy?.dailyGoal || 'evening routine'}`
+    return this.autonomy?.dailyGoal ? `today goal: ${this.autonomy.dailyGoal}` : `following ${target.activity}`
+  }
+
+  remember(kind, text, placeName = this.placeName, weight = 0.5) {
+    if (!text) return
+    this.memories = [
+      { kind, text: String(text).slice(0, 150), placeName, weight, time: performance.now() },
+      ...this.memories.filter(memory => memory.text !== text),
+    ].slice(0, 7)
+  }
+
   applyBump(delta, cityOrRoads) {
     if (this.bumpVelocity.lengthSq() < 0.002) return
     const previous = { x: this.pos.x, z: this.pos.z }
@@ -903,12 +950,17 @@ class Agent {
     this.bumpVelocity.y += nz * force
     this.bumpTimer = Math.max(this.bumpTimer, 0.42 + impulse * 0.18)
     if (impulse > 1.02) this.fallTimer = Math.max(this.fallTimer, 1.05 + Math.min(0.65, impulse * 0.28))
+    this.remember('collision', `I was bumped near ${this.placeName}.`, this.placeName, 0.72)
     this.talk(0.85)
   }
 
-  talk(seconds = 6) {
+  talk(seconds = 6, partner = null) {
     this.talkTimer = seconds
     this.socialCooldown = 20 + Math.random() * 20
+    this.needs.social = clampValue(this.needs.social + 0.12, 0, 1)
+    if (partner) {
+      this.remember('social', `Talked with ${partner.name} about ${this.currentIntent}.`, this.placeName, 0.66)
+    }
   }
 
   snapshot(places) {
@@ -928,6 +980,10 @@ class Agent {
       personaSignature: this.personaSignature,
       appearance: this.appearance,
       styleBrief: this.styleBrief,
+      autonomy: this.autonomy,
+      needs: this.needs,
+      memories: this.memories,
+      currentIntent: this.currentIntent,
       activity: this.activity,
       placeName: this.placeName,
       workId: this.workId,
@@ -941,6 +997,31 @@ class Agent {
       z: this.pos.z,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
     }
+  }
+}
+
+function autonomyEventFor(agent, timeMinutes) {
+  const need = agent.needs || {}
+  const route = agent.walkPlan?.mode && agent.walkPlan.mode !== 'direct'
+    ? ` via ${agent.walkPlan.mode.replace('-', ' ')}`
+    : ''
+  const needText = need.hunger > 0.82
+    ? 'is getting hungry'
+    : need.energy < 0.24
+      ? 'is visibly tired'
+      : need.social < 0.2
+        ? 'is looking for someone to talk to'
+        : null
+  const text = needText
+    ? `${agent.name} ${needText} while ${agent.activity} near ${agent.placeName}.`
+    : `${agent.name} is ${agent.activity} near ${agent.placeName}${route}; ${agent.currentIntent}.`
+  return {
+    id: `${agent.id}_${Math.floor(timeMinutes)}_${hashValue(text)}`,
+    kind: needText ? 'need' : agent.walkPlan?.mode === 'crosswalk-crossing' ? 'crosswalk' : 'routine',
+    agentId: agent.id,
+    agentName: agent.name,
+    placeName: agent.placeName,
+    text,
   }
 }
 
@@ -1705,6 +1786,7 @@ function NPCs({ city }) {
   const socialClock = useRef(0)
   const statsClock = useRef(0)
   const nearbyClock = useRef(0)
+  const cityEventClock = useRef(0)
   const busy = useRef(false)
   const requestBusy = useRef(false)
   const textures = useMemo(() => ({
@@ -1717,7 +1799,13 @@ function NPCs({ city }) {
   }), [])
 
   useEffect(() => {
-    useCityStore.getState().setStats({ npcs: agents.length, cars: city.cars.length, tiles: city.tiles.length, llm: llmStatus() })
+    const store = useCityStore.getState()
+    store.setStats({ npcs: agents.length, cars: city.cars.length, tiles: city.tiles.length, llm: llmStatus() })
+    agents.slice(0, 4).forEach((agent, index) => {
+      const event = autonomyEventFor(agent, store.timeMinutes + index * 0.01)
+      agent.remember(event.kind, event.text, event.placeName, 0.5)
+      store.addCityEvent({ ...event, id: `initial_${event.id}_${index}` })
+    })
   }, [agents.length, city.cars.length, city.tiles.length])
 
   useFrame((state, delta) => {
@@ -1858,6 +1946,7 @@ function NPCs({ city }) {
     socialClock.current += dt
     statsClock.current += dt
     nearbyClock.current += dt
+    cityEventClock.current += dt
 
     if (socialClock.current > 0.8) {
       socialClock.current = 0
@@ -1866,10 +1955,29 @@ function NPCs({ city }) {
         const b = agents[Math.floor(Math.random() * agents.length)]
         if (!a || !b || a === b || a.socialCooldown > 0 || b.socialCooldown > 0) continue
         if (a.pos.distanceTo(b.pos) > 4.4) continue
-        a.talk(5)
-        b.talk(5)
+        a.talk(5, b)
+        b.talk(5, a)
+        store.addCityEvent({
+          id: `talk_${a.id}_${b.id}_${Math.floor(time)}`,
+          kind: 'conversation',
+          agentId: a.id,
+          agentName: a.name,
+          placeName: a.placeName,
+          text: `${a.name} and ${b.name} talk near ${a.placeName}; ${a.name} remembers ${b.name}'s day.`,
+        })
         if (a.pos.distanceTo(player) < 45) store.setPulse(`${a.name} and ${b.name} are talking near ${a.placeName}.`)
         break
+      }
+    }
+
+    if (cityEventClock.current > 2.8) {
+      cityEventClock.current = 0
+      const index = Math.floor((state.clock.elapsedTime * 17 + time) % agents.length)
+      const agent = agents[index]
+      if (agent) {
+        const event = autonomyEventFor(agent, time)
+        agent.remember(event.kind, event.text, event.placeName, event.kind === 'need' ? 0.78 : 0.46)
+        store.addCityEvent(event)
       }
     }
 
@@ -1886,6 +1994,14 @@ function NPCs({ city }) {
         z: agent.pos.z,
         radius: 0.82,
         state: agent.fallTimer > 0 ? 'fallen' : agent.bumpTimer > 0 ? 'stumbling' : agent.activity,
+        currentIntent: agent.currentIntent || null,
+        autonomyGoal: agent.autonomy?.dailyGoal || null,
+        relationshipStyle: agent.autonomy?.relationshipStyle || null,
+        memoryCount: agent.memories?.length || 0,
+        lastMemory: agent.memories?.[0]?.text || null,
+        energy: agent.needs ? Number(agent.needs.energy.toFixed(2)) : null,
+        hunger: agent.needs ? Number(agent.needs.hunger.toFixed(2)) : null,
+        socialNeed: agent.needs ? Number(agent.needs.social.toFixed(2)) : null,
         targetName: agent.walkPlan?.targetName || agent.placeName || null,
         routeMode: agent.walkPlan?.mode || 'direct',
         routeRoadName: agent.walkPlan?.roadName || null,
