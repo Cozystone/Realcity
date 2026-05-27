@@ -845,8 +845,10 @@ async function inspectAgentAutonomy(page) {
     const state = window.__REALCITY_STORE__?.getState()
     const samples = state?.pedestrianSamples || []
     return (state?.cityEvents || []).length >= 3 &&
+      (state?.cityEvents || []).some(event => event.kind === 'conversation' && event.partnerName && event.topic) &&
       samples.length > 100 &&
-      samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0)
+      samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0) &&
+      samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionTopic).length >= 6
   }, null, { timeout: 22000 })
 
   const result = await page.evaluate(() => {
@@ -854,16 +856,29 @@ async function inspectAgentAutonomy(page) {
     const samples = state?.pedestrianSamples || []
     const cityEvents = state?.cityEvents || []
     const autonomousSamples = samples.filter(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0)
+    const conversationEvents = cityEvents.filter(event => event.kind === 'conversation')
+    const relationshipSamples = samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionPartner && sample.lastInteractionTopic)
     return {
       cityEvents: cityEvents.length,
       eventKinds: [...new Set(cityEvents.map(event => event.kind).filter(Boolean))],
       latestEvents: cityEvents.slice(0, 5).map(event => ({
         kind: event.kind,
         agentName: event.agentName,
+        partnerName: event.partnerName,
         placeName: event.placeName,
+        topic: event.topic,
         text: event.text,
       })),
+      conversationEvents: conversationEvents.length,
+      conversationMetadata: conversationEvents.slice(0, 5).map(event => ({
+        agentName: event.agentName,
+        partnerName: event.partnerName,
+        topic: event.topic,
+        relationshipTrust: event.relationshipTrust,
+      })),
       autonomousSamples: autonomousSamples.length,
+      relationshipSamples: relationshipSamples.length,
+      knownContactSamples: samples.filter(sample => Array.isArray(sample.knownContacts) && sample.knownContacts.length > 0).length,
       memorySamples: samples.filter(sample => sample.lastMemory).length,
       needSamples: samples.filter(sample => typeof sample.energy === 'number' && typeof sample.hunger === 'number' && typeof sample.socialNeed === 'number').length,
       relationshipStyles: [...new Set(samples.map(sample => sample.relationshipStyle).filter(Boolean))],
@@ -873,6 +888,8 @@ async function inspectAgentAutonomy(page) {
         autonomyGoal: sample.autonomyGoal,
         memoryCount: sample.memoryCount,
         lastMemory: sample.lastMemory,
+        lastInteractionPartner: sample.lastInteractionPartner,
+        lastInteractionTopic: sample.lastInteractionTopic,
       })),
     }
   })
@@ -882,6 +899,10 @@ async function inspectAgentAutonomy(page) {
   assert(result.memorySamples > 100, `NPC memory samples are incomplete: ${result.memorySamples}`)
   assert(result.needSamples > 100, `NPC need samples are incomplete: ${result.needSamples}`)
   assert(result.relationshipStyles.length >= 6, `Runtime relationship styles are too sparse: ${result.relationshipStyles.join(', ')}`)
+  assert(result.conversationEvents >= 1, 'NPC-to-NPC conversation events are missing from the live city feed')
+  assert(result.conversationMetadata.every(event => event.agentName && event.partnerName && event.topic), `Conversation event metadata is incomplete: ${JSON.stringify(result.conversationMetadata)}`)
+  assert(result.relationshipSamples >= 6, `NPC relationship state is too sparse: ${result.relationshipSamples}`)
+  assert(result.knownContactSamples >= 6, `NPC known-contact samples are too sparse: ${result.knownContactSamples}`)
   assert(result.latestEvents.every(event => event.text && event.agentName), `Live city events are missing agent context: ${JSON.stringify(result.latestEvents)}`)
   return result
 }

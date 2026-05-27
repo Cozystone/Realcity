@@ -978,6 +978,9 @@ class Agent {
       placeName: data.home.name,
       weight: 0.55,
     }]
+    this.relationships = {}
+    this.relationshipCount = 0
+    this.lastInteraction = null
     this.talkTimer = 0
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
@@ -1275,12 +1278,47 @@ class Agent {
     this.talk(0.85)
   }
 
-  talk(seconds = 6, partner = null) {
+  talk(seconds = 6, partner = null, topic = null, timeMinutes = 0) {
     this.talkTimer = seconds
     this.socialCooldown = 20 + Math.random() * 20
     this.needs.social = clampValue(this.needs.social + 0.12, 0, 1)
     if (partner) {
-      this.remember('social', `Talked with ${partner.name} about ${this.currentIntent}.`, this.placeName, 0.66)
+      const conversation = topic || conversationTopicFor(this, partner, timeMinutes)
+      const existing = this.relationships[partner.id] || {
+        agentId: partner.id,
+        name: partner.name,
+        job: partner.job,
+        trust: 0.28 + (hashValue(`${this.id}_${partner.id}`) % 18) / 100,
+        talks: 0,
+        firstMetAt: performance.now(),
+      }
+      const delta = relationshipDeltaFor(this, partner, conversation)
+      const nextTrust = clampValue(existing.trust + delta, 0, 1)
+      const next = {
+        ...existing,
+        trust: nextTrust,
+        talks: existing.talks + 1,
+        lastTopic: conversation.label,
+        lastTopicId: conversation.id,
+        lastPlaceName: this.placeName,
+        lastSpokenAt: performance.now(),
+      }
+      this.relationships = { ...this.relationships, [partner.id]: next }
+      this.relationshipCount = Object.keys(this.relationships).length
+      this.lastInteraction = {
+        partnerId: partner.id,
+        partnerName: partner.name,
+        partnerJob: partner.job,
+        topicId: conversation.id,
+        topic: conversation.label,
+        placeName: this.placeName,
+        trust: Number(next.trust.toFixed(2)),
+        delta: Number(delta.toFixed(3)),
+        talks: next.talks,
+        at: performance.now(),
+      }
+      this.currentIntent = `talking with ${partner.name} about ${conversation.label}`
+      this.remember('social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
     }
   }
 
@@ -1304,6 +1342,9 @@ class Agent {
       autonomy: this.autonomy,
       needs: this.needs,
       memories: this.memories,
+      relationships: Object.values(this.relationships).slice(0, 5),
+      relationshipCount: this.relationshipCount,
+      lastInteraction: this.lastInteraction,
       currentIntent: this.currentIntent,
       activity: this.activity,
       placeName: this.placeName,
@@ -1343,6 +1384,109 @@ function autonomyEventFor(agent, timeMinutes) {
     agentName: agent.name,
     placeName: agent.placeName,
     text,
+  }
+}
+
+function strongestNeedPhrase(agent) {
+  const needs = agent.needs || {}
+  if (needs.hunger > 0.76) return 'finding food soon'
+  if (needs.energy < 0.3) return 'saving energy'
+  if (needs.social < 0.34) return 'catching up with someone'
+  if (needs.urgency > 0.72) return 'keeping an urgent schedule'
+  return agent.activity || 'staying on schedule'
+}
+
+function shortIntent(agent) {
+  return String(agent.currentIntent || agent.autonomy?.dailyGoal || agent.activity || 'today routine')
+    .replace(/^today:\s*/i, '')
+    .replace(/^today goal:\s*/i, '')
+    .slice(0, 72)
+}
+
+function conversationTopicFor(a, b, timeMinutes = 0) {
+  const place = a.placeName || b.placeName || 'the block'
+  const roadName = a.walkPlan?.roadName || b.walkPlan?.roadName || a.home?.roadName || b.home?.roadName || 'the nearest sidewalk'
+  const targetA = a.walkPlan?.targetName || a.placeName || a.home?.name || 'the next stop'
+  const targetB = b.walkPlan?.targetName || b.placeName || b.home?.name || 'the next stop'
+  const hour = formatTime(timeMinutes || 0)
+  const topics = [
+    {
+      id: 'schedule',
+      label: `${hour} schedule around ${place}`,
+      event: `${a.name} and ${b.name} compare schedules near ${place}; ${a.name} adjusts their next stop after hearing about ${targetB}.`,
+      memoryFor: (self, partner) => `Talked with ${partner.name} about the ${hour} schedule and ${shortIntent(partner)}.`,
+    },
+    {
+      id: 'route',
+      label: `safe sidewalk route on ${roadName}`,
+      event: `${a.name} and ${b.name} discuss the sidewalk route on ${roadName}; both keep to the curb rules before moving on.`,
+      memoryFor: (self, partner) => `Checked the safer walking route on ${roadName} with ${partner.name}.`,
+    },
+    {
+      id: 'neighborhood',
+      label: `${place} street conditions`,
+      event: `${a.name} and ${b.name} trade notes on traffic and crossings near ${place}.`,
+      memoryFor: (self, partner) => `Noted ${place} street conditions after talking with ${partner.name}.`,
+    },
+    {
+      id: 'needs',
+      label: `${strongestNeedPhrase(a)} and ${strongestNeedPhrase(b)}`,
+      event: `${a.name} notices ${b.name} is ${strongestNeedPhrase(b)}; they pause briefly near ${place}.`,
+      memoryFor: (self, partner) => `Learned ${partner.name} is ${strongestNeedPhrase(partner)} near ${place}.`,
+    },
+    {
+      id: 'work',
+      label: `${a.job} work and ${b.job} work`,
+      event: `${a.name} and ${b.name} talk about work routines near ${place}; the exchange changes how they remember each other.`,
+      memoryFor: (self, partner) => `Talked with ${partner.name} about ${partner.job} work and ${shortIntent(self)}.`,
+    },
+  ]
+
+  if (a.workId && a.workId === b.workId) {
+    topics.unshift({
+      id: 'same-workplace',
+      label: `${a.workName || a.placeName || 'shared workplace'} coordination`,
+      event: `${a.name} and ${b.name} coordinate a shared workplace errand near ${place}.`,
+      memoryFor: (self, partner) => `Coordinated workplace timing with ${partner.name}.`,
+    })
+  }
+
+  if (targetA === targetB && targetA) {
+    topics.unshift({
+      id: 'shared-destination',
+      label: `shared destination ${targetA}`,
+      event: `${a.name} and ${b.name} realize they are both heading toward ${targetA} and agree on a calmer route.`,
+      memoryFor: (self, partner) => `Found out ${partner.name} is also heading toward ${targetA}.`,
+    })
+  }
+
+  const index = hashValue(`${a.id}_${b.id}_${Math.floor((timeMinutes || 0) / 8)}_${place}`) % topics.length
+  return topics[index]
+}
+
+function relationshipDeltaFor(a, b, topic) {
+  const styleMatch = a.autonomy?.relationshipStyle && a.autonomy.relationshipStyle === b.autonomy?.relationshipStyle ? 0.012 : 0
+  const sharedPlace = a.placeName && a.placeName === b.placeName ? 0.014 : 0
+  const sharedWork = a.workId && a.workId === b.workId ? 0.018 : 0
+  const socialNeed = a.needs?.social < 0.36 ? 0.016 : 0.006
+  const practicalTopic = ['route', 'same-workplace', 'shared-destination'].includes(topic?.id) ? 0.012 : 0
+  return clampValue(0.024 + styleMatch + sharedPlace + sharedWork + socialNeed + practicalTopic, 0.018, 0.084)
+}
+
+function conversationEventFor(a, b, topic, timeMinutes, prefix = 'talk') {
+  const interaction = a.lastInteraction?.partnerId === b.id ? a.lastInteraction : null
+  return {
+    id: `${prefix}_${a.id}_${b.id}_${topic.id}_${Math.floor((timeMinutes || 0) * 10)}`,
+    kind: 'conversation',
+    agentId: a.id,
+    agentName: a.name,
+    partnerId: b.id,
+    partnerName: b.name,
+    placeName: a.placeName,
+    topic: topic.label,
+    relationshipTrust: interaction?.trust ?? null,
+    relationshipDelta: interaction?.delta ?? null,
+    text: topic.event,
   }
 }
 
@@ -2192,6 +2336,15 @@ function NPCs({ city }) {
       agent.remember(event.kind, event.text, event.placeName, 0.5)
       store.addCityEvent({ ...event, id: `initial_${event.id}_${index}` })
     })
+    for (let index = 0; index < Math.min(8, agents.length - 1); index += 2) {
+      const a = agents[index]
+      const b = agents[index + 1]
+      if (!a || !b) continue
+      const topic = conversationTopicFor(a, b, store.timeMinutes + index * 0.04)
+      a.talk(2.6, b, topic, store.timeMinutes)
+      b.talk(2.6, a, topic, store.timeMinutes)
+      store.addCityEvent(conversationEventFor(a, b, topic, store.timeMinutes, `initial_social_${index}`))
+    }
   }, [agents.length, city.cars.length, city.tiles.length])
 
   useEffect(() => {
@@ -2461,17 +2614,11 @@ function NPCs({ city }) {
         const b = agents[Math.floor(Math.random() * agents.length)]
         if (!a || !b || a === b || a.socialCooldown > 0 || b.socialCooldown > 0) continue
         if (a.pos.distanceTo(b.pos) > 4.4) continue
-        a.talk(5, b)
-        b.talk(5, a)
-        store.addCityEvent({
-          id: `talk_${a.id}_${b.id}_${Math.floor(time)}`,
-          kind: 'conversation',
-          agentId: a.id,
-          agentName: a.name,
-          placeName: a.placeName,
-          text: `${a.name} and ${b.name} talk near ${a.placeName}; ${a.name} remembers ${b.name}'s day.`,
-        })
-        if (a.pos.distanceTo(player) < 45) store.setPulse(`${a.name} and ${b.name} are talking near ${a.placeName}.`)
+        const topic = conversationTopicFor(a, b, time)
+        a.talk(5, b, topic, time)
+        b.talk(5, a, topic, time)
+        store.addCityEvent(conversationEventFor(a, b, topic, time))
+        if (a.pos.distanceTo(player) < 45) store.setPulse(`${a.name} and ${b.name} discuss ${topic.label} near ${a.placeName}.`)
         break
       }
     }
@@ -2503,6 +2650,18 @@ function NPCs({ city }) {
         currentIntent: agent.currentIntent || null,
         autonomyGoal: agent.autonomy?.dailyGoal || null,
         relationshipStyle: agent.autonomy?.relationshipStyle || null,
+        relationshipCount: agent.relationshipCount || 0,
+        lastInteractionPartner: agent.lastInteraction?.partnerName || null,
+        lastInteractionTopic: agent.lastInteraction?.topic || null,
+        lastInteractionTrust: agent.lastInteraction?.trust ?? null,
+        knownContacts: Object.values(agent.relationships || {}).slice(0, 3).map(contact => ({
+          id: contact.agentId,
+          name: contact.name,
+          job: contact.job,
+          trust: Number(contact.trust.toFixed(2)),
+          talks: contact.talks,
+          lastTopic: contact.lastTopic,
+        })),
         memoryCount: agent.memories?.length || 0,
         lastMemory: agent.memories?.[0]?.text || null,
         energy: agent.needs ? Number(agent.needs.energy.toFixed(2)) : null,

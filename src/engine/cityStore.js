@@ -248,7 +248,12 @@ export const useCityStore = create((set, get) => ({
         kind: event.kind || 'city',
         agentId: event.agentId || null,
         agentName: event.agentName || null,
+        partnerId: event.partnerId || null,
+        partnerName: event.partnerName || null,
         placeName: event.placeName || null,
+        topic: event.topic || null,
+        relationshipTrust: typeof event.relationshipTrust === 'number' ? event.relationshipTrust : null,
+        relationshipDelta: typeof event.relationshipDelta === 'number' ? event.relationshipDelta : null,
         text: String(event.text).slice(0, 180),
       }
       const duplicate = state.cityEvents[0]

@@ -402,6 +402,9 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <article key={event.id} className={`event-${event.kind}`}>
                     <small>{clockLabel(event.timeMinutes || timeMinutes)} / {event.kind}</small>
                     <p>{event.text}</p>
+                    {event.topic || event.partnerName ? (
+                      <footer>{[event.topic, event.partnerName ? `with ${event.partnerName}` : null].filter(Boolean).join(' / ')}</footer>
+                    ) : null}
                   </article>
                 ))}
               </section>
