@@ -167,11 +167,13 @@ async function inspectLandmarkInteriors(page) {
         solidWalls: !!place.interior?.solidWalls,
         doorWidth: place.interior?.doorWidth || 0,
         verticalCore: place.interior?.verticalCore || '',
+        floorCount: place.interior?.floorCount || 0,
+        lobbyZones: place.interior?.lobbyZones?.length || 0,
       }))
   })
   assert(Array.isArray(interiors), 'City metadata was not exposed for interior verification')
   assert(interiors.length >= 8, 'Expected landmark interiors for most named buildings')
-  const broken = interiors.filter(item => !item.hasInterior || !item.solidWalls || item.doorWidth <= 0 || !item.verticalCore)
+  const broken = interiors.filter(item => !item.hasInterior || !item.solidWalls || item.doorWidth <= 0 || !item.verticalCore || item.floorCount <= 0 || item.lobbyZones < 3)
   assert(broken.length === 0, `Incomplete landmark interiors: ${broken.map(item => item.id).join(', ')}`)
   return interiors
 }
@@ -212,6 +214,11 @@ async function inspectCityNorms(page) {
     const landmarkRoadConflicts = city.landmarks.filter(place => city.roads.some(road => rectsOverlap(envelopeRect(place), roadRect(road, 0.35))))
     const buildingZoningReady = city.buildings.filter(building => building.zoning?.roadSetback >= 8 && insideZone(building))
     const landmarkZoningReady = city.landmarks.filter(place => place.zoning?.roadSetback >= 8 && insideZone(place))
+    const fourSidedFacades = city.buildings.filter(building => ['north', 'south', 'east', 'west'].every(face => building.facadePlan?.faces?.[face]?.hasWindows))
+    const entryFaces = new Set(city.buildings.map(building => building.facadePlan?.entryFace).filter(Boolean))
+    const buildingInteriors = city.buildings.filter(building => building.interior?.solidWalls && building.interior?.floors >= 1 && building.interior?.lobbyDepth > 0 && building.interior?.verticalCore && Array.isArray(building.interior?.zones) && building.interior.zones.length >= 4)
+    const interiorCoreTypes = new Set(city.buildings.map(building => building.interior?.verticalCore).filter(Boolean))
+    const corridorTypes = new Set(city.buildings.map(building => building.interior?.corridorType).filter(Boolean))
     const carBodyStyles = new Set(city.cars.map(car => car.bodyStyle).filter(Boolean))
     const detailedCars = city.cars.filter(car => car.dimensions?.width > 0 && car.dimensions?.length > 0 && car.dimensions?.cabinLength > 0)
     const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
@@ -244,6 +251,11 @@ async function inspectCityNorms(page) {
       landmarkRoadConflictIds: landmarkRoadConflicts.map(place => place.id),
       buildingZoningReady: buildingZoningReady.length,
       landmarkZoningReady: landmarkZoningReady.length,
+      fourSidedFacades: fourSidedFacades.length,
+      entryFaceVariants: entryFaces.size,
+      buildingInteriors: buildingInteriors.length,
+      interiorCoreTypes: interiorCoreTypes.size,
+      corridorTypes: corridorTypes.size,
       buildingProfiles: formKeys(city.buildings),
       houseProfiles: formKeys(houses),
       houseRoofs: roofKeys(houses),
@@ -277,6 +289,11 @@ async function inspectCityNorms(page) {
   assert(norms.addressBookEntries > 100, 'Address book did not expose routable street addresses')
   assert(norms.buildingZoningReady === norms.buildingCount, 'Building zoning metadata is incomplete or outside buildable envelopes')
   assert(norms.landmarkZoningReady === norms.landmarkCount, 'Landmark zoning metadata is incomplete or outside buildable envelopes')
+  assert(norms.fourSidedFacades === norms.buildingCount, 'Not every building exposes four-sided facade/window metadata')
+  assert(norms.entryFaceVariants >= 4, `Building entry faces do not vary enough: ${norms.entryFaceVariants}`)
+  assert(norms.buildingInteriors === norms.buildingCount, 'Procedural building interior plans are incomplete')
+  assert(norms.interiorCoreTypes >= 3, `Building vertical core types are not diverse enough: ${norms.interiorCoreTypes}`)
+  assert(norms.corridorTypes >= 4, `Building corridor/interior layouts are not diverse enough: ${norms.corridorTypes}`)
   assert(norms.buildingRoadConflicts === 0, `${norms.buildingRoadConflicts} buildings overlap road reserves`)
   assert(norms.landmarkRoadConflicts === 0, `${norms.landmarkRoadConflicts} landmarks overlap road reserves: ${norms.landmarkRoadConflictIds.join(', ')}`)
   assert(norms.buildingProfiles.length >= 12, `Building massing profiles are not diverse enough: ${norms.buildingProfiles.join(', ')}`)

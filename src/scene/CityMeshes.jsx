@@ -1057,11 +1057,66 @@ function InteriorShell({ place, color }) {
         <boxGeometry args={[Math.max(3, door * 0.8), 0.05, Math.max(6, interior.lobbyDepth)]} />
         <meshStandardMaterial color="#d7dce0" roughness={0.32} metalness={0.04} />
       </mesh>
+      {Array.from({ length: Math.min(4, Math.max(0, (interior.floorCount || 1) - 1)) }, (_, i) => {
+        const y = h * ((i + 1) / (Math.min(4, Math.max(0, (interior.floorCount || 1) - 1)) + 1))
+        return (
+          <mesh key={`floor-plate-${i}`} receiveShadow position={[0, y, 0]}>
+            <boxGeometry args={[w * 0.92, 0.08, d * 0.92]} />
+            <meshStandardMaterial color="#aeb6bb" roughness={0.48} metalness={0.08} transparent opacity={0.72} />
+          </mesh>
+        )
+      })}
+      {[-0.26, 0.26].map((x, i) => (
+        <mesh key={`partition-${i}`} castShadow receiveShadow position={[x * w, 1.75, d * 0.08]}>
+          <boxGeometry args={[0.12, 3.1, Math.max(3.5, interior.lobbyDepth * 0.56)]} />
+          <meshStandardMaterial color="#dce3e6" roughness={0.42} metalness={0.04} transparent opacity={0.84} />
+        </mesh>
+      ))}
+      {[-0.28, 0, 0.28].map((x, i) => (
+        <mesh key={`light-${i}`} position={[x * w, h - 0.32, -d * 0.08]}>
+          <boxGeometry args={[Math.max(2.4, w * 0.16), 0.05, 0.18]} />
+          <meshStandardMaterial color="#e9fbff" emissive="#98eaff" emissiveIntensity={0.75} roughness={0.2} />
+        </mesh>
+      ))}
       <mesh position={[-w * 0.2, 1.25, d * 0.18]}>
         <boxGeometry args={[4.8, 2.2, 1.0]} />
         <meshStandardMaterial color="#5f6b72" roughness={0.56} metalness={0.14} />
       </mesh>
       {verticalCore}
+    </group>
+  )
+}
+
+function LandmarkFacadeGlass({ fw, fd, kind, color }) {
+  if (kind === 'park') return null
+  const rows = kind === 'finance' ? [9, 17, 25, 33, 41] : kind === 'hospital' ? [5.8, 8.6, 11.4] : [4.8, 7.6, 10.4]
+  const faces = [
+    { id: 'north', length: fw, z: fd * 0.48, x: null },
+    { id: 'south', length: fw, z: -fd * 0.48, x: null },
+    { id: 'east', length: fd, x: fw * 0.48, z: null },
+    { id: 'west', length: fd, x: -fw * 0.48, z: null },
+  ]
+  return (
+    <group>
+      {faces.flatMap((face, faceIndex) => {
+        const columns = Math.max(2, Math.min(5, Math.floor(face.length / 8)))
+        return rows.flatMap((y, rowIndex) => (
+          Array.from({ length: columns }, (_, col) => {
+            if ((faceIndex + rowIndex + col) % 5 === 0 && kind !== 'finance') return null
+            const along = ((col + 0.5) / columns - 0.5) * face.length * 0.68
+            const scale = face.x === null
+              ? [Math.min(5.2, face.length * 0.13), 1.45, 0.24]
+              : [0.24, 1.45, Math.min(5.2, face.length * 0.13)]
+            const position = face.x === null ? [along, y, face.z] : [face.x, y, along]
+            return (
+              <mesh key={`${face.id}-${rowIndex}-${col}`} position={position}>
+                <boxGeometry args={scale} />
+                <meshStandardMaterial color="#d4f4ff" emissive={color} emissiveIntensity={0.18 + (kind === 'finance' ? 0.18 : 0.06)} roughness={0.16} metalness={0.24} />
+              </mesh>
+            )
+          })
+        ))
+      })}
     </group>
   )
 }
@@ -1088,6 +1143,7 @@ function Landmark({ place }) {
   return (
     <group position={[place.x, CITY_BASE_Y, place.z]}>
       <InteriorShell place={place} color={color} />
+      <LandmarkFacadeGlass fw={fw} fd={fd} kind={place.kind} color={color} />
       {place.kind === 'finance' ? (
         <>
           <mesh castShadow receiveShadow position={[0, 42, 0]}>

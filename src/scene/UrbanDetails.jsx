@@ -27,6 +27,41 @@ function setLocalInstance(mesh, index, dummy, building, local, scale, rotationOf
   mesh.setMatrixAt(index, dummy.matrix)
 }
 
+const FACADE_FACES = ['north', 'south', 'east', 'west']
+
+function entryFaceForBuilding(building) {
+  return building.facadePlan?.entryFace || building.entryFace || building.interior?.entryFace || 'south'
+}
+
+function faceLength(building, face) {
+  return face === 'north' || face === 'south' ? building.w : building.d
+}
+
+function faceLocal(building, face, along = 0, y = 0, outward = 0.16) {
+  if (face === 'north') return [along, y, building.d / 2 + outward]
+  if (face === 'south') return [along, y, -building.d / 2 - outward]
+  if (face === 'east') return [building.w / 2 + outward, y, along]
+  return [-building.w / 2 - outward, y, along]
+}
+
+function faceScale(face, width, height, thickness = 0.055) {
+  return face === 'north' || face === 'south'
+    ? [width, height, thickness]
+    : [thickness, height, width]
+}
+
+function facePart(building, face, along, y, width, height, outward = 0.16, thickness = 0.055) {
+  return {
+    building,
+    local: faceLocal(building, face, along, y, outward),
+    scale: faceScale(face, width, height, thickness),
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
 function useRoadLayout(roads) {
   return useMemo(() => {
     const vertical = roads.filter(road => road.axis === 'z')
@@ -589,63 +624,63 @@ function FacadeDetails({ buildings }) {
     const rails = []
     const awnings = []
     const signs = []
-    buildings
+    ;[...buildings]
       .filter(building => Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.88)
-      .slice(0, 360)
+      .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
+      .slice(0, 220)
       .forEach((building, i) => {
-        const front = building.d / 2 + 0.16
-        const columns = building.type === 'skyscraper' ? 5 : building.type === 'office' ? 4 : building.type === 'apartment' ? 3 : 2
+        const entryFace = entryFaceForBuilding(building)
+        const planFaces = building.facadePlan?.faces || {}
+        const baseColumns = building.type === 'skyscraper' ? 5 : building.type === 'office' ? 4 : building.type === 'apartment' ? 3 : 2
         const rows = building.type === 'skyscraper'
-          ? Math.min(14, Math.max(5, Math.floor(building.h / 5.4)))
+          ? Math.min(9, Math.max(4, Math.floor(building.h / 7.2)))
           : building.type === 'office'
-            ? Math.min(8, Math.max(3, Math.floor(building.h / 5.2)))
+            ? Math.min(6, Math.max(3, Math.floor(building.h / 6.4)))
             : building.type === 'apartment'
-              ? Math.min(6, Math.max(2, Math.floor(building.h / 4.6)))
+              ? Math.min(5, Math.max(2, Math.floor(building.h / 5.2)))
               : 2
-        const panelWidth = Math.min(2.2, building.w * 0.54 / columns)
         const panelHeight = building.type === 'house' ? 1.0 : 1.35
-        for (let row = 0; row < rows; row += 1) {
-          const y = building.type === 'house' ? 2.0 + row * 2.0 : 3.2 + row * ((building.h - 4.8) / Math.max(1, rows))
-          if (y > building.h - 1.1) continue
-          for (let col = 0; col < columns; col += 1) {
-            if ((i + row * 3 + col) % 7 === 0 && building.type !== 'skyscraper') continue
-            const localX = ((col + 0.5) / columns - 0.5) * building.w * 0.58
-            windows.push({
-              building,
-              local: [localX, y, front + 0.24],
-              scale: [panelWidth, panelHeight, 0.055],
-            })
+        for (const face of FACADE_FACES) {
+          const facePlan = planFaces[face] || { glazingDensity: face === entryFace ? 0.8 : 0.58, balconyBias: false }
+          const length = faceLength(building, face)
+          const faceColumns = Math.max(1, Math.min(baseColumns, Math.floor(length / (building.type === 'house' ? 4.1 : 4.8))))
+          const columns = Math.max(1, Math.floor(faceColumns * (0.74 + facePlan.glazingDensity * 0.32)))
+          const panelWidth = Math.min(2.25, length * 0.58 / Math.max(1, columns))
+          for (let row = 0; row < rows; row += 1) {
+            const y = building.type === 'house' ? 2.0 + row * 2.0 : 3.2 + row * ((building.h - 4.8) / Math.max(1, rows))
+            if (y > building.h - 1.1) continue
+            for (let col = 0; col < columns; col += 1) {
+              if ((i + row * 3 + col + face.length) % 9 === 0 && building.type !== 'skyscraper') continue
+              const along = ((col + 0.5) / columns - 0.5) * length * 0.58
+              windows.push(facePart(building, face, along, y, panelWidth, panelHeight, 0.24))
+            }
+            if (building.type !== 'house' && row % 2 === 0) {
+              trims.push(facePart(building, face, 0, y - panelHeight * 0.82, length * 0.72, 0.055, 0.19, 0.09))
+            }
           }
-          if (building.type !== 'house' && row % 2 === 0) {
-            trims.push({
-              building,
-              local: [0, y - panelHeight * 0.82, front + 0.19],
-              scale: [building.w * 0.72, 0.055, 0.09],
-            })
+          if (building.type === 'house') {
+            trims.push(facePart(building, face, 0, 1.32, length * 0.58, 0.08, 0.2, 0.1))
           }
-        }
-        if (building.type === 'house') {
-          trims.push({ building, local: [0, 1.32, front + 0.2], scale: [building.w * 0.62, 0.08, 0.1] })
-        }
-        if (building.type === 'apartment') {
-          const floors = Math.min(4, Math.max(2, Math.floor(building.h / 7)))
-          for (let floor = 1; floor <= floors; floor += 1) {
-            const y = Math.min(building.h - 1.6, floor * 4.3 + 1.2)
-            const side = floor % 2 ? -1 : 1
-            const width = Math.min(4.8, building.w * 0.28)
-            const local = [side * building.w * 0.22, y, front + 0.24]
-            balconies.push({ building, local, scale: [width, 0.12, 0.72] })
-            rails.push({ building, local: [local[0], y + 0.28, front + 0.64], scale: [width, 0.42, 0.05] })
+          if (building.type === 'apartment' && facePlan.balconyBias) {
+            const floors = Math.min(4, Math.max(2, Math.floor(building.h / 7)))
+            for (let floor = 1; floor <= floors; floor += 1) {
+              const y = Math.min(building.h - 1.6, floor * 4.3 + 1.2)
+              const side = floor % 2 ? -1 : 1
+              const width = Math.min(4.8, length * 0.28)
+              const along = side * length * 0.22
+              balconies.push(facePart(building, face, along, y, width, 0.12, 0.46, 0.72))
+              rails.push(facePart(building, face, along, y + 0.28, width, 0.42, 0.88, 0.05))
+            }
           }
         }
         if (building.type === 'office' || building.type === 'apartment') {
-          awnings.push({ building, local: [0, 3.2, front + 0.35], scale: [Math.min(8.5, building.w * 0.46), 0.18, 1.05] })
+          awnings.push(facePart(building, entryFace, 0, 3.2, Math.min(8.5, faceLength(building, entryFace) * 0.46), 0.18, 0.72, 1.05))
         }
         if (building.type === 'office' || building.type === 'skyscraper') {
-          signs.push({ building, local: [0, Math.min(building.h - 3, 5.2 + (i % 3)), front + 0.22], scale: [Math.min(9.2, building.w * 0.52), 1.0, 0.08] })
+          signs.push(facePart(building, entryFace, 0, Math.min(building.h - 3, 5.2 + (i % 3)), Math.min(9.2, faceLength(building, entryFace) * 0.52), 1.0, 0.22, 0.08))
         }
         if (building.type === 'house' && i % 3 === 0) {
-          awnings.push({ building, local: [0, 2.5, front + 0.3], scale: [Math.min(4.2, building.w * 0.42), 0.14, 0.75] })
+          awnings.push(facePart(building, entryFace, 0, 2.5, Math.min(4.2, faceLength(building, entryFace) * 0.42), 0.14, 0.55, 0.75))
         }
       })
     return { windows, trims, balconies, rails, awnings, signs }
@@ -672,7 +707,7 @@ function FacadeDetails({ buildings }) {
     <>
       <instancedMesh ref={windowRef} args={[undefined, undefined, details.windows.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshPhysicalMaterial color="#bfefff" roughness={0.055} metalness={0.28} transparent opacity={0.78} clearcoat={1} clearcoatRoughness={0.07} envMapIntensity={1.55} />
+        <meshStandardMaterial color="#bfefff" roughness={0.12} metalness={0.32} transparent opacity={0.76} emissive="#2a8bc2" emissiveIntensity={0.18} />
       </instancedMesh>
       <instancedMesh ref={trimRef} args={[undefined, undefined, details.trims.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -693,6 +728,77 @@ function FacadeDetails({ buildings }) {
       <instancedMesh ref={signRef} args={[undefined, undefined, details.signs.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#b8f2ff" emissive="#40c8ff" emissiveIntensity={0.9} roughness={0.22} metalness={0.24} />
+      </instancedMesh>
+    </>
+  )
+}
+
+function BuildingInteriorHints({ buildings }) {
+  const doorRef = useRef()
+  const lobbyRef = useRef()
+  const coreRef = useRef()
+  const canopyRef = useRef()
+  const details = useMemo(() => {
+    const doors = []
+    const lobbies = []
+    const cores = []
+    const canopies = []
+    ;[...buildings]
+      .filter(building => building.interior && Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.9)
+      .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
+      .slice(0, 260)
+      .forEach((building) => {
+        const interior = building.interior
+        const face = entryFaceForBuilding(building)
+        const faceLen = faceLength(building, face)
+        const normalSpan = face === 'north' || face === 'south' ? building.d : building.w
+        const doorWidth = Math.min(interior.doorWidth || 2.4, faceLen * 0.62)
+        const lobbyDepth = clamp(interior.lobbyDepth || normalSpan * 0.34, 1.8, normalSpan * 0.7)
+        const lobbyWidth = clamp(interior.lobbyWidth || faceLen * 0.52, 2.4, faceLen * 0.74)
+        const coreDepth = clamp(interior.coreOffset?.depth || lobbyDepth + 1.8, lobbyDepth + 0.9, normalSpan * 0.74)
+        const coreAlong = clamp(interior.coreOffset?.along || 0, -faceLen * 0.28, faceLen * 0.28)
+        const coreHeight = Math.max(2.4, Math.min(building.h - 0.7, building.type === 'house' ? 3.8 : building.type === 'apartment' ? 8.8 : 12.5))
+        const coreWidth = building.type === 'house' ? 1.6 : building.type === 'apartment' ? 2.5 : 3.4
+        const coreThickness = building.type === 'house' ? 1.35 : building.type === 'apartment' ? 2.5 : 3.6
+
+        doors.push(facePart(building, face, 0, 1.78, doorWidth, 3.25, 0.28, 0.12))
+        lobbies.push(facePart(building, face, 0, 0.11, lobbyWidth, 0.07, -lobbyDepth / 2, lobbyDepth))
+        cores.push(facePart(building, face, coreAlong, coreHeight / 2, coreWidth, coreHeight, -coreDepth, coreThickness))
+        canopies.push(facePart(building, face, 0, 3.7, Math.min(faceLen * 0.68, doorWidth + 2.2), 0.22, 0.86, 1.05))
+      })
+    return { doors, lobbies, cores, canopies }
+  }, [buildings])
+
+  useLayoutEffect(() => {
+    if (!doorRef.current || !lobbyRef.current || !coreRef.current || !canopyRef.current) return
+    const dummy = new THREE.Object3D()
+    details.doors.forEach((item, i) => setLocalInstance(doorRef.current, i, dummy, item.building, item.local, item.scale))
+    details.lobbies.forEach((item, i) => setLocalInstance(lobbyRef.current, i, dummy, item.building, item.local, item.scale))
+    details.cores.forEach((item, i) => setLocalInstance(coreRef.current, i, dummy, item.building, item.local, item.scale))
+    details.canopies.forEach((item, i) => setLocalInstance(canopyRef.current, i, dummy, item.building, item.local, item.scale))
+    doorRef.current.instanceMatrix.needsUpdate = true
+    lobbyRef.current.instanceMatrix.needsUpdate = true
+    coreRef.current.instanceMatrix.needsUpdate = true
+    canopyRef.current.instanceMatrix.needsUpdate = true
+  }, [details])
+
+  return (
+    <>
+      <instancedMesh ref={doorRef} args={[undefined, undefined, details.doors.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#b9edff" roughness={0.1} metalness={0.28} transparent opacity={0.64} emissive="#4ab9f0" emissiveIntensity={0.18} />
+      </instancedMesh>
+      <instancedMesh ref={lobbyRef} args={[undefined, undefined, details.lobbies.length]} receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#d8dce0" roughness={0.34} metalness={0.06} emissive="#1f2933" emissiveIntensity={0.08} />
+      </instancedMesh>
+      <instancedMesh ref={coreRef} args={[undefined, undefined, details.cores.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#46515a" roughness={0.38} metalness={0.34} emissive="#111820" emissiveIntensity={0.08} />
+      </instancedMesh>
+      <instancedMesh ref={canopyRef} args={[undefined, undefined, details.canopies.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#24313a" roughness={0.36} metalness={0.42} emissive="#10202b" emissiveIntensity={0.16} />
       </instancedMesh>
     </>
   )
@@ -769,6 +875,7 @@ export default function UrbanDetails({ city }) {
       <ParkedCars roads={city.roads} />
       <PlantersAndBenches roads={city.roads} />
       <FacadeDetails buildings={city.buildings} />
+      <BuildingInteriorHints buildings={city.buildings} />
       <RooftopDetails buildings={city.buildings} />
     </>
   )

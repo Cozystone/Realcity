@@ -16,7 +16,7 @@ const FREE_LOOK_YAW = 1.18
 const FREE_LOOK_PITCH_UP = 0.72
 const FREE_LOOK_PITCH_DOWN = -0.22
 const FREE_LOOK_IN_SPEED = 8.5
-const FREE_LOOK_RETURN_SPEED = 10.5
+const FREE_LOOK_RETURN_SPEED = 16.5
 
 function approach(current, target, speed, delta) {
   return current + (target - current) * (1 - Math.exp(-speed * delta))
