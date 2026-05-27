@@ -673,16 +673,28 @@ function ParkedCars({ roads }) {
 
 function FacadeDetails({ buildings }) {
   const windowRef = useRef()
+  const mullionRef = useRef()
+  const sillRef = useRef()
+  const facadeBandRef = useRef()
+  const acRef = useRef()
+  const drainPipeRef = useRef()
   const trimRef = useRef()
   const balconyRef = useRef()
   const railRef = useRef()
+  const sideRailRef = useRef()
   const awningRef = useRef()
   const signRef = useRef()
   const details = useMemo(() => {
     const windows = []
+    const mullions = []
+    const sills = []
+    const facadeBands = []
+    const acUnits = []
+    const drainPipes = []
     const trims = []
     const balconies = []
     const rails = []
+    const sideRails = []
     const awnings = []
     const signs = []
     ;[...buildings]
@@ -707,6 +719,15 @@ function FacadeDetails({ buildings }) {
           const faceColumns = Math.max(1, Math.min(baseColumns, Math.floor(length / (building.type === 'house' ? 4.1 : 4.8))))
           const columns = Math.max(1, Math.floor(faceColumns * (0.74 + facePlan.glazingDensity * 0.32)))
           const panelWidth = Math.min(2.25, length * 0.58 / Math.max(1, columns))
+          if (building.type !== 'house') {
+            const bandHeight = Math.max(3.2, building.h * 0.78)
+            const bandY = Math.max(2.8, bandHeight / 2 + 1.2)
+            facadeBands.push(facePart(building, face, -length * 0.43, bandY, 0.12, Math.min(building.h - 1.4, bandHeight), 0.21, 0.09))
+            facadeBands.push(facePart(building, face, length * 0.43, bandY, 0.12, Math.min(building.h - 1.4, bandHeight), 0.21, 0.09))
+          }
+          if (building.type === 'house' || building.type === 'apartment') {
+            drainPipes.push(facePart(building, face, -length * 0.48, Math.max(1.8, building.h * 0.42), 0.07, Math.max(2.8, building.h * 0.76), 0.34, 0.07))
+          }
           for (let row = 0; row < rows; row += 1) {
             const y = building.type === 'house' ? 2.0 + row * 2.0 : 3.2 + row * ((building.h - 4.8) / Math.max(1, rows))
             if (y > building.h - 1.1) continue
@@ -714,6 +735,18 @@ function FacadeDetails({ buildings }) {
               if ((i + row * 3 + col + face.length) % 9 === 0 && building.type !== 'skyscraper') continue
               const along = ((col + 0.5) / columns - 0.5) * length * 0.58
               windows.push(facePart(building, face, along, y, panelWidth, panelHeight, 0.24))
+              mullions.push(facePart(building, face, along, y, 0.055, panelHeight * 1.04, 0.305, 0.062))
+              if (building.type !== 'skyscraper' || col % 2 === 0) {
+                sills.push(facePart(building, face, along, y - panelHeight * 0.58, panelWidth + 0.28, 0.06, 0.315, 0.12))
+                sills.push(facePart(building, face, along, y + panelHeight * 0.58, panelWidth + 0.18, 0.045, 0.305, 0.09))
+              }
+              if (
+                (building.type === 'apartment' || building.type === 'office') &&
+                row > 0 &&
+                (i + row + col + face.charCodeAt(0)) % 7 === 0
+              ) {
+                acUnits.push(facePart(building, face, along + panelWidth * 0.32, y - panelHeight * 0.88, Math.min(0.74, panelWidth * 0.52), 0.34, 0.42, 0.36))
+              }
             }
             if (building.type !== 'house' && row % 2 === 0) {
               trims.push(facePart(building, face, 0, y - panelHeight * 0.82, length * 0.72, 0.055, 0.19, 0.09))
@@ -732,6 +765,8 @@ function FacadeDetails({ buildings }) {
               modules.forEach(module => {
                 balconies.push(facePart(building, face, module.along, y, module.width, 0.12, 0.48, 0.74))
                 rails.push(facePart(building, face, module.along, y + 0.3, module.width, 0.42, 0.9, 0.05))
+                sideRails.push(facePart(building, face, module.along - module.width / 2, y + 0.28, 0.05, 0.38, 0.9, 0.05))
+                sideRails.push(facePart(building, face, module.along + module.width / 2, y + 0.28, 0.05, 0.38, 0.9, 0.05))
               })
             }
           }
@@ -746,22 +781,51 @@ function FacadeDetails({ buildings }) {
           awnings.push(facePart(building, entryFace, 0, 2.5, Math.min(4.2, faceLength(building, entryFace) * 0.42), 0.14, 0.55, 0.75))
         }
       })
-    return { windows, trims, balconies, rails, awnings, signs }
+    return { windows, mullions, sills, facadeBands, acUnits, drainPipes, trims, balconies, rails, sideRails, awnings, signs }
   }, [buildings])
 
+  useEffect(() => {
+    exposeRenderingMetadata({
+      facadeDetails: {
+        physicalWindowPanes: details.windows.length,
+        physicalMullions: details.mullions.length,
+        windowSills: details.sills.length,
+        facadeBands: details.facadeBands.length,
+        acUnits: details.acUnits.length,
+        drainPipes: details.drainPipes.length,
+        balconyDecks: details.balconies.length,
+        balconyFrontRails: details.rails.length,
+        balconySideRails: details.sideRails.length,
+        materialBreakup: 'mullions, sills, vertical bands, service pipes, AC boxes, balcony side returns',
+      },
+    })
+  }, [details])
+
   useLayoutEffect(() => {
-    if (!windowRef.current || !trimRef.current || !balconyRef.current || !railRef.current || !awningRef.current || !signRef.current) return
+    if (!windowRef.current || !mullionRef.current || !sillRef.current || !facadeBandRef.current || !acRef.current || !drainPipeRef.current || !trimRef.current || !balconyRef.current || !railRef.current || !sideRailRef.current || !awningRef.current || !signRef.current) return
     const dummy = new THREE.Object3D()
     details.windows.forEach((item, i) => setLocalInstance(windowRef.current, i, dummy, item.building, item.local, item.scale))
+    details.mullions.forEach((item, i) => setLocalInstance(mullionRef.current, i, dummy, item.building, item.local, item.scale))
+    details.sills.forEach((item, i) => setLocalInstance(sillRef.current, i, dummy, item.building, item.local, item.scale))
+    details.facadeBands.forEach((item, i) => setLocalInstance(facadeBandRef.current, i, dummy, item.building, item.local, item.scale))
+    details.acUnits.forEach((item, i) => setLocalInstance(acRef.current, i, dummy, item.building, item.local, item.scale))
+    details.drainPipes.forEach((item, i) => setLocalInstance(drainPipeRef.current, i, dummy, item.building, item.local, item.scale))
     details.trims.forEach((item, i) => setLocalInstance(trimRef.current, i, dummy, item.building, item.local, item.scale))
     details.balconies.forEach((item, i) => setLocalInstance(balconyRef.current, i, dummy, item.building, item.local, item.scale))
     details.rails.forEach((item, i) => setLocalInstance(railRef.current, i, dummy, item.building, item.local, item.scale))
+    details.sideRails.forEach((item, i) => setLocalInstance(sideRailRef.current, i, dummy, item.building, item.local, item.scale))
     details.awnings.forEach((item, i) => setLocalInstance(awningRef.current, i, dummy, item.building, item.local, item.scale))
     details.signs.forEach((item, i) => setLocalInstance(signRef.current, i, dummy, item.building, item.local, item.scale))
     windowRef.current.instanceMatrix.needsUpdate = true
+    mullionRef.current.instanceMatrix.needsUpdate = true
+    sillRef.current.instanceMatrix.needsUpdate = true
+    facadeBandRef.current.instanceMatrix.needsUpdate = true
+    acRef.current.instanceMatrix.needsUpdate = true
+    drainPipeRef.current.instanceMatrix.needsUpdate = true
     trimRef.current.instanceMatrix.needsUpdate = true
     balconyRef.current.instanceMatrix.needsUpdate = true
     railRef.current.instanceMatrix.needsUpdate = true
+    sideRailRef.current.instanceMatrix.needsUpdate = true
     awningRef.current.instanceMatrix.needsUpdate = true
     signRef.current.instanceMatrix.needsUpdate = true
   }, [details])
@@ -771,6 +835,26 @@ function FacadeDetails({ buildings }) {
       <instancedMesh ref={windowRef} args={[undefined, undefined, details.windows.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#bfefff" roughness={0.12} metalness={0.32} transparent opacity={0.76} emissive="#2a8bc2" emissiveIntensity={0.18} />
+      </instancedMesh>
+      <instancedMesh ref={mullionRef} args={[undefined, undefined, details.mullions.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#18232c" roughness={0.28} metalness={0.62} />
+      </instancedMesh>
+      <instancedMesh ref={sillRef} args={[undefined, undefined, details.sills.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f0ece1" roughness={0.47} metalness={0.12} />
+      </instancedMesh>
+      <instancedMesh ref={facadeBandRef} args={[undefined, undefined, details.facadeBands.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#d0d7da" roughness={0.38} metalness={0.18} />
+      </instancedMesh>
+      <instancedMesh ref={acRef} args={[undefined, undefined, details.acUnits.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#c4ccd1" roughness={0.42} metalness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={drainPipeRef} args={[undefined, undefined, details.drainPipes.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#9ea7aa" roughness={0.34} metalness={0.54} />
       </instancedMesh>
       <instancedMesh ref={trimRef} args={[undefined, undefined, details.trims.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -783,6 +867,10 @@ function FacadeDetails({ buildings }) {
       <instancedMesh ref={railRef} args={[undefined, undefined, details.rails.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#e6ecef" roughness={0.26} metalness={0.64} />
+      </instancedMesh>
+      <instancedMesh ref={sideRailRef} args={[undefined, undefined, details.sideRails.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#d5dee2" roughness={0.28} metalness={0.62} />
       </instancedMesh>
       <instancedMesh ref={awningRef} args={[undefined, undefined, details.awnings.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />

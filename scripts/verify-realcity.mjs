@@ -770,6 +770,9 @@ async function inspectStreetRendering(page) {
   assert(result.crosswalks.raisedAboveRoad && result.crosswalks.separatedFromSidewalks, 'Crosswalks are not explicitly separated from sidewalks')
   assert(result.facades?.proceduralWindowTexture && result.facades?.hasMullions && result.facades?.hasLitWindows, 'Facade texture/window system is incomplete')
   assert(result.facades.wallPalettes?.length >= 4, 'Facade wall palettes are not diverse enough')
+  assert(result.facadeDetails?.physicalMullions >= 1000 && result.facadeDetails?.windowSills >= 1000, `Facade physical window detail is too sparse: ${JSON.stringify(result.facadeDetails)}`)
+  assert(result.facadeDetails?.facadeBands >= 500 && result.facadeDetails?.acUnits >= 120 && result.facadeDetails?.drainPipes >= 300, `Facade service/material breakup is incomplete: ${JSON.stringify(result.facadeDetails)}`)
+  assert(result.facadeDetails?.balconySideRails >= result.facadeDetails?.balconyDecks * 2, `Balconies lack side-return rails: ${JSON.stringify(result.facadeDetails)}`)
   return result
 }
 
