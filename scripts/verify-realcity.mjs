@@ -146,11 +146,15 @@ async function getTaxiRouteState(page) {
       dispatchPathPoints: mission?.taxi?.path?.length || 0,
       destinationPathPoints: mission?.taxi?.destinationPath?.length || mission?.route?.length || 0,
       ridePathPoints: ride?.path?.length || 0,
-      routeMeters: ride?.routeMeters || mission?.taxi?.destinationMeters || mission?.taxi?.routeMeters || 0,
+      dispatchMeters: mission?.taxi?.routeMeters || 0,
+      destinationMeters: mission?.taxi?.destinationMeters || 0,
+      routeMeters: ride?.routeMeters || (mission?.phase === 'taxi_dispatch' ? mission?.taxi?.routeMeters : mission?.taxi?.destinationMeters) || mission?.taxi?.routeMeters || 0,
       directMeters: mission?.taxi?.directMeters || 0,
       dispatchTurns: pathTurns(mission?.taxi?.path),
       destinationTurns: pathTurns(ride?.path || mission?.taxi?.destinationPath || mission?.route),
       taxiPose: ride?.taxiPose || mission?.taxi?.pose || null,
+      taxiSpeed: mission?.taxi?.speed || null,
+      rideDuration: ride?.duration || 0,
       rideProgress: ride?.progress || 0,
     }
   })
@@ -602,23 +606,31 @@ async function main() {
     assert(['taxi_dispatch', 'taxi_waiting', 'taxi_ride'].includes(taxiDispatch.missionPhase), `Taxi did not enter a dispatch/wait/ride phase: ${taxiDispatch.missionPhase}`)
     assert(taxiDispatch.dispatchPathPoints >= 2, `Taxi dispatch path was not created: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.destinationPathPoints >= 2, `Taxi destination road path was not plotted: ${JSON.stringify(taxiDispatch)}`)
-    assert(taxiDispatch.routeMeters >= Math.max(1, taxiDispatch.directMeters * 0.9), `Taxi route distance was implausible: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.dispatchMeters > 80, `Taxi pickup route was too short to prove it drove in from the street: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.taxiSpeed <= 20, `Taxi dispatch speed is too fast for city driving: ${JSON.stringify(taxiDispatch)}`)
 
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
     assert(await page.locator('.full-map-route').count() === 1, 'Full map did not render the taxi route polyline')
+    const dispatchMapRoutePoints = await page.locator('.full-map-route').getAttribute('points', { timeout: 5000 })
+    const dispatchMapPointCount = dispatchMapRoutePoints.trim().split(/\s+/).filter(Boolean).length
+    if (taxiDispatch.missionPhase === 'taxi_dispatch') {
+      assert(dispatchMapPointCount === taxiDispatch.dispatchPathPoints, `Map did not show the taxi pickup route while the taxi was coming: ${dispatchMapPointCount} vs ${taxiDispatch.dispatchPathPoints}`)
+    }
     await page.locator('.full-map-header button').click()
     await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
 
     await page.waitForFunction(() => {
       const state = window.__REALCITY_STORE__?.getState()
       return state?.ride?.path?.length >= 2 && state.ride.routeMeters > 0
-    }, null, { timeout: 45000 })
+    }, null, { timeout: 90000 })
     const taxiRide = await getTaxiRouteState(page)
     assert(taxiRide.ridePathPoints >= 2, `Taxi ride did not use a road path: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.routeMeters >= Math.max(1, taxiRide.directMeters * 0.9), `Taxi ride route distance was implausible: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.rideDuration >= taxiRide.routeMeters / 25 - 0.5, `Taxi ride duration is too short for the road distance: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.taxiPose && Number.isFinite(taxiRide.taxiPose.x) && Number.isFinite(taxiRide.taxiPose.z), `Taxi vehicle pose was not updated during ride: ${JSON.stringify(taxiRide)}`)
 
-    await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 70000 })
+    await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 120000 })
     await page.waitForTimeout(700)
     const finalState = await page.evaluate(() => {
       const state = window.__REALCITY_STORE__?.getState()

@@ -6,7 +6,9 @@ import { clockLabel, useCityStore } from '../engine/cityStore'
 import VirtualPhone from './VirtualPhone'
 
 function activeTaxiRoute(mission, ride) {
+  if (mission?.phase === 'taxi_dispatch' && mission?.taxi?.path?.length >= 2) return mission.taxi.path
   if (ride?.path?.length >= 2) return ride.path
+  if (mission?.phase === 'taxi_waiting' && mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.route?.length >= 2) return mission.route
   if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
@@ -364,7 +366,7 @@ function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
 function MissionPanel({ mission, ride }) {
   if (!mission) return null
   const taxiRoute = activeTaxiRoute(mission, ride)
-  const routeMeters = ride?.routeMeters || mission.taxi?.destinationMeters || mission.taxi?.routeMeters || 0
+  const routeMeters = ride?.routeMeters || (mission.phase === 'taxi_dispatch' ? mission.taxi?.routeMeters : mission.taxi?.destinationMeters) || mission.taxi?.routeMeters || 0
   const phase = ride
     ? `Taxi ${(Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000)) * 100).toFixed(0)}%`
     : mission.phase === 'taxi_dispatch'

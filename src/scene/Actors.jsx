@@ -9,6 +9,10 @@ import { buildTaxiRoute, sampleRoute, taxiSpawnForPickup } from '../engine/taxiR
 import { makeProceduralTexture } from './proceduralTextures'
 
 const forward = new THREE.Vector3(0, 0, 1)
+const TAXI_DISPATCH_SPEED = 18
+const TAXI_RIDE_SPEED = 24
+const TAXI_MIN_RIDE_SECONDS = 14
+const TAXI_MAX_RIDE_SECONDS = 120
 
 function formatTime(minutes) {
   return `${Math.floor(minutes / 60)}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`
@@ -184,7 +188,12 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
 }
 
 function advanceTaxi(taxi, delta) {
-  taxi.progress = Math.min(taxi.routeMeters, (taxi.progress || 0) + taxi.speed * delta)
+  const now = performance.now()
+  const elapsed = taxi.lastAdvancedAt
+    ? Math.min(0.5, Math.max(delta, (now - taxi.lastAdvancedAt) / 1000))
+    : delta
+  taxi.lastAdvancedAt = now
+  taxi.progress = Math.min(taxi.routeMeters, (taxi.progress || 0) + taxi.speed * elapsed)
   const pose = sampleRoute(taxi.path, taxi.progress)
   taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
   return pose
@@ -206,7 +215,7 @@ function beginTaxiDispatch(agent, mission, store, roads) {
     destinationMeters: routeToDestination.routeMeters,
     directMeters: routeToDestination.directMeters,
     progress: 0,
-    speed: 64,
+    speed: TAXI_DISPATCH_SPEED,
     pickup,
     dropoff,
     routeNames: routeToDestination.roadNames,
@@ -363,7 +372,7 @@ class Agent {
             ? { points: taxi.destinationPath, routeMeters: taxi.destinationMeters, roadNames: taxi.routeNames }
             : buildTaxiRoute(mission.pickup, fallbackDropoff, roads)
           const routeMeters = Math.max(1, route.routeMeters || 0)
-          const rideSpeed = 76
+          const rideSpeed = TAXI_RIDE_SPEED
           mission.phase = 'taxi_ride'
           taxi.phase = 'ride'
           taxi.path = route.points
@@ -382,7 +391,7 @@ class Agent {
             path: route.points,
             routeMeters,
             routeNames: taxi.routeNames || [],
-            duration: Math.min(34, Math.max(8, routeMeters / rideSpeed)),
+            duration: Math.min(TAXI_MAX_RIDE_SECONDS, Math.max(TAXI_MIN_RIDE_SECONDS, routeMeters / rideSpeed)),
             label: `${this.name} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`,
             destinationName: destination.name,
             taxiId: taxi.id,
@@ -943,7 +952,9 @@ function Traffic({ cars, roads }) {
 }
 
 function activeTaxiRoute(mission, ride) {
+  if (mission?.phase === 'taxi_dispatch' && mission?.taxi?.path?.length >= 2) return mission.taxi.path
   if (ride?.path?.length >= 2) return ride.path
+  if (mission?.phase === 'taxi_waiting' && mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.route?.length >= 2) return mission.route
   if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
