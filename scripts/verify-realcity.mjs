@@ -634,6 +634,7 @@ async function inspectMultiplayer(page) {
   await page.locator('.multiplayer-panel').waitFor({ state: 'visible', timeout: 10000 })
   const panelText = await page.locator('.multiplayer-panel').innerText({ timeout: 5000 })
   assert(panelText.includes('Multiplayer') && panelText.includes('Join Server'), `Multiplayer join panel is missing: ${panelText}`)
+  assert(/invite link/i.test(panelText) && panelText.includes('room='), `Multiplayer invite link is missing from the join panel: ${panelText}`)
 
   const seeded = await page.evaluate(async () => {
     const roomId = `verify-${Date.now()}`
@@ -692,7 +693,43 @@ async function inspectMultiplayer(page) {
   }, seeded.roomId)
 
   assert(state.peers.some(peer => peer.id === 'verify_peer_b' && Number.isFinite(peer.x) && Number.isFinite(peer.z)), `Multiplayer peer pose was not synchronized: ${JSON.stringify(state)}`)
-  return { panel: panelText.split(/\r?\n/).slice(0, 8), seeded, state }
+
+  const inviteRoom = `invite-${Date.now()}`
+  await page.goto(`${baseUrl}/?room=${inviteRoom}&mp=1&name=Invite%20Guest`, { waitUntil: 'domcontentloaded', timeout: 45000 })
+  await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 30000 })
+  await page.waitForFunction((roomId) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      return state?.multiplayer?.enabled &&
+        state.multiplayer.roomId === roomId &&
+        state.multiplayer.name === 'Invite Guest' &&
+        state.multiplayer.status === 'online' &&
+        window.__REALCITY_MULTIPLAYER__?.enabled === true
+  }, inviteRoom, { timeout: 18000 })
+  const inviteState = await page.evaluate(async (roomId) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const panelText = document.querySelector('.multiplayer-panel')?.textContent || ''
+    await fetch('/api/multiplayer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'leave', roomId, playerId: state.multiplayer.playerId }),
+    })
+    window.__REALCITY_STORE__?.getState().setMultiplayerEnabled(false)
+    return {
+      enabled: state.multiplayer.enabled,
+      roomId: state.multiplayer.roomId,
+      name: state.multiplayer.name,
+      status: state.multiplayer.status,
+      panelHasInvite: /invite link/i.test(panelText) && panelText.includes(roomId),
+      urlHasInvite: window.location.search.includes(`room=${roomId}`) && window.location.search.includes('mp=1'),
+    }
+  }, inviteRoom)
+  assert(inviteState.enabled && inviteState.roomId === inviteRoom && inviteState.name === 'Invite Guest' && inviteState.status === 'online', `Invite URL did not auto-join the requested room: ${JSON.stringify(inviteState)}`)
+  assert(inviteState.panelHasInvite && inviteState.urlHasInvite, `Invite URL or panel did not expose the shareable room link: ${JSON.stringify(inviteState)}`)
+
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45000 })
+  await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 30000 })
+  await page.waitForTimeout(1200)
+  return { panel: panelText.split(/\r?\n/).slice(0, 10), seeded, state, inviteState }
 }
 
 async function inspectPhone(page) {

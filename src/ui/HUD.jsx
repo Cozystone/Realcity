@@ -415,6 +415,9 @@ function MultiplayerPanel({ multiplayer }) {
     roomId: multiplayer.roomId,
     color: multiplayer.color,
   })
+  const [copied, setCopied] = useState(false)
+  const activeRoomId = multiplayer.enabled ? multiplayer.roomId : form.roomId
+  const inviteUrl = useMemo(() => multiplayerInviteUrl(activeRoomId), [activeRoomId])
 
   useEffect(() => {
     if (!multiplayer.enabled) {
@@ -433,8 +436,19 @@ function MultiplayerPanel({ multiplayer }) {
     const store = useCityStore.getState()
     store.setMultiplayerIdentity(form)
     store.setMultiplayerEnabled(true)
+    applyMultiplayerInviteUrl(form.roomId)
   }
   const leave = () => useCityStore.getState().setMultiplayerEnabled(false)
+  const copyInvite = async () => {
+    if (!inviteUrl) return
+    try {
+      await navigator.clipboard?.writeText(inviteUrl)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   if (multiplayer.enabled) {
     return (
@@ -442,12 +456,17 @@ function MultiplayerPanel({ multiplayer }) {
         <div className="multiplayer-header">
           <span className={`multiplayer-dot ${multiplayer.status}`} />
           <strong>{multiplayer.name}</strong>
+          <button type="button" onClick={copyInvite}>{copied ? 'Copied' : 'Invite'}</button>
           <button type="button" onClick={leave}>Leave</button>
         </div>
         <div className="multiplayer-grid">
           <span>Room</span><strong>{multiplayer.roomId}</strong>
           <span>ID</span><strong>{multiplayer.playerId}</strong>
           <span>Online</span><strong>{multiplayer.playerCount}</strong>
+        </div>
+        <div className="multiplayer-invite">
+          <span>Invite Link</span>
+          <output>{inviteUrl}</output>
         </div>
         {multiplayer.peers.length ? (
           <ul>
@@ -490,6 +509,11 @@ function MultiplayerPanel({ multiplayer }) {
         </label>
       </div>
       <button type="submit">Join Server</button>
+      <div className="multiplayer-invite">
+        <span>Invite Link</span>
+        <output>{inviteUrl}</output>
+        <button type="button" onClick={copyInvite}>{copied ? 'Copied' : 'Copy Link'}</button>
+      </div>
     </form>
   )
 }
@@ -586,6 +610,26 @@ function pressHailTaxi() {
     bubbles: true,
     cancelable: true,
   }))
+}
+
+function multiplayerInviteUrl(roomId) {
+  if (typeof window === 'undefined') return ''
+  const url = new URL(window.location.href)
+  url.searchParams.set('room', String(roomId || 'lobby').trim().toLowerCase() || 'lobby')
+  url.searchParams.set('mp', '1')
+  url.searchParams.delete('playerId')
+  url.searchParams.delete('id')
+  url.searchParams.delete('name')
+  url.searchParams.delete('playerName')
+  return url.toString()
+}
+
+function applyMultiplayerInviteUrl(roomId) {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.set('room', String(roomId || 'lobby').trim().toLowerCase() || 'lobby')
+  url.searchParams.set('mp', '1')
+  window.history.replaceState({}, '', url)
 }
 
 function KeyPrompt({ keyName, label, detail, primary = false, onClick }) {

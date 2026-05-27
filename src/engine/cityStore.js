@@ -12,6 +12,26 @@ function randomToken() {
   return Math.random().toString(36).slice(2, 8)
 }
 
+function cleanIdentityText(value, fallback, maxLength = 48) {
+  const text = String(value || '')
+    .trim()
+    .replace(/[^\w\s.-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, maxLength)
+  return text || fallback
+}
+
+function inviteParams() {
+  if (typeof window === 'undefined') return {}
+  const params = new URLSearchParams(window.location.search)
+  const roomId = params.get('room') || params.get('rcRoom') || ''
+  const name = params.get('name') || params.get('playerName') || ''
+  const playerId = params.get('playerId') || params.get('id') || ''
+  const color = params.get('color') || ''
+  const autoJoin = !!roomId && ['1', 'true', 'yes'].includes(String(params.get('mp') || params.get('join') || '1').toLowerCase())
+  return { roomId, name, playerId, color, autoJoin }
+}
+
 function defaultMultiplayerIdentity() {
   const token = randomToken()
   return {
@@ -24,17 +44,26 @@ function defaultMultiplayerIdentity() {
 
 function readMultiplayerIdentity() {
   const fallback = defaultMultiplayerIdentity()
+  const invite = inviteParams()
   if (typeof window === 'undefined') return fallback
   try {
     const saved = JSON.parse(window.localStorage.getItem('realcity:multiplayer') || '{}')
     return {
-      playerId: saved.playerId || fallback.playerId,
-      name: saved.name || fallback.name,
-      roomId: saved.roomId || fallback.roomId,
-      color: saved.color || fallback.color,
+      playerId: cleanIdentityText(invite.playerId || saved.playerId, fallback.playerId, 48),
+      name: cleanIdentityText(invite.name || saved.name, fallback.name, 28),
+      roomId: cleanIdentityText(invite.roomId || saved.roomId, fallback.roomId, 32).toLowerCase(),
+      color: /^#[0-9a-f]{6}$/i.test(invite.color) ? invite.color : saved.color || fallback.color,
+      autoJoin: invite.autoJoin,
     }
   } catch {
-    return fallback
+    return {
+      ...fallback,
+      roomId: cleanIdentityText(invite.roomId, fallback.roomId, 32).toLowerCase(),
+      name: cleanIdentityText(invite.name, fallback.name, 28),
+      playerId: cleanIdentityText(invite.playerId, fallback.playerId, 48),
+      color: /^#[0-9a-f]{6}$/i.test(invite.color) ? invite.color : fallback.color,
+      autoJoin: invite.autoJoin,
+    }
   }
 }
 
@@ -102,7 +131,7 @@ export const useCityStore = create((set, get) => ({
   pedestrianSamples: [],
   vehicleSamples: [],
   multiplayer: {
-    enabled: false,
+    enabled: !!initialMultiplayer.autoJoin,
     roomId: initialMultiplayer.roomId,
     playerId: initialMultiplayer.playerId,
     name: initialMultiplayer.name,
