@@ -221,6 +221,22 @@ function Character({ moving, running }) {
         <boxGeometry args={[0.28, 0.34, 0.035]} />
         <meshStandardMaterial map={textures.glass} color="#e8f1f4" roughness={0.58} metalness={0.02} />
       </mesh>
+      <mesh castShadow position={[0, 1.5, 0.205]}>
+        <boxGeometry args={[0.18, 0.035, 0.018]} />
+        <meshStandardMaterial map={textures.fabric} color="#f2eadc" roughness={0.7} />
+      </mesh>
+      <mesh castShadow position={[-0.08, 1.31, 0.212]} rotation={[0, 0, -0.18]}>
+        <boxGeometry args={[0.04, 0.23, 0.016]} />
+        <meshStandardMaterial map={textures.fabric} color="#d5e3ed" roughness={0.72} />
+      </mesh>
+      <mesh castShadow position={[0.08, 1.31, 0.212]} rotation={[0, 0, 0.18]}>
+        <boxGeometry args={[0.04, 0.23, 0.016]} />
+        <meshStandardMaterial map={textures.fabric} color="#d5e3ed" roughness={0.72} />
+      </mesh>
+      <mesh castShadow position={[0.12, 1.38, 0.224]}>
+        <boxGeometry args={[0.035, 0.048, 0.012]} />
+        <meshStandardMaterial color="#c59b53" roughness={0.32} metalness={0.35} />
+      </mesh>
       <mesh castShadow position={[0, 1.57, 0]}>
         <capsuleGeometry args={[0.075, 0.12, 4, 8]} />
         <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.66} />
@@ -229,6 +245,10 @@ function Character({ moving, running }) {
         <mesh castShadow position={[0, -0.34, 0]}>
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
           <meshStandardMaterial map={textures.fabric} color="#17203a" roughness={0.84} />
+        </mesh>
+        <mesh castShadow position={[0, -0.58, 0.045]}>
+          <boxGeometry args={[0.08, 0.03, 0.08]} />
+          <meshStandardMaterial map={textures.fabric} color="#0d1118" roughness={0.86} />
         </mesh>
         <mesh castShadow position={[0, -0.67, 0.045]}>
           <boxGeometry args={[0.11, 0.06, 0.18]} />
@@ -239,6 +259,10 @@ function Character({ moving, running }) {
         <mesh castShadow position={[0, -0.34, 0]}>
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
           <meshStandardMaterial map={textures.fabric} color="#17203a" roughness={0.84} />
+        </mesh>
+        <mesh castShadow position={[0, -0.58, 0.045]}>
+          <boxGeometry args={[0.08, 0.03, 0.08]} />
+          <meshStandardMaterial map={textures.fabric} color="#0d1118" roughness={0.86} />
         </mesh>
         <mesh castShadow position={[0, -0.67, 0.045]}>
           <boxGeometry args={[0.11, 0.06, 0.18]} />
@@ -277,9 +301,25 @@ function Character({ moving, running }) {
         <sphereGeometry args={[0.022, 8, 6]} />
         <meshStandardMaterial color="#05070a" roughness={0.34} />
       </mesh>
+      <mesh castShadow position={[-0.088, 1.785, 0.202]} rotation={[0, 0, -0.08]}>
+        <boxGeometry args={[0.06, 0.01, 0.012]} />
+        <meshStandardMaterial map={textures.hair} color="#17100b" roughness={0.9} />
+      </mesh>
+      <mesh castShadow position={[0.088, 1.785, 0.202]} rotation={[0, 0, 0.08]}>
+        <boxGeometry args={[0.06, 0.01, 0.012]} />
+        <meshStandardMaterial map={textures.hair} color="#17100b" roughness={0.9} />
+      </mesh>
       <mesh castShadow position={[0, 1.69, 0.215]}>
         <boxGeometry args={[0.035, 0.055, 0.035]} />
         <meshStandardMaterial map={textures.skin} color="#c98f70" roughness={0.68} />
+      </mesh>
+      <mesh castShadow position={[-0.07, 1.67, 0.218]}>
+        <sphereGeometry args={[0.028, 8, 6]} />
+        <meshStandardMaterial map={textures.skin} color="#e2ad89" roughness={0.72} />
+      </mesh>
+      <mesh castShadow position={[0.07, 1.67, 0.218]}>
+        <sphereGeometry args={[0.028, 8, 6]} />
+        <meshStandardMaterial map={textures.skin} color="#e2ad89" roughness={0.72} />
       </mesh>
       <mesh castShadow position={[0, 1.625, 0.202]}>
         <boxGeometry args={[0.09, 0.012, 0.014]} />
@@ -325,7 +365,7 @@ export default function PlayerRig({ city }) {
   const collisionCooldowns = useRef(new Map())
 
   useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05)
+    const dt = Math.min(delta, 0.12)
     const store = useCityStore.getState()
     store.tick(dt)
     const ride = store.ride

@@ -947,10 +947,11 @@ function createSchedule(role) {
   ]
 }
 
-function createNPCs(rng, buildings, landmarks) {
+function createNPCs(rng, buildings, landmarks, roads) {
   const socialPlaces = landmarks.filter(place => ['cafe', 'park', 'retail', 'leisure', 'transit'].includes(place.kind))
   const byId = new Map(landmarks.map(place => [place.id, place]))
   const homes = buildings.filter(building => building.type === 'apartment' || building.type === 'house')
+  const roadsById = new Map(roads.map(road => [road.id, road]))
   const usedNames = new Set()
 
   return Array.from({ length: 160 }, (_, i) => {
@@ -960,8 +961,9 @@ function createNPCs(rng, buildings, landmarks) {
     const third = pick(rng, socialPlaces)
     const gender = pick(rng, ['woman', 'man', 'nonbinary'])
     const name = uniqueName(rng, usedNames, i)
-    const hx = home.x + (rng() - 0.5) * home.w
-    const hz = home.z + (rng() - 0.5) * home.d
+    const frontage = frontageForBuilding(home, roadsById)
+    const hx = frontage ? frontage.x + (rng() - 0.5) * 4.4 : home.x + (rng() - 0.5) * home.w
+    const hz = frontage ? frontage.z + (rng() - 0.5) * 4.4 : home.z + (rng() - 0.5) * home.d
 
     const age = 18 + Math.floor(rng() * 57)
     const personality = pick(rng, PERSONALITIES)
@@ -999,7 +1001,16 @@ function createNPCs(rng, buildings, landmarks) {
       },
       personaSignature: `${personality}-${speechStyle.signature}`,
       styleBrief: `${appearance.styleBrief}, ${speechStyle.label}, ${speechStyle.voice}`,
-      home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence`, address: home.address, buildingId: home.id },
+      home: {
+        x: hx,
+        z: hz,
+        y: terrainHeight(hx, hz),
+        name: `${name.split(' ')[1]} residence`,
+        address: home.address,
+        buildingId: home.id,
+        roadName: frontage?.roadName || home.roadName,
+        entryRule: frontage ? 'home-sidewalk-frontage' : 'home-building-offset',
+      },
       workId: work.id,
       thirdId: third.id,
       schedule: createSchedule(roleInfo.role),
@@ -1090,7 +1101,7 @@ export function createRealCity(seed = 20260525) {
   const buildings = createBuildings(rng, landmarks, roads)
   const trees = createTrees(rng, landmarks, roads)
   const cars = createTraffic(rng, roads)
-  const npcs = createNPCs(rng, buildings, landmarks)
+  const npcs = createNPCs(rng, buildings, landmarks, roads)
   const addressBook = createAddressBook(buildings, roads)
   const tiles = createTiles(buildings, landmarks)
   const geojson = createGeoJSON(roads, landmarks)

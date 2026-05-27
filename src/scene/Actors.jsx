@@ -14,6 +14,9 @@ const TAXI_RIDE_SPEED = 24
 const TAXI_MIN_RIDE_SECONDS = 14
 const TAXI_MAX_RIDE_SECONDS = 120
 const TAXI_HAIL_RADIUS = 92
+const WALK_ROUTE_WAYPOINT_RADIUS = 1.8
+const WALK_ROUTE_REPLAN_SECONDS = 2.35
+const WALK_ROUTE_MAX_WAYPOINTS = 12
 
 function formatTime(minutes) {
   return `${Math.floor(minutes / 60)}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`
@@ -334,6 +337,246 @@ function pedestrianWaypoint(agent, target, roads = []) {
   return shouldCross ? exit : approach
 }
 
+function pointDistance(a, b) {
+  return Math.hypot((a?.x || 0) - (b?.x || 0), (a?.z || 0) - (b?.z || 0))
+}
+
+function nowMs() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function walkTargetKey(target) {
+  return [
+    target?.name || target?.id || 'destination',
+    Number(target?.x || 0).toFixed(1),
+    Number(target?.z || 0).toFixed(1),
+    target?.activity || '',
+    target?.interiorId || '',
+  ].join(':')
+}
+
+function routePoint(point, mode, details = {}) {
+  const x = point.x
+  const z = point.z
+  return {
+    ...point,
+    x,
+    z,
+    y: point.y ?? terrainHeight(x, z),
+    routeMode: mode,
+    routeRoadName: details.roadName || point.roadName || null,
+    waypointName: details.name || point.name || details.roadName || 'waypoint',
+    crosswalk: details.crosswalk || null,
+  }
+}
+
+function pushRoutePoint(waypoints, point, mode, details = {}) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.z)) return
+  const previous = waypoints[waypoints.length - 1]
+  if (previous && pointDistance(previous, point) < 0.9) {
+    previous.routeMode = previous.routeMode === 'crosswalk-crossing' ? previous.routeMode : mode
+    return
+  }
+  waypoints.push(routePoint(point, mode, details))
+}
+
+function crosswalkPairForRoad(road, from, to, roads) {
+  const crosswalk = nearestCrosswalkForRoad(road, from, to, roads)
+  if (!crosswalk) return null
+
+  const curbOffset = road.width / 2 + 4.2
+  if (road.axis === 'x') {
+    const fromSide = from.z >= road.z ? 1 : -1
+    const toSide = to.z >= road.z ? 1 : -1
+    const approachZ = road.z + fromSide * curbOffset
+    const exitZ = road.z + toSide * curbOffset
+    return {
+      roadName: road.name,
+      crosswalk: { x: crosswalk.x, z: road.z },
+      approach: {
+        x: crosswalk.x,
+        z: approachZ,
+        y: terrainHeight(crosswalk.x, approachZ),
+        name: `${road.name} crosswalk approach`,
+      },
+      exit: {
+        x: crosswalk.x,
+        z: exitZ,
+        y: terrainHeight(crosswalk.x, exitZ),
+        name: `${road.name} crosswalk exit`,
+      },
+    }
+  }
+
+  const fromSide = from.x >= road.x ? 1 : -1
+  const toSide = to.x >= road.x ? 1 : -1
+  const approachX = road.x + fromSide * curbOffset
+  const exitX = road.x + toSide * curbOffset
+  return {
+    roadName: road.name,
+    crosswalk: { x: road.x, z: crosswalk.z },
+    approach: {
+      x: approachX,
+      z: crosswalk.z,
+      y: terrainHeight(approachX, crosswalk.z),
+      name: `${road.name} crosswalk approach`,
+    },
+    exit: {
+      x: exitX,
+      z: crosswalk.z,
+      y: terrainHeight(exitX, crosswalk.z),
+      name: `${road.name} crosswalk exit`,
+    },
+  }
+}
+
+function nearestSeparatingRoad(from, to, roads, crossedRoads = new Set()) {
+  return roads
+    .filter(road => roadSeparatesPoints(road, from, to))
+    .sort((a, b) => {
+      const da = a.axis === 'x' ? Math.abs(from.z - a.z) : Math.abs(from.x - a.x)
+      const db = b.axis === 'x' ? Math.abs(from.z - b.z) : Math.abs(from.x - b.x)
+      const crossedPenaltyA = crossedRoads.has(a.id) ? 10000 : 0
+      const crossedPenaltyB = crossedRoads.has(b.id) ? 10000 : 0
+      return da + crossedPenaltyA - (db + crossedPenaltyB)
+    })[0] || null
+}
+
+function buildPedestrianRoute(from, target, roads = []) {
+  const safeTarget = pedestrianSafeTarget(target, from, roads)
+  const waypoints = []
+  let cursor = { x: from.x, z: from.z, y: terrainHeight(from.x, from.z), name: 'current position' }
+  const recovery = pedestrianSafeTarget({ ...cursor, name: 'nearest sidewalk' }, safeTarget, roads)
+
+  if (recovery.adjustedRoadName && pointDistance(cursor, recovery) > 0.75) {
+    pushRoutePoint(waypoints, recovery, 'sidewalk-recovery', {
+      roadName: recovery.adjustedRoadName,
+      name: `${recovery.adjustedRoadName} sidewalk`,
+    })
+    cursor = recovery
+  }
+
+  const crossedRoads = new Set()
+  for (let guard = 0; guard < WALK_ROUTE_MAX_WAYPOINTS; guard += 1) {
+    const road = nearestSeparatingRoad(cursor, safeTarget, roads, crossedRoads)
+    if (!road) break
+    const pair = crosswalkPairForRoad(road, cursor, safeTarget, roads)
+    if (!pair) break
+    if (pointDistance(cursor, pair.approach) > WALK_ROUTE_WAYPOINT_RADIUS) {
+      pushRoutePoint(waypoints, pair.approach, 'sidewalk-waypoint', {
+        roadName: pair.roadName,
+        name: pair.approach.name,
+        crosswalk: pair.crosswalk,
+      })
+    }
+    pushRoutePoint(waypoints, pair.exit, 'crosswalk-crossing', {
+      roadName: pair.roadName,
+      name: pair.exit.name,
+      crosswalk: pair.crosswalk,
+    })
+    cursor = pair.exit
+    crossedRoads.add(road.id)
+    if (pointDistance(cursor, safeTarget) < WALK_ROUTE_WAYPOINT_RADIUS) break
+  }
+
+  if (pointDistance(waypoints[waypoints.length - 1] || cursor, safeTarget) > 0.9 || waypoints.length === 0) {
+    pushRoutePoint(waypoints, safeTarget, waypoints.length ? 'destination-approach' : 'direct', {
+      roadName: safeTarget.roadName || safeTarget.adjustedRoadName,
+      name: safeTarget.name || 'destination',
+    })
+  }
+
+  return waypoints.slice(0, WALK_ROUTE_MAX_WAYPOINTS)
+}
+
+function ensureWalkRoute(agent, target, roads = [], force = false) {
+  if (!roads.length) return null
+  const key = walkTargetKey(target)
+  const existing = agent.walkRoute
+  if (!force && existing?.targetKey === key && existing.waypoints?.length) return existing
+
+  const waypoints = buildPedestrianRoute(agent.pos, target, roads)
+  agent.walkRoute = {
+    targetKey: key,
+    targetName: target.name || 'destination',
+    activity: target.activity || agent.activity || 'walking',
+    waypoints,
+    index: 0,
+    createdAt: nowMs(),
+    replanCount: force ? (existing?.replanCount || 0) + 1 : existing?.replanCount || 0,
+    final: { x: target.x, z: target.z },
+  }
+  agent.stuckTimer = 0
+  agent.lastRouteDistance = pointDistance(agent.pos, target)
+  agent.routeStatus = waypoints.length > 1
+    ? `following ${waypoints.length} sidewalk waypoints to ${target.name || 'destination'}`
+    : `walking to ${target.name || 'destination'}`
+  return agent.walkRoute
+}
+
+function currentWalkWaypoint(agent, target, roads = []) {
+  const route = ensureWalkRoute(agent, target, roads)
+  if (!route?.waypoints?.length) {
+    agent.walkPlan = {
+      mode: 'direct',
+      targetName: target.name || 'destination',
+      waypointName: target.name || 'destination',
+      waypoint: { x: target.x, z: target.z },
+      distanceToTarget: pointDistance(agent.pos, target),
+      distanceToWaypoint: pointDistance(agent.pos, target),
+      stableRoute: false,
+    }
+    return target
+  }
+
+  while (
+    route.index < route.waypoints.length - 1 &&
+    pointDistance(agent.pos, route.waypoints[route.index]) < WALK_ROUTE_WAYPOINT_RADIUS
+  ) {
+    route.index += 1
+  }
+
+  const waypoint = route.waypoints[route.index] || target
+  agent.walkPlan = {
+    mode: waypoint.routeMode || 'direct',
+    targetName: route.targetName || target.name || 'destination',
+    waypointName: waypoint.waypointName || waypoint.name || route.targetName,
+    waypoint: { x: waypoint.x, z: waypoint.z },
+    crosswalk: waypoint.crosswalk,
+    roadName: waypoint.routeRoadName || waypoint.roadName || null,
+    routeIndex: route.index,
+    routePoints: route.waypoints.length,
+    stableRoute: true,
+    replanCount: route.replanCount || 0,
+    distanceToTarget: pointDistance(agent.pos, target),
+    distanceToWaypoint: pointDistance(agent.pos, waypoint),
+  }
+  return waypoint
+}
+
+function updateWalkProgress(agent, previous, safe, target, delta, roads = []) {
+  const moved = pointDistance(previous, safe)
+  const remaining = pointDistance(safe, target)
+  const madeProgress = agent.lastRouteDistance == null || remaining < agent.lastRouteDistance - 0.08
+  if (madeProgress || moved > 0.035 || remaining < 2.2) {
+    agent.stuckTimer = Math.max(0, (agent.stuckTimer || 0) - delta * 2.5)
+  } else {
+    agent.stuckTimer = (agent.stuckTimer || 0) + delta
+  }
+  agent.lastRouteDistance = remaining
+
+  if (agent.stuckTimer <= WALK_ROUTE_REPLAN_SECONDS) return
+  const recovery = pedestrianSafeTarget({ x: safe.x, z: safe.z, name: 'sidewalk recovery' }, target, roads)
+  if (recovery.adjustedRoadName && pointDistance(safe, recovery) > 0.4 && pointDistance(safe, recovery) < 9) {
+    agent.pos.x += (recovery.x - agent.pos.x) * 0.32
+    agent.pos.z += (recovery.z - agent.pos.z) * 0.32
+    agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
+  }
+  agent.walkRoute = null
+  agent.routeStatus = `replanning sidewalk route to ${target.name || 'destination'}`
+  agent.stuckTimer = 0
+}
+
 function enforcePedestrianNorms(previous, next, roads = []) {
   let x = next.x
   let z = next.z
@@ -368,7 +611,10 @@ function resolveAgentMovement(agent, previous, next, target, cityOrRoads) {
 
   const [fullX, fullZ] = resolveBuildingCollision(city, previous.x, previous.z, safe.x, safe.z, 0.68)
   const collided = Math.hypot(fullX - safe.x, fullZ - safe.z) > 0.03
-  if (!collided) return { x: fullX, z: fullZ }
+  if (!collided) {
+    agent.blockedContacts = 0
+    return { x: fullX, z: fullZ }
+  }
 
   const [xOnlyX, xOnlyZ] = resolveBuildingCollision(city, previous.x, previous.z, safe.x, previous.z, 0.68)
   const [zOnlyX, zOnlyZ] = resolveBuildingCollision(city, previous.x, previous.z, previous.x, safe.z, 0.68)
@@ -388,15 +634,16 @@ function resolveAgentMovement(agent, previous, next, target, cityOrRoads) {
       bestScore = score
     }
   }
+  agent.blockedContacts = (agent.blockedContacts || 0) + 1
   if (best === previous) agent.heading += 0.18
-  else if (collided) agent.heading += Math.sin(agent.id.length + performance.now() * 0.001) * 0.08
+  else if (collided) agent.heading += Math.sin(agent.id.length + nowMs() * 0.001) * 0.08
   return best
 }
 
 function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
   const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads?.roads
   const safeTarget = roads?.length ? pedestrianSafeTarget(target, agent.pos, roads) : target
-  const waypoint = roads?.length ? pedestrianWaypoint(agent, safeTarget, roads) : safeTarget
+  const waypoint = roads?.length ? currentWalkWaypoint(agent, safeTarget, roads) : safeTarget
   const dx = waypoint.x - agent.pos.x
   const dz = waypoint.z - agent.pos.z
   const distance = Math.hypot(dx, dz)
@@ -415,6 +662,7 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
   agent.pos.x = safe.x
   agent.pos.z = safe.z
   agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
+  if (roads?.length) updateWalkProgress(agent, previous, safe, safeTarget, delta, roads)
   return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
 }
 
@@ -722,6 +970,12 @@ class Agent {
     this.bumpVelocity = new THREE.Vector2()
     this.bumpTimer = 0
     this.fallTimer = 0
+    this.walkRoute = null
+    this.walkPlan = null
+    this.stuckTimer = 0
+    this.lastRouteDistance = null
+    this.blockedContacts = 0
+    this.routeStatus = 'scheduled route pending'
   }
 
   update(delta, timeMinutes, places, city) {
@@ -753,7 +1007,9 @@ class Agent {
     const target = targetFor(this, places, timeMinutes, roads)
     this.activity = target.activity
     this.placeName = target.name
-    this.currentIntent = this.intentFor(target, timeMinutes)
+    this.currentIntent = this.routeStatus && this.stuckTimer > 0
+      ? this.routeStatus
+      : this.intentFor(target, timeMinutes)
 
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (distance > 2.2) {
@@ -763,6 +1019,17 @@ class Agent {
     }
 
     this.heading += Math.sin(timeMinutes * 0.02 + this.id.length) * delta * 0.2
+    this.walkRoute = null
+    this.walkPlan = {
+      mode: 'dwelling',
+      targetName: target.name,
+      waypointName: target.name,
+      waypoint: { x: target.x, z: target.z },
+      distanceToTarget: distance,
+      distanceToWaypoint: distance,
+      stableRoute: true,
+    }
+    this.routeStatus = 'at scheduled destination'
     return 'dwelling'
   }
 
@@ -1751,12 +2018,15 @@ function NPCs({ city }) {
     const target = targetFor(agent, places, useCityStore.getState().timeMinutes, city.roads)
     const spread = 2.4 + (i % 5) * 0.7
     const plazaAgent = i < 10
-    const x = plazaAgent ? Math.sin(i * 1.9) * (8 + i * 1.1) : target.x + Math.sin(i * 2.13) * spread
-    const z = plazaAgent ? 40 + Math.cos(i * 1.37) * (8 + i * 1.1) : target.z + Math.cos(i * 1.71) * spread
-    agent.pos.set(x, terrainHeight(x, z) + 0.95, z)
+    const x = plazaAgent ? 8 + (i % 5) * 5.5 : target.x + Math.sin(i * 2.13) * spread
+    const z = plazaAgent ? 30 + Math.floor(i / 5) * 20 + Math.sin(i * 1.7) * 2 : target.z + Math.cos(i * 1.71) * spread
+    const spawn = pedestrianSafeTarget({ x, z, y: terrainHeight(x, z), name: plazaAgent ? 'Central Core plaza' : target.name }, target, city.roads)
+    const [safeX, safeZ] = resolveBuildingCollision(city, target.x, target.z, spawn.x, spawn.z, 0.68)
+    agent.pos.set(safeX, terrainHeight(safeX, safeZ) + 0.95, safeZ)
     agent.activity = plazaAgent ? 'available for directions' : target.activity
     agent.placeName = plazaAgent ? 'Central Core plaza' : target.name
     agent.heading = plazaAgent ? Math.atan2(-x, 40 - z) : Math.atan2(target.x - agent.home.x, target.z - agent.home.z)
+    agent.routeStatus = plazaAgent ? 'available near the central plaza' : `starting from ${target.name}`
     return agent
   }), [city.npcs, places])
   const hipsRef = useRef()
@@ -2133,6 +2403,11 @@ function NPCs({ city }) {
         targetName: agent.walkPlan?.targetName || agent.placeName || null,
         routeMode: agent.walkPlan?.mode || 'direct',
         routeRoadName: agent.walkPlan?.roadName || null,
+        stableRoute: !!agent.walkPlan?.stableRoute,
+        routeIndex: agent.walkPlan?.routeIndex ?? null,
+        routePoints: agent.walkPlan?.routePoints ?? null,
+        replanCount: agent.walkPlan?.replanCount ?? 0,
+        blockedContacts: agent.blockedContacts || 0,
         waypointName: agent.walkPlan?.waypointName || null,
         waypointX: agent.walkPlan?.waypoint?.x ?? null,
         waypointZ: agent.walkPlan?.waypoint?.z ?? null,
@@ -2276,6 +2551,9 @@ function NPCs({ city }) {
         source: plan.source,
         summary: plan.speech,
       })
+      if (mode === 'taxi') {
+        beginTaxiDispatch(best, mission, store, city)
+      }
       store.showDialogue({ speaker: best.name, role: best.job, text: plan.speech, agent: updatedSnapshot })
       window.setTimeout(() => { requestBusy.current = false }, 700)
     }

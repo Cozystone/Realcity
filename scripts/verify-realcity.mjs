@@ -666,6 +666,8 @@ async function inspectCollisionAndMaterials(page) {
       pedestrianRouteModes: [...new Set(samples.map(sample => sample.routeMode).filter(Boolean))],
       pedestrianWaypointSamples: samples.filter(sample => ['sidewalk-waypoint', 'crosswalk-crossing'].includes(sample.routeMode)).length,
       pedestrianPurposeSamples: samples.filter(sample => sample.targetName && sample.routeMode).length,
+      pedestrianStableRouteSamples: samples.filter(sample => sample.stableRoute && (sample.routeMode === 'dwelling' || sample.routePoints > 0)).length,
+      pedestrianMultiPointRoutes: samples.filter(sample => sample.routePoints >= 2).length,
       pedestrianRoadViolations: pedestrianRoadViolations.map(sample => ({
         id: sample.id,
         x: Number(sample.x.toFixed(2)),
@@ -690,6 +692,8 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.pedestrianSamples > 100, `Pedestrian collision samples are too sparse: ${result.pedestrianSamples}`)
   assert(result.pedestrianPurposeSamples === result.pedestrianSamples, `Pedestrian route purpose metadata is incomplete: ${result.pedestrianPurposeSamples}/${result.pedestrianSamples}`)
   assert(result.pedestrianRouteModes.includes('direct') || result.pedestrianWaypointSamples > 0, `Pedestrian route modes were not exposed: ${result.pedestrianRouteModes.join(', ')}`)
+  assert(result.pedestrianStableRouteSamples > 120, `NPCs do not expose stable sidewalk routes: ${result.pedestrianStableRouteSamples}/${result.pedestrianSamples}`)
+  assert(result.pedestrianMultiPointRoutes > 8, `NPC multi-waypoint routing is too sparse: ${result.pedestrianMultiPointRoutes}`)
   assert(result.pedestrianRoadViolations.length === 0, `NPCs are walking in vehicle lanes away from crosswalks: ${JSON.stringify(result.pedestrianRoadViolations)}`)
   assert(result.npcWallViolations.length === 0, `NPCs are inside solid building walls: ${JSON.stringify(result.npcWallViolations)}`)
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
@@ -876,7 +880,35 @@ async function main() {
     await holdKey(page, 'KeyW', 1800)
     const afterMove = await getPlayer(page)
     const forwardDistance = positionDistance(afterMove, beforeMove)
-    assert(forwardDistance > 1.2, `W key did not move the avatar forward far enough: ${forwardDistance.toFixed(2)}m`)
+    const movementContext = await page.evaluate(() => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const player = state?.player || { x: 0, z: 0 }
+      const nearbyPedestrians = (state?.pedestrianSamples || [])
+        .map(sample => ({
+          id: sample.id,
+          state: sample.state,
+          routeMode: sample.routeMode,
+          x: Number(sample.x.toFixed(2)),
+          z: Number(sample.z.toFixed(2)),
+          d: Number(Math.hypot(sample.x - player.x, sample.z - player.z).toFixed(2)),
+        }))
+        .filter(sample => sample.d < 18)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 6)
+      const nearbyVehicles = (state?.vehicleSamples || [])
+        .map(sample => ({
+          id: sample.id,
+          kind: sample.kind,
+          x: Number(sample.x.toFixed(2)),
+          z: Number(sample.z.toFixed(2)),
+          d: Number(Math.hypot(sample.x - player.x, sample.z - player.z).toFixed(2)),
+        }))
+        .filter(sample => sample.d < 18)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 6)
+      return { player, nearbyPedestrians, nearbyVehicles }
+    })
+    assert(forwardDistance > 1.2, `W key did not move the avatar forward far enough: ${forwardDistance.toFixed(2)}m ${JSON.stringify({ beforeMove, afterMove, movementContext })}`)
 
     await dispatchKey(page, 'KeyE', 'keydown')
     await dispatchKey(page, 'KeyE', 'keyup')
