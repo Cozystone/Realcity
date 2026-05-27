@@ -17,6 +17,8 @@ const randomTasks = [
   'Take me to Mirae School. Use a taxi and stay with me until we arrive.',
 ]
 
+const BROKEN_TEXT_PATTERN = /[�源뚯앹몃곕뺥吏紐媛醫蹂諛濡湲鍮]|[?]{2,}/u
+
 function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
@@ -628,10 +630,9 @@ async function inspectActorRendering(page) {
   assert(actor.variation.outfitSignatures >= 120, `NPC outfit variation is too low in actor rendering: ${actor.variation.outfitSignatures}`)
   assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit), 'NPC actor samples do not expose person-like identity and style')
   const readablePrefixes = ['네.', '좋아요.', '간단히 말하면,', '확인했습니다.', '좋죠.', '음,', '바로 보면,', '확인해볼게요.', '좋지.', '가능합니다.']
-  const brokenTextPattern = /[�]|[媛醫吏蹂諛濡湲鍮]/u
   assert(actor.speechSamples?.length >= 10, 'NPC speech style samples were not exposed')
   assert(actor.speechSamples.every(sample => readablePrefixes.includes(sample.prefix)), `NPC speech prefixes are not readable Korean: ${JSON.stringify(actor.speechSamples)}`)
-  assert(actor.speechSamples.every(sample => !brokenTextPattern.test(`${sample.prefix} ${sample.flavor}`)), `NPC speech style samples contain mojibake: ${JSON.stringify(actor.speechSamples)}`)
+  assert(actor.speechSamples.every(sample => !BROKEN_TEXT_PATTERN.test(`${sample.prefix} ${sample.flavor}`)), `NPC speech style samples contain mojibake: ${JSON.stringify(actor.speechSamples)}`)
   return actor
 }
 
@@ -1301,11 +1302,14 @@ async function main() {
     await dispatchKey(page, 'KeyE', 'keydown')
     await dispatchKey(page, 'KeyE', 'keyup')
     await page.locator('.interaction-panel textarea').waitFor({ state: 'visible', timeout: 10000 })
+    const requestPlaceholder = await page.locator('.interaction-panel textarea').getAttribute('placeholder', { timeout: 5000 })
+    assert(requestPlaceholder && /데려다|택시/.test(requestPlaceholder) && !BROKEN_TEXT_PATTERN.test(requestPlaceholder), `Interaction request placeholder is not readable: ${requestPlaceholder}`)
     await page.locator('.interaction-panel textarea').fill(task)
     await page.locator('.interaction-panel button[type="submit"]').click()
     await page.locator('.mission-panel').waitFor({ state: 'visible', timeout: 35000 })
     const missionText = await page.locator('.mission-panel').innerText({ timeout: 5000 })
     assert(/escort/i.test(missionText), `Mission panel did not describe an escort: ${missionText}`)
+    assert(!BROKEN_TEXT_PATTERN.test(missionText), `Mission panel contains mojibake text: ${missionText}`)
     if (addressRoute?.address) assert(missionText.includes(addressRoute.address), `Mission panel did not resolve the requested address ${addressRoute.address}: ${missionText}`)
     const missionPlan = await page.evaluate(() => {
       const state = window.__REALCITY_STORE__?.getState()
@@ -1322,6 +1326,7 @@ async function main() {
       }
     })
     assert(missionPlan.reasoning && missionPlan.safety && missionPlan.offer && missionPlan.urgency, `NPC action plan did not expose reasoning/safety/offer/urgency: ${JSON.stringify(missionPlan)}`)
+    assert(!BROKEN_TEXT_PATTERN.test(`${missionPlan.reasoning} ${missionPlan.safety} ${missionPlan.offer}`), `NPC mission plan contains mojibake text: ${JSON.stringify(missionPlan)}`)
     assert(/sidewalk|curb|taxi|road|crosswalk|lane/i.test(missionPlan.safety), `NPC safety norm is not concrete enough: ${JSON.stringify(missionPlan)}`)
     assert(missionPlan.requestEvents >= 1 && /Player asked/i.test(missionPlan.focusedMemory), `NPC request memory/event was not recorded: ${JSON.stringify(missionPlan)}`)
     assert(missionText.includes(missionPlan.offer.slice(0, 24)), `Mission panel did not display the NPC offer: ${JSON.stringify({ missionText, missionPlan })}`)

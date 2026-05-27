@@ -482,6 +482,109 @@ function readableFallbackActionPlan(agent, request, context = {}) {
   }
 }
 
+function missionFallbackActionPlan(agent, request, context = {}) {
+  const text = String(request || '').toLowerCase()
+  const targetPlace = matchRequestedPlace(request, context.places)
+  const wantsWork = /work|office|workplace|job|직장|회사|근무|일터/.test(text)
+  const wantsEscort = /guide|take|lead|escort|bring|drive|walk|go to|데려|안내|같이|따라|가자/.test(text)
+  const wantsTaxi = /taxi|cab|car|ride|drive|택시|차|승차|태워/.test(text)
+  const asksIdentity = /who|name|job|work|identity|누구|이름|직업/.test(text)
+  const namedAddress = targetPlace && includesPlaceCandidate(request, [targetPlace.address, targetPlace.roadName])
+  const asksLocation = /where|location|address|street|road|어디|위치|주소|도로명|길|로/.test(text)
+
+  if (targetPlace && (wantsEscort || wantsTaxi || asksLocation || namedAddress)) {
+    const tripDistance = distanceTo(targetPlace, context)
+    const mode = wantsTaxi || tripDistance > 420 ? 'taxi' : 'walk'
+    const label = targetPlace.address || targetPlace.name
+    return {
+      intent: 'escort_to_place',
+      decision: 'accept',
+      mode,
+      destination: 'named_place',
+      targetPlaceId: targetPlace.id || '',
+      targetPlaceName: targetPlace.name || label || 'requested place',
+      speech: styleNpcSpeech(agent, mode === 'taxi'
+        ? `${label}까지 택시로 같이 이동하겠습니다. 길가에서 택시가 완전히 멈출 때까지 기다렸다가 탑승하면 됩니다.`
+        : `${label}까지 안내하겠습니다. 인도와 횡단보도를 따라가면 됩니다.`),
+      reasoning: mode === 'taxi'
+        ? `${Math.round(tripDistance)}m 거리라 택시 이동이 걷는 것보다 안전하고 자연스럽습니다.`
+        : `${label}은 걸어서 안내할 수 있는 거리입니다.`,
+      safety: mode === 'taxi'
+        ? '승객은 인도 안쪽에서 기다리고, 택시는 차선 안의 curbside 정차 지점에 멈춘 뒤 탑승합니다.'
+        : '차도를 가로지르지 않고 인도와 횡단보도만 사용합니다.',
+      offer: mode === 'taxi'
+        ? `${label}까지 택시로 함께 이동하겠습니다.`
+        : `${label} 입구까지 걸어서 안내하겠습니다.`,
+      urgency: tripDistance > 420 ? 'normal-far' : 'normal',
+      steps: mode === 'taxi'
+        ? ['Move to the nearest curb', 'Hail a taxi', `Ride with the player to ${label}`, 'Confirm arrival at the entrance']
+        : ['Confirm the destination', `Walk toward ${label}`, 'Stop at the entrance and brief the player'],
+    }
+  }
+
+  if (wantsWork || (wantsEscort && /work|office|job|직장|회사|일터/.test(text))) {
+    const far = typeof context.distanceToWork === 'number' && context.distanceToWork > 260
+    const mode = wantsTaxi || far ? 'taxi' : 'walk'
+    const workplace = agent.workName || '제 직장'
+    return {
+      intent: 'escort_to_work',
+      decision: 'accept',
+      mode,
+      destination: 'work',
+      targetPlaceId: agent.workId || '',
+      targetPlaceName: workplace,
+      speech: styleNpcSpeech(agent, mode === 'taxi'
+        ? `제 일터는 ${workplace}입니다. 택시가 길가에 멈추면 같이 타고 이동하죠.`
+        : `제 일터는 ${workplace}입니다. 따라오시면 인도로 안내하겠습니다.`),
+      reasoning: far
+        ? `직장까지 ${Math.round(context.distanceToWork || 0)}m라 택시가 더 안전하고 빠릅니다.`
+        : '직장까지 걸어서 안내할 수 있는 거리입니다.',
+      safety: mode === 'taxi'
+        ? '차도로 내려서지 않고 인도 가장자리에서 기다린 뒤 택시가 완전히 정차하면 탑승합니다.'
+        : '건물 벽이나 도로를 가로지르지 않고 보행자 경로를 따라 이동합니다.',
+      offer: mode === 'taxi'
+        ? `${workplace}까지 택시로 동행하겠습니다.`
+        : `${workplace} 입구까지 걸어서 동행하겠습니다.`,
+      urgency: far ? 'normal-far' : 'normal',
+      steps: mode === 'taxi'
+        ? ['Move to the nearest curb', 'Hail a taxi', 'Ride together to the workplace', 'Guide the player to the entrance']
+        : ['Check that the player is following', 'Walk along the route', 'Stop at the workplace entrance'],
+    }
+  }
+
+  if (asksIdentity) {
+    return {
+      intent: 'smalltalk',
+      decision: 'answer',
+      mode: 'talk',
+      destination: 'none',
+      targetPlaceId: '',
+      targetPlaceName: '',
+      speech: styleNpcSpeech(agent, `저는 ${agent.name}, ${agent.job}입니다. 지금은 ${agent.placeName || '이 블록'} 근처에서 ${agent.activity || '이동 중'}이에요.`),
+      reasoning: '플레이어가 신원이나 현재 상황을 물었습니다.',
+      safety: '대화만 진행하므로 이동을 시작하지 않습니다.',
+      offer: '목적지를 말하면 이동 방법까지 정리해줄 수 있습니다.',
+      urgency: 'normal',
+      steps: ['Introduce identity and current activity'],
+    }
+  }
+
+  return {
+    intent: 'clarify',
+    decision: 'clarify',
+    mode: 'talk',
+    destination: 'none',
+    targetPlaceId: '',
+    targetPlaceName: '',
+    speech: styleNpcSpeech(agent, '목적지를 조금 더 정확히 말해 주세요. 걸어갈지, 택시를 탈지, 누구에게 물어볼지 같이 정하겠습니다.'),
+    reasoning: '요청에 실행 가능한 목적지나 행동이 부족합니다.',
+    safety: '불명확한 요청으로는 이동을 시작하지 않습니다.',
+    offer: '목적지와 이동 방식을 정하면 바로 도와줄 수 있습니다.',
+    urgency: 'normal',
+    steps: ['Ask for a clearer destination', 'Choose walking or taxi after the destination is known'],
+  }
+}
+
 function resolvePlanPlace(plan, request, places = []) {
   if (!plan || plan.destination !== 'named_place') return null
   const list = Array.isArray(places) ? places : []
@@ -539,9 +642,18 @@ function planDetails(agent, plan, request, context = {}, resolvedPlace = null) {
   }
 }
 
+const MOJIBAKE_PATTERN = /[�源뚯앹몃곕뺥吏紐媛醫蹂諛濡湲鍮]|[?]{2,}/u
+
 function cleanPlanText(value, fallback, maxLength = 150) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
-  return (text || fallback).slice(0, maxLength)
+  const candidate = text && !MOJIBAKE_PATTERN.test(text) ? text : fallback
+  return String(candidate || '').slice(0, maxLength)
+}
+
+function cleanPlanSpeech(agent, value, fallback) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const candidate = text && !MOJIBAKE_PATTERN.test(text) ? text : fallback
+  return styleNpcSpeech(agent, candidate)
 }
 
 export async function planLocalNPCAction(agent, request, context = {}) {
@@ -608,7 +720,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
   }, { temperature: 0.42, maxTokens: 240 })
 
   const parsed = extractJson(text)
-  const safe = readableFallbackActionPlan(agent, request, context)
+  const safe = missionFallbackActionPlan(agent, request, context)
   const parsedPlace = resolvePlanPlace(parsed, request, places)
   const safePlace = resolvePlanPlace(safe, request, places)
   const safeAddressExact = safePlace?.address && includesPlaceCandidate(request, [safePlace.address])
@@ -633,7 +745,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     destination: ['work', 'home', 'third', 'named_place', 'none'].includes(plan.destination) ? plan.destination : safe.destination,
     targetPlaceId: resolvedPlace?.id || (typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : safe.targetPlaceId || ''),
     targetPlaceName: resolvedPlace?.name || (typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName : safe.targetPlaceName || ''),
-    speech: styleNpcSpeech(agent, typeof plan.speech === 'string' && plan.speech.trim() ? plan.speech : safe.speech),
+    speech: cleanPlanSpeech(agent, plan.speech, safe.speech),
     reasoning: cleanPlanText(plan.reasoning, details.reasoning, 170),
     safety: cleanPlanText(plan.safety, details.safety, 170),
     offer: cleanPlanText(plan.offer, details.offer, 150),

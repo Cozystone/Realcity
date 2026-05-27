@@ -565,6 +565,7 @@ function InteractionPanel({ interaction }) {
         disabled={disabled}
         onChange={event => setText(event.target.value)}
         placeholder="예: 나를 당신이 일하는 곳까지 데려다줘요. 택시가 빠르면 택시를 타요."
+        {...{ placeholder: '예: 나를 당신이 일하는 곳까지 데려다주세요. 멀면 택시를 불러 같이 가주세요.' }}
         rows={3}
       />
       <div className="request-presets" aria-label="Quick requests">
