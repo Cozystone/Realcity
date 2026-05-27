@@ -236,29 +236,10 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     }
   }
 
-  const requestTaxiToTarget = (target) => {
-    if (!selected || !target) return
-    const label = target.address || target.name
-    const text = `Take me to ${label}. Use a taxi and stay with me until we arrive.`
-    const reply = `I will route this as a taxi request to ${label}. Meet me at the curb.`
-    appendThread(selected, [
-      { from: 'me', text },
-      { from: 'them', text: reply },
-    ])
-    setTab('messages')
-
-    const store = useCityStore.getState()
-    store.setPulse(`Taxi route request sent to ${selected.name}: ${label}.`)
-    store.showDialogue({ speaker: selected.name, role: selected.job, text: reply, agent: phoneAgent(selected) })
-    window.dispatchEvent(new CustomEvent('realcity:npc-request', {
-      detail: { agentId: selected.id, text },
-    }))
-  }
-
   const requestDirectTaxiToTarget = (target) => {
     if (!target) return
     const label = target.address || target.name
-    useCityStore.getState().setPulse(`Nearest passing taxi requested: ${label}.`)
+    useCityStore.getState().setPulse(`RealPhone Taxi requested the nearest passing cab to ${label}.`)
     window.dispatchEvent(new CustomEvent('realcity:player-taxi-request', {
       detail: { target },
     }))
@@ -441,8 +422,8 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
           {tab === 'taxi' ? (
             <div className="phone-app phone-taxi">
               <div className="phone-taxi-summary">
-                <strong>Nearest passing taxi</strong>
-                <small>Direct call uses a cruising cab already in traffic</small>
+                <strong>RealCity Taxi</strong>
+                <small>Dispatches a cruising cab directly to your curb</small>
               </div>
               <div className="phone-route-list">
                 {routeTargets.map(target => (
@@ -452,24 +433,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     onClick={() => requestDirectTaxiToTarget(target)}
                   >
                     <strong>{target.address || target.name}</strong>
-                    <span>Call cab / {Math.round(target.distance)}m / press F to board</span>
-                  </button>
-                ))}
-              </div>
-              <div className="phone-taxi-summary">
-                <strong>{selected ? selected.name : 'Contact dispatch'}</strong>
-                <small>{selected ? `${selected.relation} / ${selected.online ? 'online' : 'later'}` : 'Choose a contact first'}</small>
-              </div>
-              <div className="phone-route-list">
-                {routeTargets.map(target => (
-                  <button
-                    key={`contact-${target.id}`}
-                    type="button"
-                    onClick={() => requestTaxiToTarget(target)}
-                    disabled={!selected}
-                  >
-                    <strong>{target.address || target.name}</strong>
-                    <span>{target.kind} / {Math.round(target.distance)}m / {target.roadName || 'city road'}</span>
+                    <span>Call taxi / {Math.round(target.distance)}m / press F to board</span>
                   </button>
                 ))}
               </div>

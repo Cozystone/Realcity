@@ -693,6 +693,9 @@ async function inspectPhone(page) {
   await page.locator('.phone-tabs button[data-tab="taxi"]').click()
   const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(taxiText.includes('Taxi') && await page.locator('.phone-route-list button').count() > 0, 'Phone taxi app did not expose route targets')
+  assert(taxiText.includes('RealCity Taxi') && taxiText.includes('Dispatches a cruising cab directly'), `Phone taxi app did not describe direct cab dispatch: ${taxiText}`)
+  assert(!taxiText.includes('Contact dispatch'), `Phone taxi app still exposes contact-mediated taxi dispatch: ${taxiText}`)
+  assert(await page.locator('.phone-taxi .phone-route-list').count() === 1, 'Phone taxi app should expose only one direct dispatch route list')
 
   await page.locator('.phone-close').click()
   await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
@@ -703,6 +706,40 @@ async function inspectPhone(page) {
     music: musicText.split(/\r?\n/).slice(0, 12),
     taxi: taxiText.split(/\r?\n/).slice(0, 12),
   }
+}
+
+async function inspectPhoneDirectTaxiDispatch(page) {
+  await page.locator('.phone-toggle').click()
+  await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+  await page.locator('.phone-tabs button[data-tab="taxi"]').click()
+  await page.locator('.phone-taxi .phone-route-list button').first().click()
+  await page.waitForFunction(() => {
+    const mission = window.__REALCITY_STORE__?.getState()?.mission
+    return mission?.source === 'player_taxi' &&
+      mission.mode === 'taxi' &&
+      !mission.agentId &&
+      !mission.agentName &&
+      mission.taxi?.path?.length >= 2
+  }, null, { timeout: 15000 })
+
+  const state = await page.evaluate(() => {
+    const mission = window.__REALCITY_STORE__?.getState()?.mission
+    return mission
+      ? {
+          source: mission.source,
+          mode: mission.mode,
+          phase: mission.phase,
+          agentId: mission.agentId || null,
+          agentName: mission.agentName || null,
+          taxiPathPoints: mission.taxi?.path?.length || 0,
+          summary: mission.summary,
+        }
+      : null
+  })
+  assert(state?.source === 'player_taxi' && !state.agentId && !state.agentName, `Phone Taxi dispatched through an NPC instead of direct cab dispatch: ${JSON.stringify(state)}`)
+  await page.locator('.phone-close').click()
+  await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
+  return state
 }
 
 async function inspectCollisionAndMaterials(page) {
@@ -1136,6 +1173,7 @@ async function main() {
 
     const screenshotPath = path.join(artifactsDir, 'realcity-last-run.png')
     await page.screenshot({ path: screenshotPath, fullPage: false })
+    const phoneDirectTaxi = await inspectPhoneDirectTaxiDispatch(page)
     assert(consoleErrors.length === 0, `Console errors were reported: ${consoleErrors.join(' | ')}`)
     assert(pageErrors.length === 0, `Page errors were reported: ${pageErrors.join(' | ')}`)
 
@@ -1157,6 +1195,7 @@ async function main() {
       agentAutonomy,
       streetRendering,
       phone,
+      phoneDirectTaxi,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),
