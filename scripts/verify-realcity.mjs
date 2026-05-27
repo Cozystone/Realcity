@@ -1134,6 +1134,142 @@ async function inspectAutomaticDoors(page) {
   }
 }
 
+async function inspectInteriorStateAndFloors(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_CITY__ &&
+    !!window.__REALCITY_STORE__ &&
+    !!window.__REALCITY_COLLISION__ &&
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace
+  , null, { timeout: 10000 })
+
+  const setup = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const store = window.__REALCITY_STORE__?.getState()
+    const collision = window.__REALCITY_COLLISION__
+    const rig = window.__REALCITY_PLAYER_RIG__
+    if (!city || !store || !collision || !rig?.debugPlace) return null
+
+    const world = (item, lx, lz) => {
+      const cos = Math.cos(item.rot || 0)
+      const sin = Math.sin(item.rot || 0)
+      return {
+        x: item.x + lx * cos + lz * sin,
+        z: item.z - lx * sin + lz * cos,
+      }
+    }
+    const probe = (building, entryFace, along, distanceFromFace) => {
+      if (entryFace === 'north') return world(building, along, building.d / 2 + distanceFromFace)
+      if (entryFace === 'south') return world(building, along, -building.d / 2 - distanceFromFace)
+      if (entryFace === 'east') return world(building, building.w / 2 + distanceFromFace, along)
+      return world(building, -building.w / 2 - distanceFromFace, along)
+    }
+
+    const target = city.buildings
+      .filter(building => building.interior?.entryPortal && (building.interior?.floors || 1) > 1)
+      .sort((a, b) => {
+        const floors = (b.interior?.floors || 1) - (a.interior?.floors || 1)
+        if (floors) return floors
+        return Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)
+      })[0]
+    if (!target) return null
+
+    const face = target.interior?.entryPortal?.face || target.facadePlan?.entryFace || 'south'
+    const inside = probe(target, face, 0, -1.35)
+    const interior = collision.currentInterior(city, inside.x, inside.z)
+    if (interior?.id !== target.id) return { error: 'probe-missed-interior', id: target.id, face, inside, interior }
+
+    const original = {
+      x: store.player?.x || 0,
+      z: store.player?.z || 40,
+      heading: store.player?.heading || Math.PI,
+    }
+    rig.debugPlace({
+      x: inside.x,
+      z: inside.z,
+      heading: face === 'north' ? 0 : face === 'south' ? Math.PI : face === 'east' ? Math.PI / 2 : -Math.PI / 2,
+      floor: 0,
+      pulse: `Interior verification at ${target.name || target.address || target.id}.`,
+    })
+
+    return {
+      id: target.id,
+      name: target.name || target.address || target.id,
+      face,
+      floorCount: target.interior.floors,
+      firstFloorLabel: target.interior.floorDirectory?.[0]?.label || 'Ground lobby',
+      original,
+    }
+  })
+
+  assert(setup?.id && !setup.error, `No multi-floor interior target was available: ${JSON.stringify(setup)}`)
+
+  try {
+    await page.waitForFunction(({ id }) => {
+      const player = window.__REALCITY_STORE__?.getState()?.player
+      return player?.indoors &&
+        player.placeId === id &&
+        player.floor === 1 &&
+        player.floorCount > 1 &&
+        !!player.floorLabel &&
+        !!player.floorZone &&
+        !!player.coreHint
+    }, setup, { timeout: 7000 })
+
+    const initialPlayer = await getPlayer(page)
+    const initialHud = await page.locator('.time-card').innerText({ timeout: 5000 })
+    assert(initialHud.includes(initialPlayer.placeName), `HUD did not show the interior place name: ${initialHud}`)
+    assert(initialHud.includes(`Floor 1 of ${initialPlayer.floorCount}`), `HUD did not show the first floor state: ${initialHud}`)
+    assert(initialHud.includes(initialPlayer.floorLabel), `HUD did not expose floor label text: ${initialHud}`)
+
+    await holdKey(page, 'PageUp', 180)
+    await page.waitForFunction(({ id }) => {
+      const player = window.__REALCITY_STORE__?.getState()?.player
+      return player?.placeId === id && player.floor === 2
+    }, setup, { timeout: 7000 })
+    const upperPlayer = await getPlayer(page)
+    const upperHud = await page.locator('.time-card').innerText({ timeout: 5000 })
+    assert(upperHud.includes(`Floor ${upperPlayer.floor} of ${upperPlayer.floorCount}`), `HUD did not update after PageUp: ${upperHud}`)
+    assert(upperPlayer.y > initialPlayer.y + 2.5, `PageUp did not move the player to a higher floor: ${initialPlayer.y} -> ${upperPlayer.y}`)
+
+    await holdKey(page, 'PageDown', 180)
+    await page.waitForFunction(({ id }) => {
+      const player = window.__REALCITY_STORE__?.getState()?.player
+      return player?.placeId === id && player.floor === 1
+    }, setup, { timeout: 7000 })
+    const returnedPlayer = await getPlayer(page)
+
+    return {
+      target: setup.id,
+      name: setup.name,
+      face: setup.face,
+      floorCount: setup.floorCount,
+      initialFloor: initialPlayer.floor,
+      upperFloor: upperPlayer.floor,
+      returnedFloor: returnedPlayer.floor,
+      floorLabel: returnedPlayer.floorLabel,
+      floorZone: returnedPlayer.floorZone,
+      accessHint: returnedPlayer.accessHint,
+      coreHint: returnedPlayer.coreHint,
+      hudShowsInterior: initialHud.includes(setup.name) && upperHud.includes(`Floor ${upperPlayer.floor} of ${upperPlayer.floorCount}`),
+    }
+  } finally {
+    await page.evaluate(original => {
+      if (!original || !window.__REALCITY_PLAYER_RIG__?.debugPlace) return
+      window.__REALCITY_PLAYER_RIG__.debugPlace({
+        x: original.x,
+        z: original.z,
+        heading: original.heading,
+        floor: 0,
+      })
+    }, setup.original)
+    await page.waitForFunction(original => {
+      const player = window.__REALCITY_STORE__?.getState()?.player
+      if (!player || !original) return false
+      return Math.hypot(player.x - original.x, player.z - original.z) < 1.8
+    }, setup.original, { timeout: 5000 }).catch(() => {})
+  }
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -1194,6 +1330,7 @@ async function main() {
     const agentAutonomy = await inspectAgentAutonomy(page)
     const streetRendering = await inspectStreetRendering(page)
     const automaticDoors = await inspectAutomaticDoors(page)
+    const interiorState = await inspectInteriorStateAndFloors(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
@@ -1444,6 +1581,7 @@ async function main() {
       agentAutonomy,
       streetRendering,
       automaticDoors,
+      interiorState,
       phone,
       phoneDirectTaxi,
       controls: {

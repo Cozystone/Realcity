@@ -35,6 +35,9 @@ audit has a clear finish line.
 - Automatic doors: landmark/procedural building entries expose two sliding
   glass panels; the harness moves the avatar near an entrance, confirms the
   panels open, moves away, and confirms that doorway closes again.
+- Interior state and floors: the harness places the actual avatar rig inside a
+  multi-floor building, confirms the HUD switches to that building interior,
+  tests PageUp/PageDown floor movement, then restores the avatar.
 - Artifacts: `.verification/realcity-last-run.json` and
   `.verification/realcity-last-run.png` record the last local verification run.
 
@@ -67,8 +70,8 @@ audit has a clear finish line.
   and can enter/exit through the front door opening.
 - Automatic doors visual pass: confirm the animated glass panels are readable
   from street-camera distance and do not obscure the door opening.
-- Interior state: enter a landmark lobby and confirm the HUD location changes
-  from district to that building's interior.
+- Interior visual pass: enter several landmark/procedural lobbies and confirm
+  floor labels, vertical cores, and interior props read clearly in normal play.
 - Entrance routing: request taxi or walking escorts to solid landmarks and
   confirm arrival happens at the entrance apron, not through the side wall or
   building center.

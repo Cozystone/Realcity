@@ -384,6 +384,53 @@ export default function PlayerRig({ city }) {
   const floorCooldown = useRef(0)
   const collisionCooldowns = useRef(new Map())
 
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return undefined
+
+    const debugPlace = (detail = {}) => {
+      const x = Number(detail.x)
+      const z = Number(detail.z)
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return false
+
+      const place = currentInterior(city, x, z)
+      const floorCount = place?.floorCount || 1
+      const requestedFloor = Number.isFinite(Number(detail.floor)) ? Math.floor(Number(detail.floor)) : 0
+      const nextFloor = place ? Math.max(0, Math.min(floorCount - 1, requestedFloor)) : 0
+      const baseY = terrainHeight(x, z) + 1.1
+      const y = Number.isFinite(Number(detail.y))
+        ? Number(detail.y)
+        : baseY + nextFloor * (place?.floorHeight || 3.6)
+
+      floorLevel.current = nextFloor
+      floorCooldown.current = 0
+      heading.current = Number.isFinite(Number(detail.heading)) ? Number(detail.heading) : heading.current
+      lookYaw.current = Number.isFinite(Number(detail.lookYaw)) ? Number(detail.lookYaw) : 0
+      lookPitch.current = Number.isFinite(Number(detail.lookPitch)) ? Number(detail.lookPitch) : 0
+      velocityY.current = 0
+      grounded.current = true
+      moving.current = false
+      running.current = false
+      lastPlace.current = null
+      pos.current.set(x, y, z)
+      if (root.current) {
+        root.current.position.copy(pos.current)
+        root.current.rotation.y = heading.current
+      }
+      if (typeof detail.pulse === 'string' && detail.pulse.trim()) {
+        useCityStore.getState().setPulse(detail.pulse.trim())
+      }
+      return true
+    }
+
+    const onDebugPlace = event => debugPlace(event.detail || {})
+    window.__REALCITY_PLAYER_RIG__ = { debugPlace }
+    window.addEventListener('realcity:debug-place-player', onDebugPlace)
+    return () => {
+      window.removeEventListener('realcity:debug-place-player', onDebugPlace)
+      if (window.__REALCITY_PLAYER_RIG__?.debugPlace === debugPlace) delete window.__REALCITY_PLAYER_RIG__
+    }
+  }, [city])
+
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.12)
     const store = useCityStore.getState()
