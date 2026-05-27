@@ -1320,6 +1320,63 @@ button.key-prompt {
   filter: drop-shadow(0 0 6px rgba(74, 173, 255, 0.88));
 }
 
+.minimap-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, transparent 0 38%, rgba(74, 173, 255, 0.18) 39% 40%, transparent 41%),
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  mix-blend-mode: screen;
+}
+
+.minimap-gps,
+.minimap-status {
+  pointer-events: none;
+  position: absolute;
+  left: 50%;
+  width: 130px;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  color: rgba(245, 249, 252, 0.92);
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.78);
+}
+
+.minimap-gps {
+  top: 15px;
+  gap: 1px;
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.minimap-gps strong {
+  color: #9ee493;
+  font-size: 10px;
+}
+
+.minimap-status {
+  bottom: 16px;
+  gap: 2px;
+}
+
+.minimap-status span {
+  color: #ffd447;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.minimap-status strong {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
 .full-map-overlay {
   pointer-events: auto;
   position: fixed;
@@ -1377,10 +1434,24 @@ button.key-prompt {
   font-weight: 800;
 }
 
+.full-map-body {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .full-city-map {
+  display: block;
   width: 100%;
   height: 100%;
   background: #111920;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.full-city-map:active {
+  cursor: grabbing;
 }
 
 .full-city-map rect {
@@ -1392,6 +1463,25 @@ button.key-prompt {
   stroke-width: 2;
 }
 
+.full-map-buildings rect {
+  fill: rgba(122, 139, 143, 0.62);
+  stroke: rgba(238, 244, 255, 0.18);
+  stroke-width: 1.4;
+}
+
+.full-map-buildings rect.house {
+  fill: rgba(123, 143, 112, 0.76);
+}
+
+.full-map-buildings rect.apartment {
+  fill: rgba(130, 143, 153, 0.72);
+}
+
+.full-map-buildings rect.office,
+.full-map-buildings rect.skyscraper {
+  fill: rgba(119, 146, 159, 0.78);
+}
+
 .full-map-roads line {
   stroke: rgba(185, 196, 199, 0.42);
   stroke-linecap: round;
@@ -1399,6 +1489,24 @@ button.key-prompt {
 
 .full-map-roads line.main {
   stroke: rgba(226, 222, 204, 0.82);
+}
+
+.full-map-road-labels text {
+  fill: rgba(248, 250, 252, 0.7);
+  font-size: 14px;
+  font-weight: 850;
+  letter-spacing: 0;
+  paint-order: stroke;
+  stroke: rgba(7, 12, 16, 0.9);
+  stroke-width: 5px;
+}
+
+.full-map-route-halo {
+  fill: none;
+  stroke: rgba(3, 7, 12, 0.78);
+  stroke-width: 24;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .full-map-route {
@@ -1455,6 +1563,138 @@ button.key-prompt {
   fill: rgba(15, 23, 32, 0.82);
   stroke: rgba(255, 255, 255, 0.78);
   stroke-width: 2;
+}
+
+.full-map-live-vehicles rect {
+  fill: #7dd3fc;
+  stroke: rgba(8, 13, 18, 0.88);
+  stroke-width: 2;
+}
+
+.full-map-live-vehicles .taxi rect {
+  fill: #ffd447;
+  stroke: rgba(255, 247, 176, 0.9);
+}
+
+.full-map-live-pedestrians circle {
+  fill: rgba(255, 255, 255, 0.9);
+  stroke: rgba(5, 9, 12, 0.86);
+  stroke-width: 1.5;
+}
+
+.full-map-controls {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.full-map-controls button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(11, 19, 26, 0.88);
+  color: #eef4ff;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 900;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+.full-map-controls button:hover,
+.full-map-controls button.active {
+  border-color: rgba(74, 173, 255, 0.64);
+  background: rgba(20, 63, 86, 0.92);
+}
+
+.full-map-controls button:last-child {
+  width: 54px;
+  font-size: 11px;
+}
+
+.full-map-gps-card {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: min(280px, calc(100% - 104px));
+  display: grid;
+  gap: 4px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.86);
+  color: rgba(238, 244, 255, 0.78);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.full-map-gps-card span {
+  color: #9ee493;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.full-map-gps-card strong {
+  color: #f8fbff;
+  font-size: 14px;
+}
+
+.full-map-gps-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.full-map-legend {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.78);
+  color: rgba(238, 244, 255, 0.76);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.full-map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.full-map-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.full-map-legend .legend-player {
+  background: #4aadff;
+}
+
+.full-map-legend .legend-route {
+  width: 18px;
+  height: 4px;
+  border-radius: 4px;
+  background: #ffd447;
+}
+
+.full-map-legend .legend-taxi {
+  background: #ffd447;
+}
+
+.full-map-legend .legend-npc {
+  background: #f8fbff;
 }
 
 .vitals {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
@@ -35,11 +35,135 @@ function routeGeoJSON(city, route) {
   }
 }
 
-function Minimap({ city, player, mission, ride }) {
+function cityMapGeoJSON(city) {
+  return {
+    type: 'FeatureCollection',
+    features: [
+      ...city.roads.map(road => ({
+        type: 'Feature',
+        properties: {
+          layer: 'road',
+          id: road.id,
+          name: road.name,
+          tier: road.tier,
+          main: !!road.main,
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: road.axis === 'x'
+            ? [city.worldToLngLat(road.from, road.z), city.worldToLngLat(road.to, road.z)]
+            : [city.worldToLngLat(road.x, road.from), city.worldToLngLat(road.x, road.to)],
+        },
+      })),
+      ...city.landmarks.map(place => ({
+        type: 'Feature',
+        properties: { layer: 'place', id: place.id, name: place.name, kind: place.kind },
+        geometry: { type: 'Point', coordinates: city.worldToLngLat(place.x, place.z) },
+      })),
+    ],
+  }
+}
+
+function buildingGeoJSON(city) {
+  return {
+    type: 'FeatureCollection',
+    features: city.buildings.map(building => {
+      const x1 = building.x - building.w / 2
+      const x2 = building.x + building.w / 2
+      const z1 = building.z - building.d / 2
+      const z2 = building.z + building.d / 2
+      return {
+        type: 'Feature',
+        properties: { id: building.id, type: building.type, district: building.district },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            city.worldToLngLat(x1, z1),
+            city.worldToLngLat(x2, z1),
+            city.worldToLngLat(x2, z2),
+            city.worldToLngLat(x1, z2),
+            city.worldToLngLat(x1, z1),
+          ]],
+        },
+      }
+    }),
+  }
+}
+
+function sampleGeoJSON(city, samples) {
+  return {
+    type: 'FeatureCollection',
+    features: samples.map(sample => ({
+      type: 'Feature',
+      properties: {
+        id: sample.id,
+        kind: sample.kind || sample.state || 'person',
+        assignment: sample.assignment || '',
+      },
+      geometry: { type: 'Point', coordinates: city.worldToLngLat(sample.x, sample.z) },
+    })),
+  }
+}
+
+function formatCoordinate(value) {
+  return Math.abs(value).toFixed(5)
+}
+
+function nearestAddress(city, x, z) {
+  let nearest = null
+  for (const place of city.addressBook || []) {
+    const distance = Math.hypot(place.x - x, place.z - z)
+    if (!nearest || distance < nearest.distance) nearest = { ...place, distance }
+  }
+  if (nearest?.address) return nearest
+
+  let roadMatch = city.roads?.[0] || null
+  let roadDistance = Infinity
+  for (const road of city.roads || []) {
+    const distance = road.axis === 'x' ? Math.abs(z - road.z) : Math.abs(x - road.x)
+    if (distance < roadDistance) {
+      roadDistance = distance
+      roadMatch = road
+    }
+  }
+  return roadMatch ? { address: roadMatch.name, name: roadMatch.name, distance: roadDistance } : null
+}
+
+function clamp(value, min, max) {
+  if (min > max) return 0
+  return Math.min(max, Math.max(min, value))
+}
+
+function clampMapCenter(center, zoom) {
+  const span = CITY_WORLD_SIZE / zoom
+  const edge = span / 2
+  return {
+    x: clamp(center.x, -CITY_HALF + edge, CITY_HALF - edge),
+    z: clamp(center.z, -CITY_HALF + edge, CITY_HALF - edge),
+  }
+}
+
+function mapViewport(center, zoom) {
+  const span = CITY_WORLD_SIZE / zoom
+  return `${center.x - span / 2} ${center.z - span / 2} ${span} ${span}`
+}
+
+function roadTextTransform(road) {
+  if (road.axis === 'x') return undefined
+  return `rotate(-90 ${road.x} 0)`
+}
+
+function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSamples }) {
   const container = useRef(null)
   const map = useRef(null)
   const viewHeading = player.viewHeading ?? player.heading
   const route = activeTaxiRoute(mission, ride)
+  const mapData = useMemo(() => cityMapGeoJSON(city), [city])
+  const buildingData = useMemo(() => buildingGeoJSON(city), [city])
+  const gps = useMemo(() => {
+    const [lng, lat] = city.worldToLngLat(player.x, player.z)
+    return { lng, lat, address: nearestAddress(city, player.x, player.z)?.address || player.district }
+  }, [city, player.x, player.z, player.district])
 
   useEffect(() => {
     if (!container.current || map.current) return
@@ -55,17 +179,47 @@ function Minimap({ city, player, mission, ride }) {
       style: {
         version: 8,
         sources: {
-          realcity: { type: 'geojson', data: city.geojson },
+          realcity: { type: 'geojson', data: mapData },
+          buildings: { type: 'geojson', data: buildingData },
           taxiRoute: { type: 'geojson', data: routeGeoJSON(city, []) },
+          vehicles: { type: 'geojson', data: sampleGeoJSON(city, []) },
+          pedestrians: { type: 'geojson', data: sampleGeoJSON(city, []) },
         },
         layers: [
-          { id: 'background', type: 'background', paint: { 'background-color': '#0b1320' } },
+          { id: 'background', type: 'background', paint: { 'background-color': '#0c1519' } },
           {
-            id: 'roads',
+            id: 'buildings',
+            type: 'fill',
+            source: 'buildings',
+            paint: {
+              'fill-color': [
+                'match',
+                ['get', 'type'],
+                'house',
+                '#53666a',
+                'apartment',
+                '#61747d',
+                'office',
+                '#6d7f87',
+                '#718995',
+              ],
+              'fill-opacity': 0.58,
+              'fill-outline-color': 'rgba(242, 247, 250, 0.2)',
+            },
+          },
+          {
+            id: 'roads-local',
             type: 'line',
             source: 'realcity',
-            filter: ['==', ['get', 'layer'], 'road'],
-            paint: { 'line-color': '#9fb0bd', 'line-width': 1.2, 'line-opacity': 0.74 },
+            filter: ['all', ['==', ['get', 'layer'], 'road'], ['==', ['get', 'main'], false]],
+            paint: { 'line-color': '#58666b', 'line-width': 1.15, 'line-opacity': 0.72 },
+          },
+          {
+            id: 'roads-main',
+            type: 'line',
+            source: 'realcity',
+            filter: ['all', ['==', ['get', 'layer'], 'road'], ['==', ['get', 'main'], true]],
+            paint: { 'line-color': '#d7d3bf', 'line-width': 2.3, 'line-opacity': 0.92 },
           },
           {
             id: 'taxi-route',
@@ -103,6 +257,35 @@ function Minimap({ city, player, mission, ride }) {
               ],
             },
           },
+          {
+            id: 'vehicle-points',
+            type: 'circle',
+            source: 'vehicles',
+            paint: {
+              'circle-radius': 3.5,
+              'circle-color': [
+                'match',
+                ['get', 'kind'],
+                'taxi',
+                '#ffd447',
+                '#7dd3fc',
+              ],
+              'circle-stroke-color': '#0b1320',
+              'circle-stroke-width': 1,
+            },
+          },
+          {
+            id: 'pedestrian-points',
+            type: 'circle',
+            source: 'pedestrians',
+            paint: {
+              'circle-radius': 2.4,
+              'circle-color': '#ffffff',
+              'circle-opacity': 0.78,
+              'circle-stroke-color': '#111920',
+              'circle-stroke-width': 0.8,
+            },
+          },
         ],
       },
     })
@@ -111,7 +294,7 @@ function Minimap({ city, player, mission, ride }) {
       map.current?.remove()
       map.current = null
     }
-  }, [city, player.x, player.z])
+  }, [buildingData, city, mapData])
 
   useEffect(() => {
     if (!map.current) return
@@ -128,9 +311,25 @@ function Minimap({ city, player, mission, ride }) {
     source.setData(routeGeoJSON(city, route))
   }, [city, route, mission?.updatedAt, ride?.updatedAt])
 
+  useEffect(() => {
+    const vehicles = map.current?.getSource('vehicles')
+    const pedestrians = map.current?.getSource('pedestrians')
+    vehicles?.setData(sampleGeoJSON(city, vehicleSamples.slice(0, 90)))
+    pedestrians?.setData(sampleGeoJSON(city, pedestrianSamples.slice(0, 70)))
+  }, [city, pedestrianSamples, vehicleSamples])
+
   return (
     <div className="minimap">
       <div ref={container} className="minimap-map" />
+      <div className="minimap-grid" />
+      <div className="minimap-gps">
+        <strong>GPS</strong>
+        <span>{formatCoordinate(gps.lat)}N {formatCoordinate(gps.lng)}E</span>
+      </div>
+      <div className="minimap-status">
+        <span>{route.length >= 2 ? 'NAV ROUTE' : 'LIVE CITY'}</span>
+        <strong>{gps.address}</strong>
+      </div>
       <div className="minimap-player" />
     </div>
   )
@@ -515,11 +714,83 @@ function placeColor(kind) {
   }[kind] || '#f2c14e'
 }
 
-function FullCityMap({ city, player, mission, ride, onClose }) {
+function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSamples, onClose }) {
   const heading = ((player.viewHeading ?? player.heading) * 180) / Math.PI
   const route = activeTaxiRoute(mission, ride)
   const taxi = activeTaxiPose(mission, ride)
   const taxiHeading = taxi ? ((taxi.heading ?? taxi.yaw ?? 0) * 180) / Math.PI : 0
+  const [zoom, setZoom] = useState(1)
+  const [center, setCenter] = useState(() => clampMapCenter({ x: player.x, z: player.z }, 1))
+  const [followGps, setFollowGps] = useState(true)
+  const drag = useRef(null)
+  const gps = useMemo(() => {
+    const [lng, lat] = city.worldToLngLat(player.x, player.z)
+    const fix = nearestAddress(city, player.x, player.z)
+    return {
+      lng,
+      lat,
+      address: fix?.address || player.district,
+      label: fix?.name || player.district,
+      accuracy: `${Math.max(4, Math.min(28, Math.round((fix?.distance || 0) * 0.08 + 5)))}m`,
+    }
+  }, [city, player.x, player.z, player.district])
+  const visibleVehicles = useMemo(() => vehicleSamples.slice(0, 140), [vehicleSamples])
+  const visiblePedestrians = useMemo(() => pedestrianSamples.slice(0, 120), [pedestrianSamples])
+  const primaryRoads = useMemo(() => city.roads.filter(road => road.main), [city.roads])
+  const activeRoutePoints = useMemo(() => route.map(point => `${point.x},${point.z}`).join(' '), [route])
+
+  useEffect(() => {
+    if (!followGps) return
+    setCenter(clampMapCenter({ x: player.x, z: player.z }, zoom))
+  }, [followGps, player.x, player.z, zoom])
+
+  const changeZoom = useCallback((factor) => {
+    const nextZoom = clamp(zoom * factor, 0.82, 5.2)
+    setZoom(nextZoom)
+    setCenter(current => clampMapCenter(followGps ? { x: player.x, z: player.z } : current, nextZoom))
+  }, [followGps, player.x, player.z, zoom])
+
+  const recenter = useCallback(() => {
+    setFollowGps(true)
+    setCenter(clampMapCenter({ x: player.x, z: player.z }, zoom))
+  }, [player.x, player.z, zoom])
+
+  const onPointerDown = useCallback((event) => {
+    if (event.button !== 0) return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    drag.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      center,
+      zoom,
+      rect: event.currentTarget.getBoundingClientRect(),
+    }
+  }, [center, zoom])
+
+  const onPointerMove = useCallback((event) => {
+    if (!drag.current || drag.current.pointerId !== event.pointerId) return
+    const { rect, center: startCenter, zoom: startZoom, x, y } = drag.current
+    const span = CITY_WORLD_SIZE / startZoom
+    const dx = event.clientX - x
+    const dy = event.clientY - y
+    setFollowGps(false)
+    setCenter(clampMapCenter({
+      x: startCenter.x - (dx / Math.max(1, rect.width)) * span,
+      z: startCenter.z - (dy / Math.max(1, rect.height)) * span,
+    }, startZoom))
+  }, [])
+
+  const onPointerUp = useCallback((event) => {
+    if (drag.current?.pointerId === event.pointerId) drag.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }, [])
+
+  const onWheel = useCallback((event) => {
+    event.preventDefault()
+    setFollowGps(false)
+    changeZoom(event.deltaY < 0 ? 1.18 : 0.84)
+  }, [changeZoom])
 
   return (
     <div className="full-map-overlay" onClick={onClose}>
@@ -527,67 +798,139 @@ function FullCityMap({ city, player, mission, ride, onClose }) {
         <div className="full-map-header">
           <div>
             <h2>RealCity Map</h2>
-            <p>{player.district}</p>
+            <p>{gps.address} / {formatCoordinate(gps.lat)}N {formatCoordinate(gps.lng)}E / accuracy {gps.accuracy}</p>
           </div>
-          <button type="button" onClick={onClose}>Close</button>
+          <button type="button" className="full-map-close" onClick={onClose}>Close</button>
         </div>
-        <svg
-          className="full-city-map"
-          viewBox={`${-CITY_HALF} ${-CITY_HALF} ${CITY_WORLD_SIZE} ${CITY_WORLD_SIZE}`}
-          role="img"
-          aria-label="Full city map with player position"
-        >
-          <rect x={-CITY_HALF} y={-CITY_HALF} width={CITY_WORLD_SIZE} height={CITY_WORLD_SIZE} />
-          <g className="full-map-grid">
-            {Array.from({ length: 13 }, (_, i) => {
-              const p = -900 + i * 150
-              return (
-                <g key={p}>
-                  <line x1={p} y1={-CITY_HALF} x2={p} y2={CITY_HALF} />
-                  <line x1={-CITY_HALF} y1={p} x2={CITY_HALF} y2={p} />
-                </g>
-              )
-            })}
-          </g>
-          <g className="full-map-roads">
-            {city.roads.map(road => (
-              <line
-                key={road.id}
-                className={road.main ? 'main' : 'local'}
-                x1={road.axis === 'x' ? road.from : road.x}
-                y1={road.axis === 'x' ? road.z : road.from}
-                x2={road.axis === 'x' ? road.to : road.x}
-                y2={road.axis === 'x' ? road.z : road.to}
-                strokeWidth={road.width}
-              />
-            ))}
-          </g>
-          {route.length >= 2 ? (
-            <polyline
-              className="full-map-route"
-              points={route.map(point => `${point.x},${point.z}`).join(' ')}
-            />
-          ) : null}
-          <g className="full-map-landmarks">
-            {city.landmarks.map(place => (
-              <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
-                <circle r={place.kind === 'park' ? 25 : 17} fill={placeColor(place.kind)} />
-                <text x="24" y="7">{place.name}</text>
-                {place.address ? <text className="address" x="24" y="29">{place.address}</text> : null}
-              </g>
-            ))}
-          </g>
-          {taxi ? (
-            <g className="full-map-taxi" transform={`translate(${taxi.x} ${taxi.z}) rotate(${taxiHeading})`}>
-              <rect x="-15" y="-24" width="30" height="48" rx="5" />
-              <rect x="-10" y="-7" width="20" height="16" rx="3" />
+        <div className="full-map-body">
+          <svg
+            className="full-city-map"
+            viewBox={mapViewport(center, zoom)}
+            data-zoom={zoom.toFixed(2)}
+            data-follow={followGps ? 'true' : 'false'}
+            role="img"
+            aria-label="Interactive full city map with player position, live traffic, NPCs, and taxi route"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onWheel={onWheel}
+            onDoubleClick={(event) => {
+              event.preventDefault()
+              setFollowGps(false)
+              changeZoom(1.24)
+            }}
+          >
+            <rect x={-CITY_HALF} y={-CITY_HALF} width={CITY_WORLD_SIZE} height={CITY_WORLD_SIZE} />
+            <g className="full-map-grid">
+              {Array.from({ length: 13 }, (_, i) => {
+                const p = -900 + i * 150
+                return (
+                  <g key={p}>
+                    <line x1={p} y1={-CITY_HALF} x2={p} y2={CITY_HALF} />
+                    <line x1={-CITY_HALF} y1={p} x2={CITY_HALF} y2={p} />
+                  </g>
+                )
+              })}
             </g>
-          ) : null}
-          <g className="full-map-player" transform={`translate(${player.x} ${player.z}) rotate(${heading})`}>
-            <circle r="22" />
-            <path d="M 0 -38 L 16 18 L 0 8 L -16 18 Z" />
-          </g>
-        </svg>
+            <g className="full-map-buildings">
+              {city.buildings.map(building => (
+                <rect
+                  key={building.id}
+                  className={building.type}
+                  x={building.x - building.w / 2}
+                  y={building.z - building.d / 2}
+                  width={building.w}
+                  height={building.d}
+                  rx={building.type === 'house' ? 2 : 4}
+                />
+              ))}
+            </g>
+            <g className="full-map-roads">
+              {city.roads.map(road => (
+                <line
+                  key={road.id}
+                  className={road.main ? 'main' : 'local'}
+                  x1={road.axis === 'x' ? road.from : road.x}
+                  y1={road.axis === 'x' ? road.z : road.from}
+                  x2={road.axis === 'x' ? road.to : road.x}
+                  y2={road.axis === 'x' ? road.z : road.to}
+                  strokeWidth={road.width}
+                />
+              ))}
+            </g>
+            <g className="full-map-road-labels">
+              {primaryRoads.map(road => (
+                <text
+                  key={`label_${road.id}`}
+                  x={road.axis === 'x' ? -CITY_HALF + 52 : road.x + 15}
+                  y={road.axis === 'x' ? road.z - road.width * 0.7 : 0}
+                  transform={roadTextTransform(road)}
+                >
+                  {road.name}
+                </text>
+              ))}
+            </g>
+            {route.length >= 2 ? (
+              <>
+                <polyline className="full-map-route-halo" points={activeRoutePoints} />
+                <polyline className="full-map-route" points={activeRoutePoints} />
+              </>
+            ) : null}
+            <g className="full-map-landmarks">
+              {city.landmarks.map(place => (
+                <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
+                  <circle r={place.kind === 'park' ? 25 : 17} fill={placeColor(place.kind)} />
+                  <text x="24" y="7">{place.name}</text>
+                  {place.address ? <text className="address" x="24" y="29">{place.address}</text> : null}
+                </g>
+              ))}
+            </g>
+            <g className="full-map-live-vehicles">
+              {visibleVehicles.map(vehicle => (
+                <g
+                  key={vehicle.id}
+                  className={vehicle.kind === 'taxi' ? 'taxi' : 'car'}
+                  transform={`translate(${vehicle.x} ${vehicle.z}) rotate(${((vehicle.heading || 0) * 180) / Math.PI})`}
+                >
+                  <rect x="-6" y="-12" width="12" height="24" rx="3" />
+                </g>
+              ))}
+            </g>
+            <g className="full-map-live-pedestrians">
+              {visiblePedestrians.map(person => (
+                <circle key={person.id} cx={person.x} cy={person.z} r={person.state === 'crossing' ? 5.4 : 4.4} />
+              ))}
+            </g>
+            {taxi ? (
+              <g className="full-map-taxi" transform={`translate(${taxi.x} ${taxi.z}) rotate(${taxiHeading})`}>
+                <rect x="-15" y="-24" width="30" height="48" rx="5" />
+                <rect x="-10" y="-7" width="20" height="16" rx="3" />
+              </g>
+            ) : null}
+            <g className="full-map-player" transform={`translate(${player.x} ${player.z}) rotate(${heading})`}>
+              <circle r="22" />
+              <path d="M 0 -38 L 16 18 L 0 8 L -16 18 Z" />
+            </g>
+          </svg>
+          <div className="full-map-controls" aria-label="Map controls">
+            <button type="button" onClick={() => changeZoom(1.22)} aria-label="Zoom in">+</button>
+            <button type="button" onClick={() => changeZoom(0.82)} aria-label="Zoom out">-</button>
+            <button type="button" className={followGps ? 'active' : ''} onClick={recenter}>GPS</button>
+          </div>
+          <aside className="full-map-gps-card">
+            <span>Live GPS fix</span>
+            <strong>{gps.label}</strong>
+            <small>{gps.address}</small>
+            <small>{formatCoordinate(gps.lat)}N / {formatCoordinate(gps.lng)}E</small>
+          </aside>
+          <div className="full-map-legend">
+            <span><i className="legend-player" />You</span>
+            <span><i className="legend-route" />Route</span>
+            <span><i className="legend-taxi" />Taxi</span>
+            <span><i className="legend-npc" />NPC</span>
+          </div>
+        </div>
       </section>
     </div>
   )
@@ -608,6 +951,8 @@ export default function HUD({ city }) {
   const mission = useCityStore(state => state.mission)
   const ride = useCityStore(state => state.ride)
   const multiplayer = useCityStore(state => state.multiplayer)
+  const pedestrianSamples = useCityStore(state => state.pedestrianSamples)
+  const vehicleSamples = useCityStore(state => state.vehicleSamples)
   const viewHeading = player.viewHeading ?? player.heading
   const displayedAgent = focusedAgent || nearbyAgent
 
@@ -658,9 +1003,26 @@ export default function HUD({ city }) {
       ) : null}
 
       <button type="button" className="map-shell" onClick={() => setMapOpen(true)} aria-label="Open full city map">
-        <Minimap city={city} player={player} mission={mission} ride={ride} />
+        <Minimap
+          city={city}
+          player={player}
+          mission={mission}
+          ride={ride}
+          pedestrianSamples={pedestrianSamples}
+          vehicleSamples={vehicleSamples}
+        />
       </button>
-      {mapOpen ? <FullCityMap city={city} player={player} mission={mission} ride={ride} onClose={() => setMapOpen(false)} /> : null}
+      {mapOpen ? (
+        <FullCityMap
+          city={city}
+          player={player}
+          mission={mission}
+          ride={ride}
+          pedestrianSamples={pedestrianSamples}
+          vehicleSamples={vehicleSamples}
+          onClose={() => setMapOpen(false)}
+        />
+      ) : null}
       <VirtualPhone city={city} player={player} focusedAgent={focusedAgent} timeMinutes={timeMinutes} />
 
       <div className="vitals">
