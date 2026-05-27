@@ -13,14 +13,19 @@ function setInstance(mesh, index, dummy, position, scale, rotationY = 0) {
   mesh.setMatrixAt(index, dummy.matrix)
 }
 
-function setLocalInstance(mesh, index, dummy, building, local, scale, rotationOffset = 0) {
+function localToWorld(building, local) {
   const cos = Math.cos(building.rot)
   const sin = Math.sin(building.rot)
-  dummy.position.set(
-    building.x + local[0] * cos + local[2] * sin,
-    building.y + local[1],
-    building.z - local[0] * sin + local[2] * cos,
-  )
+  return {
+    x: building.x + local[0] * cos + local[2] * sin,
+    y: building.y + local[1],
+    z: building.z - local[0] * sin + local[2] * cos,
+  }
+}
+
+function setLocalInstance(mesh, index, dummy, building, local, scale, rotationOffset = 0) {
+  const world = localToWorld(building, local)
+  dummy.position.set(world.x, world.y, world.z)
   dummy.rotation.set(0, building.rot + rotationOffset, 0)
   dummy.scale.set(scale[0], scale[1], scale[2])
   dummy.updateMatrix()
@@ -889,11 +894,15 @@ function BuildingInteriorHints({ buildings }) {
   const lobbyRef = useRef()
   const coreRef = useRef()
   const canopyRef = useRef()
+  const doorStateRef = useRef([])
+  const metadataFrameRef = useRef(0)
+  const doorDummyRef = useRef(new THREE.Object3D())
   const details = useMemo(() => {
     const doors = []
     const lobbies = []
     const cores = []
     const canopies = []
+    const doorBuildingIds = new Set()
     ;[...buildings]
       .filter(building => building.interior && Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.9)
       .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
@@ -910,19 +919,45 @@ function BuildingInteriorHints({ buildings }) {
         const coreHeight = Math.max(2.4, Math.min(building.h - 0.7, building.type === 'house' ? 3.8 : building.type === 'apartment' ? 8.8 : 12.5))
         const coreWidth = building.type === 'house' ? 1.6 : building.type === 'apartment' ? 2.5 : 3.4
         const coreThickness = building.type === 'house' ? 1.35 : building.type === 'apartment' ? 2.5 : 3.6
+        const panelWidth = Math.max(0.62, doorWidth / 2 - 0.1)
+        const panelHeight = 3.25
+        const panelY = 1.78
+        const panelOutward = 0.28
+        const panelThickness = 0.12
+        const openSlide = clamp(doorWidth * 0.32, 0.9, 2.6)
+        const triggerRadius = clamp(doorWidth * 0.48 + lobbyDepth * 0.22, 5.2, 9.5)
+        const entryWorld = localToWorld(building, faceLocal(building, face, 0, 1.2, 1.8))
 
-        doors.push(facePart(building, face, 0, 1.78, doorWidth, 3.25, 0.28, 0.12))
+        doorBuildingIds.add(building.id)
+        ;[-1, 1].forEach(side => {
+          const baseAlong = side * doorWidth * 0.25
+          doors.push({
+            ...facePart(building, face, baseAlong, panelY, panelWidth, panelHeight, panelOutward, panelThickness),
+            id: building.id,
+            face,
+            baseAlong,
+            panelY,
+            panelOutward,
+            side,
+            openSlide,
+            triggerRadius,
+            entryWorld,
+          })
+        })
         lobbies.push(facePart(building, face, 0, 0.11, lobbyWidth, 0.07, -lobbyDepth / 2, lobbyDepth))
         cores.push(facePart(building, face, coreAlong, coreHeight / 2, coreWidth, coreHeight, -coreDepth, coreThickness))
         canopies.push(facePart(building, face, 0, 3.7, Math.min(faceLen * 0.68, doorWidth + 2.2), 0.22, 0.86, 1.05))
       })
-    return { doors, lobbies, cores, canopies }
+    return { doors, lobbies, cores, canopies, doorBuildingCount: doorBuildingIds.size }
   }, [buildings])
 
   useEffect(() => {
     exposeRenderingMetadata({
       buildingAccess: {
-        visibleDoors: details.doors.length,
+        visibleDoors: details.doorBuildingCount,
+        automaticDoorPanels: details.doors.length,
+        automaticDoorBuildings: details.doorBuildingCount,
+        automaticDoorRule: 'two sliding glass panels open near the player and close after the doorway clears',
         visibleLobbies: details.lobbies.length,
         visibleVerticalCores: details.cores.length,
         doorRule: 'procedural buildings expose one street-facing solid entry portal',
@@ -943,6 +978,59 @@ function BuildingInteriorHints({ buildings }) {
     coreRef.current.instanceMatrix.needsUpdate = true
     canopyRef.current.instanceMatrix.needsUpdate = true
   }, [details])
+
+  useFrame((_, delta) => {
+    if (!doorRef.current || !details.doors.length) return
+    const storePlayer = useCityStore.getState().player
+    const doorProbe = typeof window !== 'undefined' ? window.__REALCITY_AUTODOOR_PROBE__ : null
+    const player = doorProbe || storePlayer
+    const dummy = doorDummyRef.current
+    if (doorStateRef.current.length !== details.doors.length) {
+      doorStateRef.current = details.doors.map(() => 0)
+    }
+
+    let openPanels = 0
+    let nearestDoorDistance = Infinity
+    let nearestDoorId = null
+    const openDoorIds = new Set()
+    const dt = Math.min(delta, 0.05)
+
+    details.doors.forEach((item, index) => {
+      const distance = Math.hypot(player.x - item.entryWorld.x, player.z - item.entryWorld.z)
+      if (distance < nearestDoorDistance) {
+        nearestDoorDistance = distance
+        nearestDoorId = item.id
+      }
+      const radius = Number.isFinite(item.triggerRadius) ? item.triggerRadius : 6
+      const target = distance <= radius || (player.indoors && player.placeId === item.id) ? 1 : 0
+      const open = doorProbe ? target : THREE.MathUtils.damp(doorStateRef.current[index] || 0, target, 8.5, dt)
+      doorStateRef.current[index] = open
+      if (open > 0.35) {
+        openPanels += 1
+        openDoorIds.add(item.id)
+      }
+      const local = faceLocal(item.building, item.face, item.baseAlong + item.side * item.openSlide * open, item.panelY, item.panelOutward)
+      setLocalInstance(doorRef.current, index, dummy, item.building, local, item.scale)
+    })
+    doorRef.current.instanceMatrix.needsUpdate = true
+
+    metadataFrameRef.current += 1
+    if (metadataFrameRef.current % 12 === 0) {
+      exposeRenderingMetadata({
+        buildingAccess: {
+          ...(typeof window !== 'undefined' ? window.__REALCITY_RENDERING__?.buildingAccess || {} : {}),
+          automaticDoorPanels: details.doors.length,
+          automaticDoorBuildings: details.doorBuildingCount,
+          automaticDoorRule: 'two sliding glass panels open near the player and close after the doorway clears',
+          openDoorPanels: openPanels,
+          openDoorBuildings: openDoorIds.size,
+          openDoorIds: [...openDoorIds],
+          nearestAutomaticDoorId: nearestDoorId,
+          nearestAutomaticDoorDistance: Number(nearestDoorDistance.toFixed(2)),
+        },
+      })
+    }
+  })
 
   return (
     <>

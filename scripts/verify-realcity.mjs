@@ -752,7 +752,7 @@ async function inspectPhone(page) {
 
   await page.locator('.phone-tabs button[data-tab="social"]').click()
   const socialText = await page.locator('.phone-device').innerText({ timeout: 5000 })
-  assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
+  assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk|mobility|taxi/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
 
   await page.locator('.phone-tabs button[data-tab="music"]').click()
   const musicText = await page.locator('.phone-device').innerText({ timeout: 5000 })
@@ -1035,6 +1035,104 @@ async function inspectStreetRendering(page) {
   return result
 }
 
+async function inspectAutomaticDoors(page) {
+  const setup = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const store = window.__REALCITY_STORE__?.getState()
+    if (!city || !store) return null
+    const target = city.buildings
+      .filter(building => building.interior?.entryPortal && Math.hypot(building.x, building.z) < 760)
+      .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0]
+    if (!target) return null
+    const face = target.interior?.entryPortal?.face || target.facadePlan?.entryFace || 'south'
+    const world = (item, lx, lz) => {
+      const cos = Math.cos(item.rot || 0)
+      const sin = Math.sin(item.rot || 0)
+      return {
+        x: item.x + lx * cos + lz * sin,
+        z: item.z - lx * sin + lz * cos,
+      }
+    }
+    const probe = (building, entryFace, along, distanceFromFace) => {
+      if (entryFace === 'north') return world(building, along, building.d / 2 + distanceFromFace)
+      if (entryFace === 'south') return world(building, along, -building.d / 2 - distanceFromFace)
+      if (entryFace === 'east') return world(building, building.w / 2 + distanceFromFace, along)
+      return world(building, -building.w / 2 - distanceFromFace, along)
+    }
+    const near = probe(target, face, 0, 3.2)
+    const far = { x: target.x + 1500, z: target.z + 1500 }
+    window.__REALCITY_AUTODOOR_PROBE__ = {
+      ...store.player,
+      x: near.x,
+      z: near.z,
+      speed: 0,
+      indoors: false,
+      placeId: null,
+      placeName: null,
+      floor: 0,
+      floorCount: 0,
+    }
+    return { id: target.id, face, near, far }
+  })
+
+  assert(setup?.id, 'No automatic-door target building was available')
+  try {
+    await page.waitForFunction(({ id }) => {
+      const access = window.__REALCITY_RENDERING__?.buildingAccess
+      return access?.automaticDoorPanels >= 2 &&
+        access?.automaticDoorBuildings > 100 &&
+        access?.openDoorPanels >= 2 &&
+        access?.nearestAutomaticDoorDistance <= 5.5
+    }, { id: setup.id }, { timeout: 10000 })
+  } catch (error) {
+    const debug = await page.evaluate(id => ({
+      access: window.__REALCITY_RENDERING__?.buildingAccess || null,
+      player: window.__REALCITY_STORE__?.getState()?.player || null,
+      probe: window.__REALCITY_AUTODOOR_PROBE__ || null,
+      targetIncluded: (window.__REALCITY_RENDERING__?.buildingAccess?.openDoorIds || []).includes(id),
+    }), setup.id)
+    throw new Error(`Automatic door panels did not open near the avatar: ${JSON.stringify({ setup, debug })}`)
+  }
+  const openState = await page.evaluate(() => window.__REALCITY_RENDERING__?.buildingAccess || null)
+  assert(openState?.openDoorPanels >= 2, `Automatic door panels did not open near the player: ${JSON.stringify(openState)}`)
+
+  await page.evaluate(({ far }) => {
+    window.__REALCITY_AUTODOOR_PROBE__ = {
+      ...(window.__REALCITY_STORE__?.getState()?.player || {}),
+      x: far.x,
+      z: far.z,
+      speed: 0,
+      indoors: false,
+      placeId: null,
+      placeName: null,
+      floor: 0,
+      floorCount: 0,
+    }
+  }, setup)
+  await page.waitForFunction(({ id }) => {
+    const access = window.__REALCITY_RENDERING__?.buildingAccess
+    return access?.automaticDoorPanels >= 2 &&
+      access?.nearestAutomaticDoorDistance > 100 &&
+      access?.openDoorPanels === 0 &&
+      !(access.openDoorIds || []).includes(id)
+  }, { id: setup.id }, { timeout: 10000 })
+  const closedState = await page.evaluate(() => window.__REALCITY_RENDERING__?.buildingAccess || null)
+
+  await page.evaluate(() => {
+    delete window.__REALCITY_AUTODOOR_PROBE__
+  })
+
+  return {
+    target: setup.id,
+    face: setup.face,
+    openDoorPanels: openState.openDoorPanels,
+    nearestOpenDoor: openState.nearestAutomaticDoorId,
+    nearestOpenDistance: openState.nearestAutomaticDoorDistance,
+    automaticDoorBuildings: openState.automaticDoorBuildings,
+    closedOpenDoorIds: closedState.openDoorIds || [],
+  }
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -1094,6 +1192,7 @@ async function main() {
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
     const streetRendering = await inspectStreetRendering(page)
+    const automaticDoors = await inspectAutomaticDoors(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
@@ -1339,6 +1438,7 @@ async function main() {
       collisionAndMaterials,
       agentAutonomy,
       streetRendering,
+      automaticDoors,
       phone,
       phoneDirectTaxi,
       controls: {

@@ -32,6 +32,9 @@ audit has a clear finish line.
   nearby NPC to take the player there, waits for an escort mission, and verifies
   meaningful player travel plus arrival/completion text.
 - Runtime cleanliness: browser console errors and page errors must be empty.
+- Automatic doors: landmark/procedural building entries expose two sliding
+  glass panels; the harness moves the avatar near an entrance, confirms the
+  panels open, moves away, and confirms that doorway closes again.
 - Artifacts: `.verification/realcity-last-run.json` and
   `.verification/realcity-last-run.png` record the last local verification run.
 
@@ -62,8 +65,8 @@ audit has a clear finish line.
   door openings, a lobby/readable interior, and elevator/stair/escalator props.
 - Entry rules: verify the player cannot walk through landmark side/back walls
   and can enter/exit through the front door opening.
-- Automatic doors: approach a landmark entrance and confirm the glass panels
-  slide open, then close again after moving away.
+- Automatic doors visual pass: confirm the animated glass panels are readable
+  from street-camera distance and do not obscure the door opening.
 - Interior state: enter a landmark lobby and confirm the HUD location changes
   from district to that building's interior.
 - Entrance routing: request taxi or walking escorts to solid landmarks and
