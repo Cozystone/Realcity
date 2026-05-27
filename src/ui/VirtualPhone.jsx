@@ -254,6 +254,15 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     }))
   }
 
+  const requestDirectTaxiToTarget = (target) => {
+    if (!target) return
+    const label = target.address || target.name
+    useCityStore.getState().setPulse(`Nearest passing taxi requested: ${label}.`)
+    window.dispatchEvent(new CustomEvent('realcity:player-taxi-request', {
+      detail: { target },
+    }))
+  }
+
   const callContact = (contact = selected) => {
     if (!contact) return
     const text = styleNpcSpeech(phoneAgent(contact), `전화 받았어요. 저는 ${contact.placeName} 근처에서 ${contact.activity} 중입니다.`)
@@ -416,13 +425,29 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
           {tab === 'taxi' ? (
             <div className="phone-app phone-taxi">
               <div className="phone-taxi-summary">
-                <strong>{selected ? selected.name : 'Dispatch'}</strong>
+                <strong>Nearest passing taxi</strong>
+                <small>Direct call uses a cruising cab already in traffic</small>
+              </div>
+              <div className="phone-route-list">
+                {routeTargets.map(target => (
+                  <button
+                    key={`direct-${target.id}`}
+                    type="button"
+                    onClick={() => requestDirectTaxiToTarget(target)}
+                  >
+                    <strong>{target.address || target.name}</strong>
+                    <span>Call cab / {Math.round(target.distance)}m / press F to board</span>
+                  </button>
+                ))}
+              </div>
+              <div className="phone-taxi-summary">
+                <strong>{selected ? selected.name : 'Contact dispatch'}</strong>
                 <small>{selected ? `${selected.relation} / ${selected.online ? 'online' : 'later'}` : 'Choose a contact first'}</small>
               </div>
               <div className="phone-route-list">
                 {routeTargets.map(target => (
                   <button
-                    key={target.id}
+                    key={`contact-${target.id}`}
                     type="button"
                     onClick={() => requestTaxiToTarget(target)}
                     disabled={!selected}

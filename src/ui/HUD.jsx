@@ -283,6 +283,24 @@ function pressTalk() {
   }))
 }
 
+function pressBoardTaxi() {
+  window.dispatchEvent(new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    key: 'f',
+    bubbles: true,
+    cancelable: true,
+  }))
+}
+
+function pressHailTaxi() {
+  window.dispatchEvent(new KeyboardEvent('keydown', {
+    code: 'KeyH',
+    key: 'h',
+    bubbles: true,
+    cancelable: true,
+  }))
+}
+
 function KeyPrompt({ keyName, label, detail, primary = false, onClick }) {
   const Component = onClick ? 'button' : 'div'
   return (
@@ -316,10 +334,11 @@ function ContextPrompts({ nearbyAgent, mission, ride, player, onOpenMap }) {
             ? 'Follow agent'
             : 'Active plan'
     actions.push({
-      keyName: mission.mode === 'taxi' ? 'TAXI' : 'GO',
+      keyName: mission.mode === 'taxi' && mission.phase === 'taxi_waiting' ? 'F' : mission.mode === 'taxi' ? 'TAXI' : 'GO',
       label: phase,
       detail: mission.destination?.address || mission.destination?.name,
       primary: true,
+      onClick: mission.mode === 'taxi' && mission.phase === 'taxi_waiting' ? pressBoardTaxi : undefined,
     })
   } else if (nearbyAgent) {
     actions.push({
@@ -335,6 +354,7 @@ function ContextPrompts({ nearbyAgent, mission, ride, player, onOpenMap }) {
 
   actions.push(
     { keyName: 'T', label: 'Taxi', detail: 'phone route', onClick: () => openPhone('taxi') },
+    { keyName: 'H', label: 'Hail', detail: 'passing cab', onClick: pressHailTaxi },
     { keyName: 'M', label: 'Map', detail: 'city', onClick: onOpenMap },
     { keyName: 'P', label: 'Phone', detail: 'contacts', onClick: () => openPhone('messages') },
   )
@@ -358,6 +378,7 @@ function ContextPrompts({ nearbyAgent, mission, ride, player, onOpenMap }) {
         <span><kbd>A/D</kbd> Turn</span>
         <span><kbd>Arrows</kbd> Look</span>
         <span><kbd>Space</kbd> Jump</span>
+        <span><kbd>H/F</kbd> Taxi</span>
         {player?.indoors ? <span><kbd>PgUp/Dn</kbd> Floor</span> : null}
       </div>
     </div>

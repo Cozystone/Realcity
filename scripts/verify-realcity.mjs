@@ -215,6 +215,14 @@ async function getTaxiRouteState(page) {
       destinationTurns: pathTurns(ride?.path || mission?.taxi?.destinationPath || mission?.route),
       taxiPose: ride?.taxiPose || mission?.taxi?.pose || null,
       taxiSpeed: mission?.taxi?.speed || null,
+      taxiSource: mission?.taxi?.source || ride?.taxiSource || null,
+      fleetCarId: mission?.taxi?.fleetCarId || ride?.taxiId || null,
+      driverName: mission?.taxi?.driverName || null,
+      dispatchDistanceFromCruise: mission?.taxi?.dispatchDistanceFromCruise || 0,
+      boardingRequested: !!mission?.boardingRequested,
+      assignedVehicleSamples: (state?.vehicleSamples || []).filter(sample => sample.assignment).length,
+      taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop').length,
+      taxiRoutePointSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.cruiseRoutePoints >= 8).length,
       rideDuration: ride?.duration || 0,
       rideProgress: ride?.progress || 0,
     }
@@ -442,7 +450,7 @@ async function inspectSupportUX(page) {
   await page.locator('.prompt-stack').waitFor({ state: 'visible', timeout: 10000 })
   const promptText = await page.locator('.prompt-stack').innerText({ timeout: 5000 })
   assert(promptText.includes('Taxi') && promptText.includes('Map') && promptText.includes('Phone'), `Context prompt actions are incomplete: ${promptText}`)
-  assert(promptText.includes('W/S') && promptText.includes('A/D') && promptText.includes('Space'), `Movement guide is incomplete: ${promptText}`)
+  assert(promptText.includes('Hail') && promptText.includes('W/S') && promptText.includes('A/D') && promptText.includes('Space') && promptText.includes('H/F'), `Movement guide is incomplete: ${promptText}`)
 
   await dispatchKey(page, 'KeyT', 'keydown')
   await dispatchKey(page, 'KeyT', 'keyup')
@@ -522,6 +530,7 @@ async function inspectCollisionAndMaterials(page) {
       activePedestrianStates: [...new Set(samples.map(sample => sample.state).filter(Boolean))].slice(0, 12),
       npcWallViolations: npcWallViolations.map(sample => ({ id: sample.id, x: Number(sample.x.toFixed(2)), z: Number(sample.z.toFixed(2)), state: sample.state })).slice(0, 8),
       vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
+      taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.cruiseRoutePoints >= 8).length,
       vehicleBoundsReady: (state?.vehicleSamples || []).filter(sample => sample.width > 0 && sample.length > 0 && typeof sample.yaw === 'number').length,
       clouds: window.__REALCITY_CLOUDS__ || null,
       textures: window.__REALCITY_TEXTURES__ || null,
@@ -536,6 +545,7 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
   assert(result.vehicleBoundsReady === result.vehicleSamples, 'Vehicle collision samples do not expose oriented bounds')
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
+  assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
   assert(result.clouds.count >= 16 && result.clouds.averagePuffs >= 8, 'Cloud puff composition is too sparse')
   assert(result.clouds.hasFlattenedUndersides && result.clouds.maxVerticalAspect < 0.55, 'Clouds are still vertically stretched or lack flattened undersides')
@@ -689,6 +699,9 @@ async function main() {
     assert(taxiDispatch.destinationPathPoints >= 2, `Taxi destination road path was not plotted: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.dispatchMeters > 80, `Taxi pickup route was too short to prove it drove in from the street: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.taxiSpeed <= 20, `Taxi dispatch speed is too fast for city driving: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.taxiSource === 'fleet' && taxiDispatch.fleetCarId, `Taxi request did not select an existing cruising fleet taxi: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.dispatchDistanceFromCruise > 0, `Taxi dispatch did not record distance from the cruising taxi pose: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.taxiLoopSamples >= 8 || taxiDispatch.assignedVehicleSamples >= 1, `Taxi fleet loop samples were not present during dispatch: ${JSON.stringify(taxiDispatch)}`)
 
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
@@ -701,10 +714,30 @@ async function main() {
     await page.locator('.full-map-header button').click()
     await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
 
-    await page.waitForFunction(() => {
-      const state = window.__REALCITY_STORE__?.getState()
-      return state?.ride?.path?.length >= 2 && state.ride.routeMeters > 0
-    }, null, { timeout: 90000 })
+    try {
+      await page.waitForFunction(() => {
+        const phase = window.__REALCITY_STORE__?.getState()?.mission?.phase
+        return phase === 'taxi_waiting'
+      }, null, { timeout: 90000 })
+    } catch (error) {
+      const debugTaxi = await getTaxiRouteState(page)
+      throw new Error(`Taxi never reached manual boarding state: ${JSON.stringify(debugTaxi)}`)
+    }
+    const beforeBoard = await getTaxiRouteState(page)
+    assert(beforeBoard.missionPhase === 'taxi_waiting' && !beforeBoard.boardingRequested, `Taxi should wait for manual boarding: ${JSON.stringify(beforeBoard)}`)
+    await dispatchKey(page, 'KeyF', 'keydown')
+    await dispatchKey(page, 'KeyF', 'keyup')
+    await page.waitForFunction(() => !!window.__REALCITY_STORE__?.getState()?.mission?.boardingRequested, null, { timeout: 10000 })
+
+    try {
+      await page.waitForFunction(() => {
+        const state = window.__REALCITY_STORE__?.getState()
+        return state?.ride?.path?.length >= 2 && state.ride.routeMeters > 0
+      }, null, { timeout: 90000 })
+    } catch (error) {
+      const debugTaxi = await getTaxiRouteState(page)
+      throw new Error(`Taxi did not start after manual F boarding: ${JSON.stringify(debugTaxi)}`)
+    }
     const taxiRide = await getTaxiRouteState(page)
     assert(taxiRide.ridePathPoints >= 2, `Taxi ride did not use a road path: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.routeMeters >= Math.max(1, taxiRide.directMeters * 0.9), `Taxi ride route distance was implausible: ${JSON.stringify(taxiRide)}`)

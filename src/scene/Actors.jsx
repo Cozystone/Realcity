@@ -5,7 +5,7 @@ import { terrainHeight, trafficSignalForAxis } from '../engine/cityEngine'
 import { resolveBuildingCollision } from '../engine/collision'
 import { useCityStore } from '../engine/cityStore'
 import { fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
-import { buildTaxiRoute, sampleRoute, taxiSpawnForPickup } from '../engine/taxiRouting'
+import { buildTaxiRoute, routeDistance, sampleRoute, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
 const forward = new THREE.Vector3(0, 0, 1)
@@ -13,6 +13,7 @@ const TAXI_DISPATCH_SPEED = 18
 const TAXI_RIDE_SPEED = 24
 const TAXI_MIN_RIDE_SECONDS = 14
 const TAXI_MAX_RIDE_SECONDS = 120
+const TAXI_HAIL_RADIUS = 92
 
 function formatTime(minutes) {
   return `${Math.floor(minutes / 60)}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`
@@ -199,22 +200,230 @@ function advanceTaxi(taxi, delta) {
   return pose
 }
 
-function beginTaxiDispatch(agent, mission, store, roads) {
+function roadLaneOffset(road, direction) {
+  const laneOffset = road.width * (road.main ? 0.27 : 0.22)
+  return road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
+}
+
+function roadLanePoint(road, along, direction) {
+  const lane = roadLaneOffset(road, direction)
+  if (road.axis === 'x') return { x: Math.max(road.from, Math.min(road.to, along)), z: road.z + lane }
+  return { x: road.x + lane, z: Math.max(road.from, Math.min(road.to, along)) }
+}
+
+function taxiLoopForCar(car, roads = [], index = 0) {
+  const vertical = roads.filter(road => road.axis === 'z' && road.main).sort((a, b) => a.x - b.x)
+  const horizontal = roads.filter(road => road.axis === 'x' && road.main).sort((a, b) => a.z - b.z)
+  if (vertical.length < 2 || horizontal.length < 2) return null
+
+  const maxRing = Math.max(1, Math.min(4, Math.floor(Math.min(vertical.length, horizontal.length) / 2) - 1))
+  const ring = Math.min(maxRing, 1 + (hashValue(car.id || index) % maxRing))
+  const west = vertical[ring]
+  const east = vertical[vertical.length - 1 - ring]
+  const south = horizontal[ring]
+  const north = horizontal[horizontal.length - 1 - ring]
+  if (!west || !east || !south || !north || west.x >= east.x || south.z >= north.z) return null
+
+  const southStart = roadLanePoint(south, west.x, 1)
+  const southEnd = roadLanePoint(south, east.x, 1)
+  const eastStart = roadLanePoint(east, south.z, 1)
+  const eastEnd = roadLanePoint(east, north.z, 1)
+  const northStart = roadLanePoint(north, east.x, -1)
+  const northEnd = roadLanePoint(north, west.x, -1)
+  const westStart = roadLanePoint(west, north.z, -1)
+  const westEnd = roadLanePoint(west, south.z, -1)
+  const points = [southStart, southEnd, eastStart, eastEnd, northStart, northEnd, westStart, westEnd, southStart]
+  return {
+    points,
+    routeMeters: routeDistance(points),
+    ring,
+    roads: [south, south, east, east, north, north, west, west],
+    directions: [1, 1, 1, 1, -1, -1, -1, -1],
+    roadNames: [south.name, east.name, north.name, west.name].filter(Boolean),
+  }
+}
+
+function ensureTaxiCruise(car, roads = [], index = 0) {
+  if (car.kind !== 'taxi') return null
+  if (!car.cruiseLoop) {
+    const loop = taxiLoopForCar(car, roads, index)
+    if (loop?.points?.length >= 2) {
+      car.cruiseLoop = loop
+      car.cruisePath = loop.points
+      car.cruiseMeters = loop.routeMeters
+      car.cruiseProgress = (car.t || 0) * loop.routeMeters
+      car.cruiseRouteMode = 'city-ring-loop'
+      car.cruiseRoadNames = loop.roadNames
+    }
+  }
+  return car.cruiseLoop || null
+}
+
+function taxiCruisePose(car, roads = [], index = 0) {
+  const loop = ensureTaxiCruise(car, roads, index)
+  if (!loop?.points?.length || !car.cruiseMeters) return null
+  const pose = sampleRoute(loop.points, ((car.cruiseProgress || 0) % car.cruiseMeters + car.cruiseMeters) % car.cruiseMeters)
+  const segment = Math.max(0, Math.min(loop.roads.length - 1, pose.segmentIndex || 0))
+  car.activeRoad = loop.roads[segment] || car.road
+  car.activeDirection = loop.directions[segment] || car.direction
+  return { x: pose.x, z: pose.z, yaw: pose.heading, heading: pose.heading, road: car.activeRoad, direction: car.activeDirection }
+}
+
+function taxiPoseForCar(car, roads = [], index = 0) {
+  return car.kind === 'taxi'
+    ? taxiCruisePose(car, roads, index) || trafficPose(car)
+    : trafficPose(car)
+}
+
+function assignedTaxiPose(car, store) {
+  if (!car.assignment) return null
+  const missionTaxi = store.mission?.taxi?.fleetCarId === car.id ? store.mission.taxi.pose : null
+  const rideTaxi = store.ride?.taxiId === car.id ? store.ride.taxiPose : null
+  const pose = rideTaxi || missionTaxi
+  return pose ? { x: pose.x, z: pose.z, yaw: pose.heading ?? pose.yaw ?? 0, heading: pose.heading ?? pose.yaw ?? 0 } : null
+}
+
+function nearestAvailableTaxi(pickup, cars = [], roads = [], maxDistance = Infinity) {
+  let best = null
+  let bestDistance = Infinity
+  cars.forEach((car, index) => {
+    if (car.kind !== 'taxi' || car.assignment) return
+    const pose = taxiPoseForCar(car, roads, index)
+    if (!pose) return
+    const directDistance = Math.hypot(pose.x - pickup.x, pose.z - pickup.z)
+    const route = buildTaxiRoute(pose, pickup, roads)
+    const distance = route.routeMeters || directDistance
+    if (distance < bestDistance && directDistance <= maxDistance) {
+      best = { car, pose, route, distance, directDistance }
+      bestDistance = distance
+    }
+  })
+  return best
+}
+
+function releaseFleetTaxi(taxi, city, dropoff) {
+  if (!taxi?.fleetCarId) return
+  const car = city.cars?.find(item => item.id === taxi.fleetCarId)
+  if (!car) return
+  car.assignment = null
+  car.assignmentTaxiId = null
+  if (dropoff && car.cruiseMeters) {
+    const pose = taxiCruisePose(car, city.roads || [], city.cars.indexOf(car))
+    if (pose) car.cruiseProgress = (car.cruiseProgress || 0) + Math.hypot(dropoff.x - pose.x, dropoff.z - pose.z)
+  }
+}
+
+function startTaxiRideFromMission(mission, store, roads) {
+  const taxi = mission.taxi
+  const destination = mission.destination
+  if (!taxi || !destination) {
+    store.setPulse('Choose a taxi destination first, then press F to board.')
+    return false
+  }
+
+  const fallbackDropoff = mission.dropoff || nearestRoadPickup(destination, roads)
+  const route = taxi.destinationPath?.length >= 2
+    ? { points: taxi.destinationPath, routeMeters: taxi.destinationMeters, roadNames: taxi.routeNames }
+    : buildTaxiRoute(mission.pickup, fallbackDropoff, roads)
+  const routeMeters = Math.max(1, route.routeMeters || 0)
+  const rideSpeed = TAXI_RIDE_SPEED
+  mission.phase = 'taxi_ride'
+  taxi.phase = 'ride'
+  taxi.path = route.points
+  taxi.routeMeters = routeMeters
+  taxi.progress = 0
+  taxi.routeNames = route.roadNames || taxi.routeNames || []
+  store.updateMission({
+    phase: 'taxi_ride',
+    route: route.points,
+    taxi,
+    boardingRequested: true,
+    summary: `Taxi to ${destination.name} via ${taxi.routeNames?.slice(0, 2).join(' / ') || 'city streets'}.`,
+  })
+  store.startRide({
+    from: { x: mission.pickup.x, z: mission.pickup.z },
+    to: { x: fallbackDropoff.x, z: fallbackDropoff.z },
+    path: route.points,
+    routeMeters,
+    routeNames: taxi.routeNames || [],
+    duration: Math.min(TAXI_MAX_RIDE_SECONDS, Math.max(TAXI_MIN_RIDE_SECONDS, routeMeters / rideSpeed)),
+    label: mission.agentName
+      ? `${mission.agentName} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`
+      : `You are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`,
+    destinationName: destination.name,
+    taxiId: taxi.fleetCarId || taxi.id,
+    taxiSource: taxi.source,
+  })
+  return true
+}
+
+function attachTaxiDestination(mission, destination, roads, store) {
+  if (!mission?.taxi || !destination) return null
+  const dropoff = nearestRoadPickup(destination, roads)
+  const routeToDestination = buildTaxiRoute(mission.pickup, dropoff, roads)
+  mission.destination = destination
+  mission.dropoff = dropoff
+  mission.route = routeToDestination.points
+  mission.taxi.dropoff = dropoff
+  mission.taxi.destinationPath = routeToDestination.points
+  mission.taxi.destinationMeters = routeToDestination.routeMeters
+  mission.taxi.directMeters = routeToDestination.directMeters
+  mission.taxi.routeNames = routeToDestination.roadNames
+  store.updateMission({
+    destination,
+    dropoff,
+    route: routeToDestination.points,
+    taxi: mission.taxi,
+    summary: `Destination set to ${destination.name}. Press F when the taxi is at the curb.`,
+  })
+  return dropoff
+}
+
+function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
+  const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads.roads || []
+  const cars = Array.isArray(cityOrRoads) ? [] : cityOrRoads.cars || []
   const pickup = mission.pickup
-  const dropoff = nearestRoadPickup(mission.destination, roads)
-  const spawn = taxiSpawnForPickup(pickup, roads)
-  const routeToPickup = buildTaxiRoute(spawn, pickup, roads)
-  const routeToDestination = buildTaxiRoute(pickup, dropoff, roads)
-  const firstPose = sampleRoute(routeToPickup.points, 0)
+  const dropoff = mission.destination ? nearestRoadPickup(mission.destination, roads) : null
+  const preferred = mission.preferredTaxiId
+    ? cars
+      .map((car, index) => {
+        const pose = taxiPoseForCar(car, roads, index)
+        const directDistance = pose ? Math.hypot(pose.x - pickup.x, pose.z - pickup.z) : Infinity
+        return {
+          car,
+          pose,
+          route: pose ? buildTaxiRoute(pose, pickup, roads) : null,
+          distance: pose ? buildTaxiRoute(pose, pickup, roads).routeMeters || directDistance : Infinity,
+          directDistance,
+        }
+      })
+      .find(item => item.car.id === mission.preferredTaxiId && item.car.kind === 'taxi' && !item.car.assignment && item.directDistance <= (mission.maxDispatchDistance ?? Infinity))
+    : null
+  const fleetTaxi = preferred || nearestAvailableTaxi(pickup, cars, roads, mission.maxDispatchDistance ?? Infinity)
+  if (!fleetTaxi && mission.allowSpawnTaxi === false) {
+    store.setPulse(`No passing taxi is close enough to hail. Move nearer to traffic or use the phone taxi app.`)
+    return false
+  }
+  const spawn = fleetTaxi?.pose || taxiSpawnForPickup(pickup, roads)
+  const routeToPickup = fleetTaxi?.route || buildTaxiRoute(spawn, pickup, roads)
+  const routeToDestination = dropoff ? buildTaxiRoute(pickup, dropoff, roads) : { points: [], routeMeters: 0, directMeters: 0, roadNames: [] }
+  const initialProgress = fleetTaxi ? Math.max(0, routeToPickup.routeMeters - 620) : 0
+  const firstPose = sampleRoute(routeToPickup.points, initialProgress)
   const taxi = {
     id: `taxi_${mission.id}`,
+    fleetCarId: fleetTaxi?.car.id || null,
+    source: fleetTaxi ? 'fleet' : 'spawned',
+    driverName: fleetTaxi?.car.driverName || 'Taxi driver',
+    dispatchDistanceFromCruise: fleetTaxi?.distance || null,
     phase: 'driving_to_pickup',
     path: routeToPickup.points,
     destinationPath: routeToDestination.points,
     routeMeters: routeToPickup.routeMeters,
     destinationMeters: routeToDestination.routeMeters,
     directMeters: routeToDestination.directMeters,
-    progress: 0,
+    progress: initialProgress,
+    initialProgress,
+    approachMetersRemaining: Math.max(0, routeToPickup.routeMeters - initialProgress),
     speed: TAXI_DISPATCH_SPEED,
     pickup,
     dropoff,
@@ -223,24 +432,34 @@ function beginTaxiDispatch(agent, mission, store, roads) {
     requestedAt: performance.now(),
   }
 
+  if (fleetTaxi?.car) {
+    fleetTaxi.car.assignment = mission.id
+    fleetTaxi.car.assignmentTaxiId = taxi.id
+  }
+
   mission.phase = 'taxi_dispatch'
   mission.taxi = taxi
   mission.dropoff = dropoff
   mission.route = routeToDestination.points
+  mission.awaitingBoardKey = true
   store.updateMission({
     phase: 'taxi_dispatch',
     pickup,
     dropoff,
     route: routeToDestination.points,
     taxi,
-    summary: `${agent.name} called a taxi. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`,
+    awaitingBoardKey: true,
+    summary: `${agent?.name || 'You'} ${fleetTaxi ? `hailed ${taxi.driverName}'s passing taxi` : 'called a taxi'}. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`,
   })
-  store.showDialogue({
-    speaker: agent.name,
-    role: agent.job,
-    text: styleNpcSpeech(agent, `I called a taxi. We wait at the curb first, then ride by road to ${mission.destination.name}.`),
-    agent: agent.snapshot(),
-  })
+  if (agent) {
+    store.showDialogue({
+      speaker: agent.name,
+      role: agent.job,
+      text: styleNpcSpeech(agent, `I called a passing taxi. We wait at the curb first, then press F to board for ${mission.destination?.name || 'the destination'}.`),
+      agent: agent.snapshot(),
+    })
+  }
+  return true
 }
 
 class Agent {
@@ -312,7 +531,7 @@ class Agent {
         this.activity = 'walking to taxi pickup'
         const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace, city)
         if (distance < 2.6) {
-          beginTaxiDispatch(this, mission, store, roads)
+          beginTaxiDispatch(this, mission, store, city)
           return 'talking'
           mission.phase = 'taxi_boarding'
           mission.boardingAt = performance.now()
@@ -343,12 +562,12 @@ class Agent {
             store.updateMission({
               phase: 'taxi_waiting',
               taxi,
-              summary: `Taxi arrived at ${mission.pickup.roadName || mission.pickup.name || 'the curb'}. Boarding now.`,
+              summary: `Taxi arrived at ${mission.pickup.roadName || mission.pickup.name || 'the curb'}. Press F to board.`,
             })
             store.showDialogue({
               speaker: this.name,
               role: this.job,
-              text: styleNpcSpeech(this, 'The taxi is here. Let us get in and follow the road route.'),
+              text: styleNpcSpeech(this, 'The taxi is here. Press F when you are ready to get in.'),
               agent: this.snapshot(),
             })
           }
@@ -366,37 +585,10 @@ class Agent {
           this.heading = taxi.pose.heading
         }
 
-        if (taxi && performance.now() - mission.boardingAt > 1500) {
-          const fallbackDropoff = mission.dropoff || nearestRoadPickup(destination, roads)
-          const route = taxi.destinationPath?.length >= 2
-            ? { points: taxi.destinationPath, routeMeters: taxi.destinationMeters, roadNames: taxi.routeNames }
-            : buildTaxiRoute(mission.pickup, fallbackDropoff, roads)
-          const routeMeters = Math.max(1, route.routeMeters || 0)
-          const rideSpeed = TAXI_RIDE_SPEED
-          mission.phase = 'taxi_ride'
-          taxi.phase = 'ride'
-          taxi.path = route.points
-          taxi.routeMeters = routeMeters
-          taxi.progress = 0
-          taxi.routeNames = route.roadNames || taxi.routeNames || []
-          store.updateMission({
-            phase: 'taxi_ride',
-            route: route.points,
-            taxi,
-            summary: `Taxi to ${destination.name} via ${taxi.routeNames?.slice(0, 2).join(' / ') || 'city streets'}.`,
-          })
-          store.startRide({
-            from: { x: mission.pickup.x, z: mission.pickup.z },
-            to: { x: fallbackDropoff.x, z: fallbackDropoff.z },
-            path: route.points,
-            routeMeters,
-            routeNames: taxi.routeNames || [],
-            duration: Math.min(TAXI_MAX_RIDE_SECONDS, Math.max(TAXI_MIN_RIDE_SECONDS, routeMeters / rideSpeed)),
-            label: `${this.name} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`,
-            destinationName: destination.name,
-            taxiId: taxi.id,
-          })
+        if (taxi && mission.boardingRequested) {
+          startTaxiRideFromMission(mission, store, roads)
         }
+
         return 'talking'
       }
 
@@ -426,6 +618,7 @@ class Agent {
         }
         const dropoff = mission.dropoff || nearestRoadPickup(destination, roads)
         this.pos.set(dropoff.x + 1.4, terrainHeight(dropoff.x, dropoff.z) + 0.95, dropoff.z + 1.4)
+        releaseFleetTaxi(mission.taxi, city, dropoff)
         store.finishMission(`${this.name} brought you to ${destination.name}.`)
         store.showDialogue({
           speaker: this.name,
@@ -793,12 +986,17 @@ function Traffic({ cars, roads }) {
 
     for (let i = 0; i < cars.length; i += 1) {
       const car = cars[i]
+      if (car.kind === 'taxi') ensureTaxiCruise(car, roads, i)
       const dim = car.dimensions || { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 }
-      const currentPose = trafficPose(car)
+      const assignedPose = assignedTaxiPose(car, store)
+      const currentPose = assignedPose || taxiPoseForCar(car, roads, i)
+      const trafficCar = car.activeRoad
+        ? { ...car, road: car.activeRoad, direction: car.activeDirection ?? car.direction }
+        : car
       const playerContact = pointInVehicleBody(currentPose, dim, store.player, 0.74)
-      const hazard = shouldYieldToPedestrian(car, currentPose, pedestrians)
-      const signalStop = shouldStopForSignal(car, currentPose, roads, store.timeMinutes)
-      const shouldBrake = hazard || signalStop || playerContact
+      const hazard = assignedPose ? null : shouldYieldToPedestrian(trafficCar, currentPose, pedestrians)
+      const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes)
+      const shouldBrake = !assignedPose && (hazard || signalStop || playerContact)
       car.brake = shouldBrake
         ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
@@ -816,13 +1014,22 @@ function Traffic({ cars, roads }) {
       }
       const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
       const speedFactor = Math.max(0, 1 - car.brake * 0.98)
-      car.t = (car.t + (car.speed * wave * speedFactor * dt) / Math.max(1, car.road.to - car.road.from)) % 1
-      const { x, z, yaw } = trafficPose(car)
+      if (!assignedPose) {
+        if (car.kind === 'taxi' && car.cruisePath?.length >= 2 && car.cruiseMeters > 0) {
+          car.cruiseProgress = ((car.cruiseProgress || 0) + car.speed * wave * speedFactor * dt) % car.cruiseMeters
+        } else {
+          car.t = (car.t + (car.speed * wave * speedFactor * dt) / Math.max(1, car.road.to - car.road.from)) % 1
+        }
+      }
+      const { x, z, yaw } = assignedPose || taxiPoseForCar(car, roads, i)
 
       vehicleSamples.push({
         id: car.id,
         kind: car.kind,
         bodyStyle: car.bodyStyle,
+        routeMode: car.kind === 'taxi' ? (car.assignment ? 'assigned-dispatch' : car.cruiseRouteMode || 'single-road') : 'traffic-lane',
+        assignment: car.assignment || null,
+        cruiseRoutePoints: car.cruisePath?.length || 0,
         x,
         z,
         yaw,
@@ -992,6 +1199,10 @@ function MissionTaxi() {
   useFrame(() => {
     if (!group.current) return
     const store = useCityStore.getState()
+    if (store.ride?.taxiSource === 'fleet' || store.mission?.taxi?.source === 'fleet') {
+      group.current.visible = false
+      return
+    }
     const pose = store.ride?.taxiPose || store.mission?.taxi?.pose
     if (!pose) {
       group.current.visible = false
@@ -1060,6 +1271,165 @@ function MissionTaxi() {
       ))}
     </group>
   )
+}
+
+function PlayerTaxiController({ city }) {
+  const completionPulse = useRef(false)
+
+  useFrame((_, delta) => {
+    const store = useCityStore.getState()
+    const mission = store.mission
+    if (!mission || !['player_taxi', 'street_hail'].includes(mission.source)) {
+      completionPulse.current = false
+      return
+    }
+
+    const taxi = mission.taxi
+    if (mission.phase === 'taxi_dispatch' && taxi) {
+      advanceTaxi(taxi, delta)
+      if (taxi.progress >= taxi.routeMeters - 0.2) {
+        taxi.phase = 'waiting_at_pickup'
+        taxi.progress = taxi.routeMeters
+        mission.phase = 'taxi_waiting'
+        mission.boardingAt = performance.now()
+        store.updateMission({
+          phase: 'taxi_waiting',
+          taxi,
+          summary: mission.destination
+            ? `Taxi arrived at ${mission.pickup.roadName || mission.pickup.name || 'the curb'}. Press F to board.`
+            : `Taxi is waiting at the curb. Choose a destination in RealPhone Taxi, then press F.`,
+        })
+      }
+      return
+    }
+
+    if (mission.phase === 'taxi_waiting' && mission.boardingRequested) {
+      startTaxiRideFromMission(mission, store, city.roads)
+      return
+    }
+
+    if (mission.phase === 'taxi_ride' && !store.ride && !completionPulse.current) {
+      completionPulse.current = true
+      releaseFleetTaxi(mission.taxi, city, mission.dropoff)
+      store.finishMission(`Taxi trip complete${mission.destination?.name ? ` at ${mission.destination.name}` : ''}.`)
+    }
+  })
+
+  useEffect(() => {
+    const startPlayerTaxiMission = (target, source = 'player_taxi') => {
+      const store = useCityStore.getState()
+      const player = store.player
+      const destination = target ? entranceTargetFor(target) : null
+      const pickup = nearestRoadPickup(player, city.roads)
+      const mission = {
+        id: `${source}_${Date.now()}`,
+        mode: 'taxi',
+        source,
+        phase: 'taxi_dispatch',
+        destination,
+        pickup,
+        steps: destination
+          ? ['Nearest cruising taxi accepts the call', 'Taxi drives to your curb', 'Press F to board', `Ride to ${destination.name}`]
+          : ['Raise your hand at the curb', 'Nearest passing taxi pulls over', 'Choose a destination in RealPhone', 'Press F to board'],
+        request: destination ? `Taxi to ${destination.name}` : 'Street hail passing taxi',
+      }
+      store.startMission({
+        ...mission,
+        summary: destination
+          ? `Calling the nearest passing taxi to ${destination.name}.`
+          : 'Hailing the nearest passing taxi.',
+      })
+      const started = beginTaxiDispatch(null, mission, store, {
+        ...city,
+        cars: city.cars,
+        roads: city.roads,
+      })
+      if (!started) store.finishMission('Taxi hail cancelled.')
+      return started
+    }
+
+    const onPlayerTaxiRequest = (event) => {
+      const target = event.detail?.target
+      if (!target) return
+      const store = useCityStore.getState()
+      const mission = store.mission
+      if (mission?.source === 'street_hail' && mission.taxi && !mission.destination) {
+        const destination = entranceTargetFor(target)
+        attachTaxiDestination(mission, destination, city.roads, store)
+        store.setPulse(`Destination set. Press F when ${mission.taxi.driverName || 'the taxi driver'} reaches the curb.`)
+        return
+      }
+      if (store.ride || mission) {
+        store.setPulse('Finish the current plan before calling another taxi.')
+        return
+      }
+      startPlayerTaxiMission(target, 'player_taxi')
+    }
+
+    const onKey = (event) => {
+      if (event.target?.closest?.('input, textarea, select, button')) return
+      const store = useCityStore.getState()
+      if (event.code === 'KeyF') {
+        const mission = store.mission
+        if (!mission || mission.mode !== 'taxi' || mission.phase !== 'taxi_waiting') return
+        event.preventDefault()
+        const taxi = mission.taxi
+        if (taxi?.pose) {
+          const distance = Math.hypot(store.player.x - taxi.pose.x, store.player.z - taxi.pose.z)
+          if (distance > 18) {
+            store.setPulse('Move closer to the taxi door before boarding.')
+            return
+          }
+        }
+        if (!mission.destination) {
+          store.setPulse('Choose a destination in RealPhone Taxi first.')
+          window.dispatchEvent(new CustomEvent('realcity:open-phone', { detail: { tab: 'taxi' } }))
+          return
+        }
+        mission.boardingRequested = true
+        store.updateMission({ boardingRequested: true, summary: 'Boarding taxi. Driver is pulling into the route.' })
+        window.dispatchEvent(new CustomEvent('realcity:taxi-board-requested', {
+          detail: { missionId: mission.id },
+        }))
+      }
+
+      if (event.code === 'KeyH') {
+        if (store.ride || store.mission) return
+        event.preventDefault()
+        const player = store.player
+        const pickup = nearestRoadPickup(player, city.roads)
+        const nearbyTaxi = nearestAvailableTaxi(pickup, city.cars, city.roads, TAXI_HAIL_RADIUS)
+        if (!nearbyTaxi) {
+          store.setPulse('No passing taxi is close enough to hail. Step toward a main road or use RealPhone Taxi.')
+          return
+        }
+        const mission = {
+          id: `street_hail_${Date.now()}`,
+          mode: 'taxi',
+          source: 'street_hail',
+          phase: 'taxi_dispatch',
+          destination: null,
+          pickup,
+          preferredTaxiId: nearbyTaxi.car.id,
+          maxDispatchDistance: TAXI_HAIL_RADIUS,
+          allowSpawnTaxi: false,
+          steps: ['Raise hand toward traffic', `${nearbyTaxi.car.driverName} pulls over`, 'Choose destination in RealPhone Taxi', 'Press F to board'],
+          request: 'Street hail passing taxi',
+        }
+        store.startMission({ ...mission, summary: `Hailing ${nearbyTaxi.car.driverName}'s passing taxi.` })
+        beginTaxiDispatch(null, mission, store, city)
+      }
+    }
+
+    window.addEventListener('realcity:player-taxi-request', onPlayerTaxiRequest)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('realcity:player-taxi-request', onPlayerTaxiRequest)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [city])
+
+  return null
 }
 
 function NPCs({ city }) {
@@ -1402,11 +1772,13 @@ function NPCs({ city }) {
       best.talk(2.4)
       store.setInteraction({ status: 'active', plan })
       store.startMission({
+        id: mission.id,
         agentId: best.id,
         agentName: best.name,
         mode,
         phase: mission.phase,
         destination: destinationTarget,
+        pickup: mission.pickup,
         steps: plan.steps,
         request,
         source: plan.source,
@@ -1431,13 +1803,22 @@ function NPCs({ city }) {
       }
     }
 
+    const onTaxiBoardRequested = (event) => {
+      const { missionId } = event.detail || {}
+      if (!missionId) return
+      const agent = agents.find(item => item.mission?.id === missionId)
+      if (agent?.mission) agent.mission.boardingRequested = true
+    }
+
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
     window.addEventListener('realcity:player-hit-npc', onNpcHit)
+    window.addEventListener('realcity:taxi-board-requested', onTaxiBoardRequested)
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('realcity:npc-request', onNpcRequest)
       window.removeEventListener('realcity:player-hit-npc', onNpcHit)
+      window.removeEventListener('realcity:taxi-board-requested', onTaxiBoardRequested)
     }
   }, [agents, city, city.roads, places, destinations])
 
@@ -1535,6 +1916,7 @@ export default function Actors({ city }) {
   return (
     <>
       <Traffic cars={city.cars} roads={city.roads} />
+      <PlayerTaxiController city={city} />
       <TaxiRouteRibbon />
       <MissionTaxi />
       <NPCs city={city} />

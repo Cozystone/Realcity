@@ -732,7 +732,7 @@ function createTraffic(rng, roads) {
     const direction = rng() > 0.5 ? 1 : -1
     const laneOffset = road.width * (road.main ? 0.27 : 0.22)
     const lane = road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
-    const taxi = rng() < 0.16
+    const taxi = rng() < 0.3
     const bodyStyle = taxi ? pick(rng, ['sedan', 'minivan']) : pick(rng, ['sedan', 'hatchback', 'suv', 'van', 'coupe'])
     const dimensions = {
       sedan: { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 },
