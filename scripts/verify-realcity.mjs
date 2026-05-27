@@ -217,6 +217,16 @@ async function inspectCityNorms(page) {
     const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
     const heightVariants = new Set(city.npcs.map(npc => npc.appearance?.heightScale?.toFixed(2)).filter(Boolean))
     const fashionVariants = new Set(city.npcs.map(npc => `${npc.appearance?.topColor}:${npc.appearance?.jacketColor}:${npc.appearance?.bottomStyle}:${npc.appearance?.hatStyle}`))
+    const uniqueNames = new Set(city.npcs.map(npc => npc.name).filter(Boolean))
+    const appearanceSignatures = new Set(city.npcs.map(npc => npc.appearance?.signature).filter(Boolean))
+    const outfitSignatures = new Set(city.npcs.map(npc => `${npc.appearance?.outerwear}:${npc.appearance?.outfitPattern}:${npc.appearance?.topColor}:${npc.appearance?.jacketColor}:${npc.appearance?.pantsColor}:${npc.appearance?.accessory}`).filter(Boolean))
+    const speechStyleVariants = new Set(city.npcs.map(npc => npc.speechStyle?.id).filter(Boolean))
+    const personaSignatures = new Set(city.npcs.map(npc => npc.personaSignature).filter(Boolean))
+    const skinVariants = new Set(city.npcs.map(npc => npc.appearance?.skinColor).filter(Boolean))
+    const hairVariants = new Set(city.npcs.map(npc => npc.appearance?.hairColor).filter(Boolean))
+    const bodyArchetypes = new Set(city.npcs.map(npc => npc.appearance?.bodyArchetype).filter(Boolean))
+    const walkStyles = new Set(city.npcs.map(npc => npc.appearance?.walkStyle?.id).filter(Boolean))
+    const accessoryVariants = new Set(city.npcs.map(npc => npc.appearance?.accessory).filter(Boolean))
     const treeRoadConflicts = city.trees.filter(tree => city.roads.some(road => {
       if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
       return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
@@ -245,6 +255,16 @@ async function inspectCityNorms(page) {
       npcCount: city.npcs.length,
       heightVariants: heightVariants.size,
       fashionVariants: fashionVariants.size,
+      uniqueNames: uniqueNames.size,
+      appearanceSignatures: appearanceSignatures.size,
+      outfitSignatures: outfitSignatures.size,
+      speechStyleVariants: speechStyleVariants.size,
+      personaSignatures: personaSignatures.size,
+      skinVariants: skinVariants.size,
+      hairVariants: hairVariants.size,
+      bodyArchetypes: bodyArchetypes.size,
+      walkStyles: walkStyles.size,
+      accessoryVariants: accessoryVariants.size,
       treeRoadConflicts: treeRoadConflicts.length,
       socialNorms: city.socialNorms,
       trafficRules: city.trafficRules,
@@ -270,8 +290,18 @@ async function inspectCityNorms(page) {
   assert(norms.appearanceReady === norms.npcCount, 'NPC appearance metadata is incomplete')
   assert(norms.heightVariants >= 8, `NPC height variation is too low: ${norms.heightVariants}`)
   assert(norms.fashionVariants >= 8, `NPC fashion variation is too low: ${norms.fashionVariants}`)
+  assert(norms.uniqueNames === norms.npcCount, `NPC names are not unique enough: ${norms.uniqueNames}/${norms.npcCount}`)
+  assert(norms.appearanceSignatures === norms.npcCount, `NPC appearance signatures are not unique enough: ${norms.appearanceSignatures}/${norms.npcCount}`)
+  assert(norms.personaSignatures === norms.npcCount, `NPC persona signatures are not unique enough: ${norms.personaSignatures}/${norms.npcCount}`)
+  assert(norms.outfitSignatures >= 120, `NPC outfit variation is too low: ${norms.outfitSignatures}`)
+  assert(norms.speechStyleVariants >= 9, `NPC speech style variation is too low: ${norms.speechStyleVariants}`)
+  assert(norms.bodyArchetypes >= 7, `NPC body archetype variation is too low: ${norms.bodyArchetypes}`)
+  assert(norms.walkStyles >= 7, `NPC walking style variation is too low: ${norms.walkStyles}`)
+  assert(norms.skinVariants >= 8, `NPC skin tone variation is too low: ${norms.skinVariants}`)
+  assert(norms.hairVariants >= 8, `NPC hair tone variation is too low: ${norms.hairVariants}`)
+  assert(norms.accessoryVariants >= 7, `NPC accessory variation is too low: ${norms.accessoryVariants}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity, 'Social norm metadata is incomplete')
   return norms
 }
 

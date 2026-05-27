@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clockLabel, useCityStore } from '../engine/cityStore'
+import { styleNpcSpeech } from '../engine/localLLM'
 
 const PHONE_TABS = [
   { id: 'messages', label: 'Msg' },
@@ -48,6 +49,12 @@ function contactFromNpc(npc, city, focusedAgent, player) {
     job: npc.job,
     role: npc.role,
     personality: npc.personality,
+    speechStyle: npc.speechStyle,
+    voice: npc.voice,
+    gestureStyle: npc.gestureStyle,
+    personaSignature: npc.personaSignature,
+    appearance: npc.appearance,
+    styleBrief: npc.styleBrief,
     activity: active?.activity || 'following schedule',
     placeName: active?.placeName || work?.name || third?.name || npc.home?.name || 'RealCity',
     workId: npc.workId,
@@ -94,29 +101,31 @@ function buildRouteTargets(city, player) {
 }
 
 function seedThread(contact) {
+  const agent = phoneAgent(contact)
   return [
     {
       from: 'them',
-      text: `I am around ${contact.placeName}${contact.workAddress ? ` near ${contact.workAddress}` : ''}. Message me if you need a route, a favor, or a quick update.`,
+      text: styleNpcSpeech(agent, `${contact.placeName}${contact.workAddress ? `, ${contact.workAddress}` : ''} 근처에 있어요. 길 안내나 부탁이 필요하면 메시지 주세요.`),
     },
   ]
 }
 
 function replyFor(contact, text, player, timeMinutes) {
   const lower = text.toLowerCase()
+  const agent = phoneAgent(contact)
   if (/taxi|ride|drive|escort|guide|take|bring|walk|workplace|office|meet/.test(lower)) {
-    return `I got it. I will check the route from ${contact.placeName} and decide whether we should walk or use a taxi.`
+    return styleNpcSpeech(agent, `${contact.placeName}에서 출발하는 동선을 확인하고, 걸어갈지 택시를 탈지 판단해볼게요.`)
   }
   if (/where|location|busy|doing|now/.test(lower)) {
-    return `Right now I am ${contact.activity} near ${contact.placeName}. It is ${clockLabel(timeMinutes)} here.`
+    return styleNpcSpeech(agent, `지금은 ${contact.placeName} 근처에서 ${contact.activity} 중이에요. 현재 시각은 ${clockLabel(timeMinutes)}입니다.`)
   }
   if (/music|song|radio/.test(lower)) {
-    return 'Try Night Market Lo-Fi on the phone. It fits the city after sunset.'
+    return styleNpcSpeech(agent, '휴대폰에서 Night Market Lo-Fi를 틀어보세요. 해가 진 뒤 도시 분위기랑 잘 맞아요.')
   }
   if (player.indoors) {
-    return `You are inside ${player.placeName}, right? I can meet near the entrance if you need me.`
+    return styleNpcSpeech(agent, `지금 ${player.placeName} 안에 계신 거죠? 필요하면 입구 근처에서 만날게요.`)
   }
-  return `I saw your message. I am in ${contact.relation.toLowerCase()} range, so I will keep an eye on your location.`
+  return styleNpcSpeech(agent, `메시지 봤어요. 저는 ${contact.relation.toLowerCase()} 범위의 연락처니까 위치를 계속 신경 쓰고 있을게요.`)
 }
 
 function phoneAgent(contact) {
@@ -128,6 +137,12 @@ function phoneAgent(contact) {
     job: contact.job,
     role: contact.role,
     personality: contact.personality,
+    speechStyle: contact.speechStyle,
+    voice: contact.voice,
+    gestureStyle: contact.gestureStyle,
+    personaSignature: contact.personaSignature,
+    appearance: contact.appearance,
+    styleBrief: contact.styleBrief,
     activity: contact.activity,
     placeName: contact.placeName,
     workId: contact.workId,
@@ -241,7 +256,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
 
   const callContact = (contact = selected) => {
     if (!contact) return
-    const text = `I picked up. I am near ${contact.placeName}, ${contact.activity}.`
+    const text = styleNpcSpeech(phoneAgent(contact), `전화 받았어요. 저는 ${contact.placeName} 근처에서 ${contact.activity} 중입니다.`)
     appendThread(contact, [{ from: 'system', text: `Call connected with ${contact.name}.` }])
     useCityStore.getState().showDialogue({ speaker: contact.name, role: contact.job, text, agent: phoneAgent(contact) })
     useCityStore.getState().setPulse(`Calling ${contact.name} through RealPhone.`)
@@ -391,7 +406,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     <strong>{contact.name}</strong>
                   <small>{contact.workAddress || contact.placeName}</small>
                   </div>
-                  <p>{contact.personality}. Today I am {contact.activity} around {contact.placeName}.</p>
+                  <p>{contact.personality} / {contact.speechStyle?.label || 'natural'}. Today I am {contact.activity} around {contact.placeName}.</p>
                   <footer>{contact.affinity} trust / {Math.round(contact.distance)}m memory distance</footer>
                 </article>
               ))}

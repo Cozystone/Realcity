@@ -29,9 +29,18 @@ const ROLE_LIBRARY = [
   { role: 'retiree', job: 'Retiree', workplace: 'hill_park', color: '#b7a779', pace: 0.7 },
 ]
 
-const GIVEN_NAMES = ['Minji', 'Hana', 'Joon', 'Sora', 'Doyun', 'Ara', 'Hyun', 'Yujin', 'Noel', 'Mina', 'Taeyang', 'Rin']
-const FAMILY_NAMES = ['Kim', 'Park', 'Lee', 'Choi', 'Jung', 'Seo', 'Han', 'Kang', 'Lim']
-const PERSONALITIES = ['warm', 'reserved', 'curious', 'direct', 'funny', 'tired', 'ambitious', 'careful', 'restless']
+const GIVEN_NAMES = [
+  'Minji', 'Hana', 'Joon', 'Sora', 'Doyun', 'Ara', 'Hyun', 'Yujin', 'Noel', 'Mina', 'Taeyang', 'Rin',
+  'Eun', 'Garam', 'Iseul', 'Jae', 'Nari', 'Seojin', 'Yuna', 'Haru', 'Dami', 'Ian', 'Miso', 'Rowoon',
+]
+const FAMILY_NAMES = [
+  'Kim', 'Park', 'Lee', 'Choi', 'Jung', 'Seo', 'Han', 'Kang', 'Lim', 'Shin', 'Yoon', 'Moon',
+  'Baek', 'Kwon', 'Nam', 'Oh', 'Ryu', 'Hong',
+]
+const PERSONALITIES = [
+  'warm', 'reserved', 'curious', 'direct', 'funny', 'tired', 'ambitious', 'careful', 'restless',
+  'patient', 'dry-humored', 'formal', 'soft-spoken', 'street-smart', 'optimistic', 'skeptical',
+]
 const EAST_WEST_STREETS = ['Harbor-ro', 'Depot-gil', 'Aster-daero', 'Market-ro', 'Station-daero', 'Mirae-ro', 'Hanbit-ro', 'Neon-gil', 'Hill-ro']
 const NORTH_SOUTH_STREETS = ['Sunset-ro', 'River-ro', 'Civic-daero', 'Jungang-ro', 'Glass-ro', 'School-gil', 'Workshop-ro', 'Garden-ro', 'Coast-ro']
 
@@ -43,6 +52,50 @@ const FASHION_PALETTES = [
   { top: '#425e80', jacket: '#202833', pants: '#111827', shoes: '#05070a', accessory: '#46515c' },
   { top: '#b84f70', jacket: '#f3dce6', pants: '#3d2430', shoes: '#171217', accessory: '#8b5d35' },
 ]
+
+const BODY_ARCHETYPES = [
+  { id: 'tall_narrow', height: 0.09, shoulder: -0.04, body: -0.03, leg: 0.08, head: -0.02 },
+  { id: 'compact_sturdy', height: -0.07, shoulder: 0.08, body: 0.08, leg: -0.04, head: 0.03 },
+  { id: 'average_relaxed', height: 0, shoulder: 0, body: 0.03, leg: 0, head: 0 },
+  { id: 'long_legged', height: 0.04, shoulder: -0.01, body: -0.02, leg: 0.11, head: -0.01 },
+  { id: 'broad_shouldered', height: 0.02, shoulder: 0.13, body: 0.05, leg: -0.02, head: 0 },
+  { id: 'slight_quick', height: -0.03, shoulder: -0.08, body: -0.06, leg: 0.05, head: 0.02 },
+  { id: 'soft_round', height: -0.02, shoulder: 0.04, body: 0.13, leg: -0.03, head: 0.04 },
+]
+
+const WALK_STYLES = [
+  { id: 'brisk', cadence: 1.14, stride: 1.08, armSwing: 1.2, speed: 1.06 },
+  { id: 'measured', cadence: 0.9, stride: 0.88, armSwing: 0.78, speed: 0.94 },
+  { id: 'bouncy', cadence: 1.22, stride: 0.96, armSwing: 1.1, speed: 1.02 },
+  { id: 'careful', cadence: 0.82, stride: 0.8, armSwing: 0.66, speed: 0.9 },
+  { id: 'long_stride', cadence: 0.96, stride: 1.22, armSwing: 0.95, speed: 1.08 },
+  { id: 'hurried', cadence: 1.35, stride: 1.04, armSwing: 1.34, speed: 1.16 },
+  { id: 'easygoing', cadence: 0.78, stride: 0.92, armSwing: 0.7, speed: 0.88 },
+]
+
+const SPEECH_STYLES = [
+  { id: 'polite_brief', label: 'polite and brief', prefix: '네, ', flavor: '짧고 정중하게 말함' },
+  { id: 'warm_chatty', label: 'warm and chatty', prefix: '좋아요, ', flavor: '상대 기분을 살피며 부드럽게 말함' },
+  { id: 'dry_direct', label: 'dry and direct', prefix: '간단히 말하면, ', flavor: '군더더기 없이 건조하게 말함' },
+  { id: 'careful_formal', label: 'careful and formal', prefix: '알겠습니다. ', flavor: '존댓말을 정확하게 쓰고 위험을 먼저 확인함' },
+  { id: 'bright_casual', label: 'bright and casual', prefix: '오케이, ', flavor: '가볍고 밝은 톤으로 말함' },
+  { id: 'tired_soft', label: 'tired but kind', prefix: '음, ', flavor: '조용하고 느리지만 친절하게 말함' },
+  { id: 'street_practical', label: 'street practical', prefix: '바로 보면, ', flavor: '길과 교통을 현실적으로 따져 말함' },
+  { id: 'curious_precise', label: 'curious and precise', prefix: '확인해볼게요. ', flavor: '질문을 정리하고 이유를 설명함' },
+  { id: 'playful', label: 'playful', prefix: '좋죠. ', flavor: '농담을 살짝 섞어 말함' },
+  { id: 'reserved', label: 'reserved', prefix: '가능합니다. ', flavor: '감정을 적게 드러내고 차분하게 말함' },
+]
+
+const GESTURE_STYLES = [
+  'quick nod', 'hands in pockets', 'checks phone often', 'points while speaking', 'small wave',
+  'adjusts bag strap', 'folds arms', 'looks around before answering', 'half-smile', 'formal bow',
+]
+
+const OUTFIT_PATTERNS = ['solid', 'two-tone', 'striped', 'layered', 'reflective-trim', 'workwear', 'soft-knit', 'streetwear']
+const OUTERWEAR = ['hoodie', 'blazer', 'cardigan', 'vest', 'long coat', 'overshirt', 'utility jacket', 'windbreaker']
+const ACCESSORIES = ['none', 'round glasses', 'square glasses', 'scarf', 'earbuds', 'watch', 'lanyard', 'crossbody pouch']
+const VOICE_PACES = ['quick', 'measured', 'soft', 'low', 'bright', 'slow', 'crisp', 'breathy']
+const VOICE_REGISTERS = ['formal', 'casual', 'practical', 'gentle', 'skeptical', 'warm', 'precise', 'dry']
 
 const LANDMARK_INTERIORS = {
   transit: { width: 64, depth: 30, height: 7.2, doorWidth: 14, lobbyDepth: 25, verticalCore: 'escalator' },
@@ -73,6 +126,59 @@ function pick(rng, list) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
+}
+
+function hslToHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360
+  const sat = clamp(s, 0, 100) / 100
+  const light = clamp(l, 0, 100) / 100
+  const c = (1 - Math.abs(2 * light - 1)) * sat
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1))
+  const m = light - c / 2
+  const [r1, g1, b1] = hue < 60
+    ? [c, x, 0]
+    : hue < 120
+      ? [x, c, 0]
+      : hue < 180
+        ? [0, c, x]
+        : hue < 240
+          ? [0, x, c]
+          : hue < 300
+            ? [x, 0, c]
+            : [c, 0, x]
+  const toHex = value => Math.round((value + m) * 255).toString(16).padStart(2, '0')
+  return `#${toHex(r1)}${toHex(g1)}${toHex(b1)}`
+}
+
+function colorFromHue(h, s = 52, l = 50) {
+  return hslToHex(h, s, l)
+}
+
+function uniqueName(rng, usedNames, index) {
+  for (let tries = 0; tries < 80; tries += 1) {
+    const name = `${pick(rng, GIVEN_NAMES)} ${pick(rng, FAMILY_NAMES)}`
+    if (!usedNames.has(name)) {
+      usedNames.add(name)
+      return name
+    }
+  }
+  const fallback = `${GIVEN_NAMES[index % GIVEN_NAMES.length]} ${FAMILY_NAMES[Math.floor(index / GIVEN_NAMES.length) % FAMILY_NAMES.length]} ${index + 1}`
+  usedNames.add(fallback)
+  return fallback
+}
+
+function createSpeechStyle(rng, role, personality, index) {
+  const base = SPEECH_STYLES[(index + Math.floor(rng() * SPEECH_STYLES.length)) % SPEECH_STYLES.length]
+  const voice = `${pick(rng, VOICE_PACES)} ${pick(rng, VOICE_REGISTERS)}`
+  const gesture = GESTURE_STYLES[(index * 3 + Math.floor(rng() * GESTURE_STYLES.length)) % GESTURE_STYLES.length]
+  return {
+    ...base,
+    voice,
+    gesture,
+    roleBias: role,
+    personalityBias: personality,
+    signature: `${base.id}-${voice.replace(/\s+/g, '_')}-${gesture.replace(/\s+/g, '_')}-${index}`,
+  }
 }
 
 function smoothstep(edge0, edge1, x) {
@@ -524,27 +630,74 @@ function createTraffic(rng, roads) {
   })
 }
 
-function createAppearance(rng, role, gender, age) {
+function createAppearance(rng, role, gender, age, index = 0) {
   const palette = pick(rng, FASHION_PALETTES)
+  const body = BODY_ARCHETYPES[(index + Math.floor(rng() * BODY_ARCHETYPES.length)) % BODY_ARCHETYPES.length]
+  const walk = WALK_STYLES[(index * 2 + Math.floor(rng() * WALK_STYLES.length)) % WALK_STYLES.length]
+  const pattern = OUTFIT_PATTERNS[(index * 3 + Math.floor(rng() * OUTFIT_PATTERNS.length)) % OUTFIT_PATTERNS.length]
+  const outerwear = OUTERWEAR[(index * 5 + Math.floor(rng() * OUTERWEAR.length)) % OUTERWEAR.length]
+  const accessory = ACCESSORIES[(index * 7 + Math.floor(rng() * ACCESSORIES.length)) % ACCESSORIES.length]
   const ageBand = age < 24 ? 'young' : age > 62 ? 'senior' : 'adult'
   const roleBag = ['courier', 'student', 'teacher', 'engineer'].includes(role)
   const formal = ['banker', 'security', 'doctor'].includes(role)
+  const hue = (index * 47 + Math.floor(rng() * 31)) % 360
+  const accentHue = (hue + 145 + Math.floor(rng() * 56)) % 360
+  const neutralHue = (hue + 210 + Math.floor(rng() * 50)) % 360
+  const topColor = formal
+    ? role === 'doctor'
+      ? colorFromHue(198 + index * 7, 18, 88)
+      : role === 'security'
+        ? colorFromHue(214 + index * 5, 26, 20)
+        : colorFromHue(218 + index * 9, 28, 28)
+    : colorFromHue(hue, 42 + rng() * 22, 36 + rng() * 18)
+  const jacketColor = formal
+    ? role === 'doctor'
+      ? colorFromHue(205 + index * 11, 16, 94)
+      : role === 'security'
+        ? colorFromHue(218 + index * 8, 26, 16)
+        : colorFromHue(accentHue, 20 + rng() * 18, 68 + rng() * 10)
+    : pattern === 'two-tone' || pattern === 'layered'
+      ? colorFromHue(accentHue, 36 + rng() * 22, 52 + rng() * 18)
+      : palette.jacket
+  const pantsColor = role === 'doctor'
+    ? colorFromHue(neutralHue, 18, 28)
+    : colorFromHue(neutralHue, 22 + rng() * 18, 16 + rng() * 16)
+  const accessoryColor = colorFromHue(accentHue + 36, 48 + rng() * 26, 38 + rng() * 18)
+  const skinHue = 22 + rng() * 22
+  const skinColor = colorFromHue(skinHue, 32 + rng() * 20, 55 + rng() * 21)
+  const grayHair = ageBand === 'senior' && rng() > 0.55
+  const hairColor = grayHair
+    ? colorFromHue(35 + rng() * 25, 10 + rng() * 12, 44 + rng() * 18)
+    : colorFromHue(16 + rng() * 34, 24 + rng() * 32, 12 + rng() * 26)
+  const glassesStyle = accessory.includes('glasses') ? accessory : (rng() > 0.88 ? pick(rng, ['round glasses', 'square glasses']) : 'none')
+  const scarfStyle = accessory === 'scarf' || rng() > 0.9 ? pick(rng, ['thin', 'wide']) : 'none'
   return {
-    heightScale: clamp(0.9 + rng() * 0.22 + (ageBand === 'senior' ? -0.04 : 0), 0.86, 1.16),
-    shoulderScale: 0.88 + rng() * 0.28,
-    bodyScale: 0.9 + rng() * 0.18,
-    legScale: 0.9 + rng() * 0.2,
-    headScale: 0.92 + rng() * 0.16,
+    signature: `${body.id}-${walk.id}-${pattern}-${outerwear}-${accessory}-${hue}-${index}`,
+    bodyArchetype: body.id,
+    walkStyle: walk,
+    outfitPattern: pattern,
+    outerwear,
+    accessory,
+    heightScale: clamp(0.96 + body.height + rng() * 0.12 + (ageBand === 'senior' ? -0.035 : 0), 0.84, 1.2),
+    shoulderScale: clamp(1 + body.shoulder + (gender === 'man' ? 0.025 : gender === 'woman' ? -0.015 : 0) + (rng() - 0.5) * 0.09, 0.78, 1.26),
+    bodyScale: clamp(1 + body.body + (rng() - 0.5) * 0.08, 0.82, 1.24),
+    legScale: clamp(1 + body.leg + (rng() - 0.5) * 0.09, 0.82, 1.26),
+    headScale: clamp(1 + body.head + (rng() - 0.5) * 0.08, 0.88, 1.14),
     ageBand,
     hairStyle: pick(rng, gender === 'man' ? ['short', 'cap', 'swept', 'shaved'] : ['bob', 'long', 'bun', 'cap']),
     hatStyle: role === 'courier' || role === 'security' || rng() > 0.82 ? pick(rng, ['cap', 'beanie']) : 'none',
     bagStyle: roleBag || rng() > 0.6 ? pick(rng, ['backpack', 'shoulder', 'briefcase']) : 'none',
     bottomStyle: !formal && rng() > 0.72 ? 'skirt' : 'pants',
-    topColor: formal ? role === 'doctor' ? '#e9f1f4' : role === 'security' ? '#1d2633' : '#2b3342' : palette.top,
-    jacketColor: formal ? role === 'doctor' ? '#f7fbff' : role === 'security' ? '#202833' : '#d7dde5' : palette.jacket,
-    pantsColor: formal ? '#18202c' : palette.pants,
-    shoeColor: palette.shoes,
-    accessoryColor: palette.accessory,
+    topColor,
+    jacketColor,
+    pantsColor,
+    shoeColor: colorFromHue(neutralHue + 24, 16 + rng() * 12, 8 + rng() * 8),
+    accessoryColor,
+    skinColor,
+    hairColor,
+    glassesStyle,
+    scarfStyle,
+    styleBrief: `${outerwear}, ${pattern}, ${accessory}, ${body.id}, ${walk.id}`,
   }
 }
 
@@ -647,6 +800,7 @@ function createNPCs(rng, buildings, landmarks) {
   const socialPlaces = landmarks.filter(place => ['cafe', 'park', 'retail', 'leisure', 'transit'].includes(place.kind))
   const byId = new Map(landmarks.map(place => [place.id, place]))
   const homes = buildings.filter(building => building.type === 'apartment' || building.type === 'house')
+  const usedNames = new Set()
 
   return Array.from({ length: 160 }, (_, i) => {
     const roleInfo = pick(rng, ROLE_LIBRARY)
@@ -654,11 +808,14 @@ function createNPCs(rng, buildings, landmarks) {
     const work = byId.get(roleInfo.workplace) || landmarks[0]
     const third = pick(rng, socialPlaces)
     const gender = pick(rng, ['woman', 'man', 'nonbinary'])
-    const name = `${pick(rng, GIVEN_NAMES)} ${pick(rng, FAMILY_NAMES)}`
+    const name = uniqueName(rng, usedNames, i)
     const hx = home.x + (rng() - 0.5) * home.w
     const hz = home.z + (rng() - 0.5) * home.d
 
     const age = 18 + Math.floor(rng() * 57)
+    const personality = pick(rng, PERSONALITIES)
+    const speechStyle = createSpeechStyle(rng, roleInfo.role, personality, i)
+    const appearance = createAppearance(rng, roleInfo.role, gender, age, i)
 
     return {
       id: `npc_${i}`,
@@ -668,9 +825,14 @@ function createNPCs(rng, buildings, landmarks) {
       role: roleInfo.role,
       job: roleInfo.job,
       color: roleInfo.color,
-      pace: roleInfo.pace,
-      personality: pick(rng, PERSONALITIES),
-      appearance: createAppearance(rng, roleInfo.role, gender, age),
+      pace: roleInfo.pace * (appearance.walkStyle?.speed || 1),
+      personality,
+      speechStyle,
+      voice: speechStyle.voice,
+      gestureStyle: speechStyle.gesture,
+      appearance,
+      personaSignature: `${personality}-${speechStyle.signature}`,
+      styleBrief: `${appearance.styleBrief}, ${speechStyle.label}, ${speechStyle.voice}`,
       home: { x: hx, z: hz, y: terrainHeight(hx, hz), name: `${name.split(' ')[1]} residence`, address: home.address, buildingId: home.id },
       workId: work.id,
       thirdId: third.id,
@@ -788,6 +950,7 @@ export function createRealCity(seed = 20260525) {
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
       zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
+      npcDiversity: 'Every NPC carries a distinct name, body archetype, walking cadence, outfit/accessory signature, voice register, gesture style, and speech flavor.',
     },
     zoningRules: {
       roadSetback: BUILDING_ROAD_SETBACK,

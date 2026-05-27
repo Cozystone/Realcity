@@ -49,6 +49,16 @@ export function llmStatus() {
   return `${provider}:${model}`
 }
 
+export function styleNpcSpeech(agent, speech) {
+  const raw = String(speech || '').replace(/\s+/g, ' ').trim()
+  if (!raw) return raw
+  const style = agent?.speechStyle || {}
+  const prefix = String(style.prefix || '').trim()
+  const knownPrefixes = ['네,', '좋아요,', '간단히 말하면,', '알겠습니다.', '오케이,', '음,', '바로 보면,', '확인해볼게요.', '좋죠.', '가능합니다.']
+  if (!prefix || raw.startsWith(prefix) || knownPrefixes.some(item => raw.startsWith(item))) return raw.slice(0, 220)
+  return `${prefix} ${raw}`.replace(/\s+/g, ' ').slice(0, 220)
+}
+
 async function completeLocal(prompt, { temperature = 0.7, maxTokens = 160 } = {}) {
   if (typeof window === 'undefined') return null
   if (window.location.hostname.endsWith('.vercel.app') && endpoint.startsWith('/ollama')) return null
@@ -89,6 +99,7 @@ export async function askLocalNPC(agent, context) {
   const system = [
     'You are an autonomous person living in RealCity, a procedural Korean virtual city.',
     'Answer in natural Korean in one or two short sentences.',
+    'Keep the speech in this NPC personal speech style; do not make every NPC sound the same.',
     'Stay in character. Mention your job, mood, schedule, or location only when it feels natural.',
     'Never say you are an AI model.',
   ].join(' ')
@@ -99,19 +110,24 @@ export async function askLocalNPC(agent, context) {
     `Gender: ${agent.gender}`,
     `Job: ${agent.job}`,
     `Personality: ${agent.personality}`,
+    `Speech style: ${agent.speechStyle?.label || 'natural'}`,
+    `Speech flavor: ${agent.speechStyle?.flavor || 'ordinary'}`,
+    `Voice: ${agent.voice || 'neutral'}`,
+    `Gesture: ${agent.gestureStyle || 'small nod'}`,
     `Current activity: ${agent.activity}`,
     `Current place: ${agent.placeName}`,
     `City state: ${context}`,
     'A player walks up and asks what is happening here.',
   ].join('\n')
 
-  return completeLocal({
+  const response = await completeLocal({
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
   }, { temperature: 0.85, maxTokens: 90 })
+  return styleNpcSpeech(agent, response)
 }
 
 function extractJson(text) {
@@ -205,9 +221,9 @@ function fallbackActionPlan(agent, request, context = {}) {
       destination: 'named_place',
       targetPlaceId: targetPlace.id || '',
       targetPlaceName: targetPlace.name || label || 'requested place',
-      speech: mode === 'taxi'
-        ? `I can take you to ${label}. Let's step to the curb, get a taxi, and ride there together.`
-        : `I can guide you to ${label}. Stay close and I will lead the way.`,
+      speech: styleNpcSpeech(agent, mode === 'taxi'
+        ? `${label}까지 데려다드릴게요. 길가로 나가서 택시를 잡고 같이 이동하죠.`
+        : `${label}까지 안내할게요. 제 뒤를 따라오세요.`),
       steps: mode === 'taxi'
         ? ['Move to the nearest curb', 'Hail a taxi', `Ride with the player to ${label}`, 'Confirm arrival at the entrance']
         : ['Confirm the destination', `Walk toward ${label}`, 'Stop at the entrance and brief the player'],
@@ -224,9 +240,9 @@ function fallbackActionPlan(agent, request, context = {}) {
       destination: 'work',
       targetPlaceId: agent.workId || '',
       targetPlaceName: agent.workName || 'workplace',
-      speech: mode === 'taxi'
-        ? `Yes. My workplace is ${agent.workName || 'nearby'}, so I will call a taxi and take you there.`
-        : `Yes. My workplace is ${agent.workName || 'nearby'}; follow me and I will walk you there.`,
+      speech: styleNpcSpeech(agent, mode === 'taxi'
+        ? `제 일터는 ${agent.workName || '근처'}입니다. 택시를 불러서 같이 가죠.`
+        : `제 일터는 ${agent.workName || '근처'}입니다. 따라오시면 걸어서 안내할게요.`),
       steps: mode === 'taxi'
         ? ['Move to the nearest curb', 'Hail a taxi', 'Ride together to the workplace', 'Guide the player to the entrance']
         : ['Check that the player is following', 'Walk along the route', 'Stop at the workplace entrance'],
@@ -241,7 +257,7 @@ function fallbackActionPlan(agent, request, context = {}) {
       destination: 'none',
       targetPlaceId: '',
       targetPlaceName: '',
-      speech: `I am ${agent.name}, a ${agent.job}. I am ${agent.activity || 'moving through the city'} near ${agent.placeName || 'this block'}.`,
+      speech: styleNpcSpeech(agent, `저는 ${agent.name}, ${agent.job}입니다. 지금은 ${agent.placeName || '이 블록'} 근처에서 ${agent.activity || '이동 중'}이에요.`),
       steps: ['Introduce identity and current activity'],
     }
   }
@@ -253,7 +269,7 @@ function fallbackActionPlan(agent, request, context = {}) {
     destination: 'none',
     targetPlaceId: '',
     targetPlaceName: '',
-    speech: 'Tell me the exact place or person you need, and I will decide whether we should walk, take a taxi, or ask a better local guide.',
+    speech: styleNpcSpeech(agent, '정확한 장소나 사람을 말해 주세요. 걸어갈지, 택시를 탈지, 더 잘 아는 사람에게 물어볼지 판단할게요.'),
     steps: ['Ask for a clearer destination', 'Choose walking or taxi after the destination is known'],
   }
 }
@@ -304,6 +320,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     'Return only strict JSON matching this schema:',
     JSON.stringify(schema),
     'Use Korean for speech. Keep steps concrete and executable in a 3D city simulation.',
+    'Keep the speech in the NPC personal speech style, voice, and gesture flavor; do not make every NPC sound the same.',
     'If the player asks to be taken to the NPC workplace, use destination "work".',
     'If the player names a known city place, use destination "named_place" and set targetPlaceId.',
     'If the trip is far, urgent, or the player asks for a taxi, mode can be "taxi"; otherwise use "walk".',
@@ -314,6 +331,11 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     `NPC: ${agent.name}, ${agent.age}, ${agent.gender}`,
     `Job: ${agent.job}`,
     `Personality: ${agent.personality}`,
+    `Speech style: ${agent.speechStyle?.label || 'natural'}`,
+    `Speech flavor: ${agent.speechStyle?.flavor || 'ordinary'}`,
+    `Voice: ${agent.voice || 'neutral'}`,
+    `Gesture: ${agent.gestureStyle || 'small nod'}`,
+    `Style brief: ${agent.styleBrief || ''}`,
     `Current activity: ${agent.activity}`,
     `Current place: ${agent.placeName}`,
     `Workplace: ${agent.workName || 'unknown'}`,
@@ -357,7 +379,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     destination: ['work', 'home', 'third', 'named_place', 'none'].includes(plan.destination) ? plan.destination : safe.destination,
     targetPlaceId: resolvedPlace?.id || (typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : safe.targetPlaceId || ''),
     targetPlaceName: resolvedPlace?.name || (typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName : safe.targetPlaceName || ''),
-    speech: typeof plan.speech === 'string' && plan.speech.trim() ? plan.speech.trim().slice(0, 220) : safe.speech,
+    speech: styleNpcSpeech(agent, typeof plan.speech === 'string' && plan.speech.trim() ? plan.speech : safe.speech),
     steps: Array.isArray(plan.steps) && plan.steps.length
       ? plan.steps.slice(0, 5).map(step => String(step).slice(0, 90))
       : safe.steps,
@@ -368,18 +390,18 @@ export async function planLocalNPCAction(agent, request, context = {}) {
 export function fallbackLine(agent) {
   const place = agent.placeName || 'this block'
   const lines = {
-    banker: `The money flow around ${place} is moving fast today. I am watching the market before my next meeting.`,
-    doctor: 'The hospital is busy, but the shift is under control. A quiet ten minutes would help.',
-    teacher: 'I am between classes. The students have been unusually energetic today.',
-    courier: 'Traffic is rough, but delivery windows do not wait. I am heading to the next drop.',
-    barista: 'Coffee orders are stacking up. Morning makes everyone move a little faster.',
-    engineer: 'The sidewalk sensors show a strange flow pattern here. Something small changed in this block.',
-    artist: 'The light on the building glass is good right now. It is giving me an idea for tonight.',
-    security: 'Stay aware of the crowd and you will be fine. The station gets dense around this time.',
-    student: 'I am looking around before study hall. The city feels busier than usual today.',
-    shopkeeper: 'The market tells you the mood of the whole day if you watch people long enough.',
-    gardener: 'The wind is dry. The park trees will need water before the afternoon.',
-    retiree: 'I walk this route every day. Slow streets reveal more than fast ones.',
+    banker: `${place} 쪽 자금 흐름이 오늘 꽤 빠릅니다. 다음 미팅 전에 시장 분위기를 보고 있어요.`,
+    doctor: '병원은 바쁘지만 아직 통제되고 있어요. 조용한 10분만 있어도 숨을 돌릴 수 있겠네요.',
+    teacher: '수업 사이에 잠깐 나왔어요. 오늘 학생들이 유난히 에너지가 넘칩니다.',
+    courier: '교통이 거칠지만 배송 시간은 기다려주지 않죠. 다음 경유지로 가는 중이에요.',
+    barista: '주문이 계속 쌓이고 있어요. 아침에는 도시 전체가 조금 더 빨리 움직이네요.',
+    engineer: '인도 센서 흐름이 조금 이상합니다. 이 블록에서 작은 변화가 생긴 것 같아요.',
+    artist: '지금 건물 유리에 비치는 빛이 좋아요. 오늘 밤 작업에 쓸 생각이 떠올랐습니다.',
+    security: '사람 흐름만 잘 보면 괜찮습니다. 이 시간대에는 역 주변이 특히 빽빽해져요.',
+    student: '자습 전에 주변을 둘러보고 있어요. 오늘 도시는 평소보다 더 바쁜 느낌이에요.',
+    shopkeeper: '사람들을 오래 보면 시장이 하루의 기분을 알려줍니다. 오늘은 조금 들떠 있어요.',
+    gardener: '바람이 건조하네요. 오후 전에 공원 나무들에 물을 줘야 할 것 같습니다.',
+    retiree: '이 길은 매일 걷습니다. 천천히 걸어야 빠른 거리에서는 안 보이는 게 보여요.',
   }
-  return lines[agent.role] || `I am near ${place}. RealCity is moving a little faster than usual today.`
+  return styleNpcSpeech(agent, lines[agent.role] || `${place} 근처에 있어요. 오늘 RealCity는 평소보다 조금 빠르게 움직이네요.`)
 }
