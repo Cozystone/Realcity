@@ -318,7 +318,7 @@ async function inspectCityNorms(page) {
   assert(norms.hairVariants >= 8, `NPC hair tone variation is too low: ${norms.hairVariants}`)
   assert(norms.accessoryVariants >= 7, `NPC accessory variation is too low: ${norms.accessoryVariants}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.collision, 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -371,6 +371,40 @@ async function inspectPhone(page) {
     music: musicText.split(/\r?\n/).slice(0, 12),
     taxi: taxiText.split(/\r?\n/).slice(0, 12),
   }
+}
+
+async function inspectCollisionAndMaterials(page) {
+  await page.waitForFunction(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.pedestrianSamples?.length > 80 && state?.vehicleSamples?.length > 80
+  }, null, { timeout: 15000 })
+
+  const result = await page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return {
+      rules: state?.collisionRules || null,
+      pedestrianSamples: state?.pedestrianSamples?.length || 0,
+      vehicleSamples: state?.vehicleSamples?.length || 0,
+      activePedestrianStates: [...new Set((state?.pedestrianSamples || []).map(sample => sample.state).filter(Boolean))].slice(0, 12),
+      vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
+      vehicleBoundsReady: (state?.vehicleSamples || []).filter(sample => sample.width > 0 && sample.length > 0 && typeof sample.yaw === 'number').length,
+      clouds: window.__REALCITY_CLOUDS__ || null,
+      textures: window.__REALCITY_TEXTURES__ || null,
+    }
+  })
+
+  assert(result.rules?.solidObjects?.includes('pedestrians') && result.rules?.solidObjects?.includes('vehicles'), 'Dynamic pedestrian/vehicle collision rules are missing')
+  assert(result.rules?.reactions?.includes('push-away') && result.rules?.reactions?.includes('fall') && result.rules?.reactions?.includes('driver-brake'), 'Collision reaction metadata is incomplete')
+  assert(result.pedestrianSamples > 100, `Pedestrian collision samples are too sparse: ${result.pedestrianSamples}`)
+  assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
+  assert(result.vehicleBoundsReady === result.vehicleSamples, 'Vehicle collision samples do not expose oriented bounds')
+  assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
+  assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
+  assert(result.clouds.count >= 16 && result.clouds.averagePuffs >= 8, 'Cloud puff composition is too sparse')
+  assert(result.clouds.hasFlattenedUndersides && result.clouds.maxVerticalAspect < 0.55, 'Clouds are still vertically stretched or lack flattened undersides')
+  assert(result.textures?.procedural && result.textures.classes?.length >= 8, 'Procedural texture catalog was not exposed')
+  assert(['cloud-vapor', 'city-fabric', 'skin-pores', 'vehicle-paint', 'rubber-tread', 'glass-smudge'].every(key => result.textures.classes.includes(key)), 'Core object texture classes are missing')
+  return result
 }
 
 function collectOllamaStatus() {
@@ -426,6 +460,7 @@ async function main() {
     const supportUX = await inspectSupportUX(page)
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
+    const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
@@ -514,6 +549,7 @@ async function main() {
       cityNorms,
       supportUX,
       skyState,
+      collisionAndMaterials,
       phone,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),

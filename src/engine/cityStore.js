@@ -43,6 +43,14 @@ export const useCityStore = create((set, get) => ({
   mission: null,
   ride: null,
   pedestrianSamples: [],
+  vehicleSamples: [],
+  collisionRules: {
+    playerRadius: 0.72,
+    pedestrianRadius: 0.82,
+    vehiclePadding: 0.78,
+    solidObjects: ['buildings', 'landmarks', 'pedestrians', 'vehicles'],
+    reactions: ['push-away', 'stumble', 'fall', 'driver-brake'],
+  },
   pulse: 'Morning traffic is building around Central Station.',
 
   tick(delta) {
@@ -161,6 +169,10 @@ export const useCityStore = create((set, get) => ({
 
   setPedestrianSamples(pedestrianSamples) {
     set({ pedestrianSamples })
+  },
+
+  setVehicleSamples(vehicleSamples) {
+    set({ vehicleSamples })
   },
 }))
 

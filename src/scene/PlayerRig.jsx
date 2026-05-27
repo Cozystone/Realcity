@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { CITY_HALF, terrainHeight } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
+import { makeProceduralTexture } from './proceduralTextures'
 
 const WALK_SPEED = 6.2
 const RUN_SPEED = 12.5
@@ -146,12 +147,128 @@ function resolveBuildingCollision(city, previousX, previousZ, x, z) {
   return [px, pz]
 }
 
+function vehicleLocal(sample, x, z) {
+  const dx = x - sample.x
+  const dz = z - sample.z
+  const cos = Math.cos(sample.yaw || 0)
+  const sin = Math.sin(sample.yaw || 0)
+  return {
+    x: dx * cos - dz * sin,
+    z: dx * sin + dz * cos,
+  }
+}
+
+function vehicleWorld(sample, localX, localZ) {
+  const cos = Math.cos(sample.yaw || 0)
+  const sin = Math.sin(sample.yaw || 0)
+  return {
+    x: sample.x + localX * cos + localZ * sin,
+    z: sample.z - localX * sin + localZ * cos,
+  }
+}
+
+function resolveCircleCollision(px, pz, sample, radius) {
+  const dx = px - sample.x
+  const dz = pz - sample.z
+  const distance = Math.hypot(dx, dz)
+  if (distance >= radius) return null
+  const nx = distance > 0.001 ? dx / distance : 1
+  const nz = distance > 0.001 ? dz / distance : 0
+  return {
+    x: sample.x + nx * radius,
+    z: sample.z + nz * radius,
+    penetration: radius - distance,
+    nx,
+    nz,
+  }
+}
+
+function resolveVehicleCollision(px, pz, sample, playerRadius, padding) {
+  const local = vehicleLocal(sample, px, pz)
+  const halfW = (sample.width || 2.1) / 2 + playerRadius + padding * 0.42
+  const halfL = (sample.length || 4.4) / 2 + playerRadius + padding * 0.34
+  if (Math.abs(local.x) >= halfW || Math.abs(local.z) >= halfL) return null
+
+  const pushX = halfW - Math.abs(local.x)
+  const pushZ = halfL - Math.abs(local.z)
+  const safeLocal = { ...local }
+  if (pushX < pushZ) safeLocal.x = Math.sign(local.x || 1) * halfW
+  else safeLocal.z = Math.sign(local.z || 1) * halfL
+  const safe = vehicleWorld(sample, safeLocal.x, safeLocal.z)
+  return {
+    ...safe,
+    penetration: Math.min(pushX, pushZ),
+    nx: safe.x - px,
+    nz: safe.z - pz,
+  }
+}
+
+function emitCollisionOnce(cooldowns, key, cooldownMs, callback) {
+  const now = performance.now()
+  const last = cooldowns.get(key) || 0
+  if (now - last < cooldownMs) return
+  cooldowns.set(key, now)
+  callback()
+}
+
+function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, cooldowns) {
+  let px = x
+  let pz = z
+  const rules = store.collisionRules || {}
+  const playerRadius = rules.playerRadius || 0.72
+  const pedestrianRadius = playerRadius + (rules.pedestrianRadius || 0.82)
+  const vehiclePadding = rules.vehiclePadding || 0.78
+  const movement = Math.hypot(x - previousX, z - previousZ)
+
+  for (const pedestrian of store.pedestrianSamples || []) {
+    if (!pedestrian?.id) continue
+    const radius = playerRadius + (pedestrian.radius || 0.82)
+    const result = resolveCircleCollision(px, pz, pedestrian, Math.max(radius, pedestrianRadius))
+    if (!result) continue
+    px = result.x
+    pz = result.z
+    const impulse = Math.min(1.6, (isRunning ? 1.05 : 0.58) + movement * 5 + result.penetration * 0.7)
+    emitCollisionOnce(cooldowns, `npc:${pedestrian.id}`, 520, () => {
+      window.dispatchEvent(new CustomEvent('realcity:player-hit-npc', {
+        detail: {
+          id: pedestrian.id,
+          playerX: previousX,
+          playerZ: previousZ,
+          x: px,
+          z: pz,
+          impulse,
+        },
+      }))
+    })
+  }
+
+  for (const vehicle of store.vehicleSamples || []) {
+    if (!vehicle?.id) continue
+    const result = resolveVehicleCollision(px, pz, vehicle, playerRadius, vehiclePadding)
+    if (!result) continue
+    px = result.x
+    pz = result.z
+    emitCollisionOnce(cooldowns, `vehicle:${vehicle.id}`, 900, () => {
+      store.setPulse(`${vehicle.kind === 'taxi' ? 'The taxi' : 'The car'} brakes and you are pushed clear of its body.`)
+    })
+  }
+
+  return [px, pz]
+}
+
 function Character({ moving, running }) {
   const leftLeg = useRef()
   const rightLeg = useRef()
   const leftArm = useRef()
   const rightArm = useRef()
   const phase = useRef(0)
+  const textures = useMemo(() => ({
+    fabric: makeProceduralTexture('city-fabric', { size: 128, seed: 31, repeatX: 2, repeatY: 2 }),
+    skin: makeProceduralTexture('skin-pores', { size: 128, seed: 32, repeatX: 1.5, repeatY: 1.5 }),
+    hair: makeProceduralTexture('hair-strands', { size: 128, seed: 33, repeatX: 2.4, repeatY: 1.2 }),
+    rubber: makeProceduralTexture('rubber-tread', { size: 128, seed: 34, repeatX: 2, repeatY: 2 }),
+    glass: makeProceduralTexture('glass-smudge', { size: 128, seed: 35, repeatX: 1.2, repeatY: 1.2 }),
+  }), [])
 
   useFrame((_, delta) => {
     const rate = moving.current ? (running.current ? 10 : 6.5) : 0
@@ -167,63 +284,63 @@ function Character({ moving, running }) {
     <group position={[0, -0.9, 0]}>
       <mesh castShadow position={[0, 0.78, 0]}>
         <boxGeometry args={[0.38, 0.2, 0.25]} />
-        <meshStandardMaterial color="#1c2541" roughness={0.8} />
+        <meshStandardMaterial map={textures.fabric} color="#1c2541" roughness={0.8} />
       </mesh>
       <mesh castShadow position={[0, 1.2, 0]}>
         <capsuleGeometry args={[0.21, 0.52, 4, 10]} />
-        <meshStandardMaterial color="#2f6f9f" roughness={0.72} />
+        <meshStandardMaterial map={textures.fabric} color="#2f6f9f" roughness={0.72} />
       </mesh>
       <mesh castShadow position={[0, 1.27, 0.18]}>
         <boxGeometry args={[0.28, 0.34, 0.035]} />
-        <meshStandardMaterial color="#e8f1f4" roughness={0.58} metalness={0.02} />
+        <meshStandardMaterial map={textures.glass} color="#e8f1f4" roughness={0.58} metalness={0.02} />
       </mesh>
       <mesh castShadow position={[0, 1.57, 0]}>
         <capsuleGeometry args={[0.075, 0.12, 4, 8]} />
-        <meshStandardMaterial color="#d9a47f" roughness={0.66} />
+        <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.66} />
       </mesh>
       <group ref={leftLeg} position={[-0.12, 0.74, 0]}>
         <mesh castShadow position={[0, -0.34, 0]}>
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
-          <meshStandardMaterial color="#17203a" roughness={0.84} />
+          <meshStandardMaterial map={textures.fabric} color="#17203a" roughness={0.84} />
         </mesh>
         <mesh castShadow position={[0, -0.67, 0.045]}>
           <boxGeometry args={[0.11, 0.06, 0.18]} />
-          <meshStandardMaterial color="#0d1118" roughness={0.85} />
+          <meshStandardMaterial map={textures.rubber} color="#0d1118" roughness={0.85} />
         </mesh>
       </group>
       <group ref={rightLeg} position={[0.12, 0.74, 0]}>
         <mesh castShadow position={[0, -0.34, 0]}>
           <capsuleGeometry args={[0.065, 0.52, 4, 8]} />
-          <meshStandardMaterial color="#17203a" roughness={0.84} />
+          <meshStandardMaterial map={textures.fabric} color="#17203a" roughness={0.84} />
         </mesh>
         <mesh castShadow position={[0, -0.67, 0.045]}>
           <boxGeometry args={[0.11, 0.06, 0.18]} />
-          <meshStandardMaterial color="#0d1118" roughness={0.85} />
+          <meshStandardMaterial map={textures.rubber} color="#0d1118" roughness={0.85} />
         </mesh>
       </group>
       <group ref={leftArm} position={[-0.28, 1.34, 0]}>
         <mesh castShadow position={[0, -0.26, 0]}>
           <capsuleGeometry args={[0.055, 0.42, 4, 8]} />
-          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+          <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
         </mesh>
         <mesh castShadow position={[0, -0.51, 0.015]}>
           <sphereGeometry args={[0.065, 10, 8]} />
-          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+          <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
         </mesh>
       </group>
       <group ref={rightArm} position={[0.28, 1.34, 0]}>
         <mesh castShadow position={[0, -0.26, 0]}>
           <capsuleGeometry args={[0.055, 0.42, 4, 8]} />
-          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+          <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
         </mesh>
         <mesh castShadow position={[0, -0.51, 0.015]}>
           <sphereGeometry args={[0.065, 10, 8]} />
-          <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+          <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
         </mesh>
       </group>
       <mesh castShadow position={[0, 1.72, 0]}>
         <sphereGeometry args={[0.205, 18, 14]} />
-        <meshStandardMaterial color="#efc29a" roughness={0.64} />
+        <meshStandardMaterial map={textures.skin} color="#efc29a" roughness={0.64} />
       </mesh>
       <mesh castShadow position={[-0.088, 1.745, 0.188]}>
         <sphereGeometry args={[0.022, 8, 6]} />
@@ -235,7 +352,7 @@ function Character({ moving, running }) {
       </mesh>
       <mesh castShadow position={[0, 1.69, 0.215]}>
         <boxGeometry args={[0.035, 0.055, 0.035]} />
-        <meshStandardMaterial color="#c98f70" roughness={0.68} />
+        <meshStandardMaterial map={textures.skin} color="#c98f70" roughness={0.68} />
       </mesh>
       <mesh castShadow position={[0, 1.625, 0.202]}>
         <boxGeometry args={[0.09, 0.012, 0.014]} />
@@ -243,19 +360,19 @@ function Character({ moving, running }) {
       </mesh>
       <mesh castShadow position={[-0.215, 1.705, 0]}>
         <sphereGeometry args={[0.035, 8, 6]} />
-        <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+        <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
       </mesh>
       <mesh castShadow position={[0.215, 1.705, 0]}>
         <sphereGeometry args={[0.035, 8, 6]} />
-        <meshStandardMaterial color="#d9a47f" roughness={0.68} />
+        <meshStandardMaterial map={textures.skin} color="#d9a47f" roughness={0.68} />
       </mesh>
       <mesh castShadow position={[0, 1.88, -0.02]}>
         <sphereGeometry args={[0.205, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55]} />
-        <meshStandardMaterial color="#17100b" roughness={0.92} />
+        <meshStandardMaterial map={textures.hair} color="#17100b" roughness={0.92} />
       </mesh>
       <mesh castShadow position={[0, 1.72, -0.145]}>
         <boxGeometry args={[0.34, 0.22, 0.08]} />
-        <meshStandardMaterial color="#17100b" roughness={0.92} />
+        <meshStandardMaterial map={textures.hair} color="#17100b" roughness={0.92} />
       </mesh>
     </group>
   )
@@ -276,6 +393,7 @@ export default function PlayerRig({ city }) {
   const camTarget = useMemo(() => new THREE.Vector3(), [])
   const lookAt = useMemo(() => new THREE.Vector3(), [])
   const lastPlace = useRef(null)
+  const collisionCooldowns = useRef(new Map())
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
@@ -335,7 +453,8 @@ export default function PlayerRig({ city }) {
 
       const nextX = pos.current.x + move.x
       const nextZ = pos.current.z + move.z
-      const [safeX, safeZ] = resolveBuildingCollision(city, pos.current.x, pos.current.z, nextX, nextZ)
+      let [safeX, safeZ] = resolveBuildingCollision(city, pos.current.x, pos.current.z, nextX, nextZ)
+      ;[safeX, safeZ] = resolveDynamicCollision(store, pos.current.x, pos.current.z, safeX, safeZ, running.current, collisionCooldowns.current)
       const groundY = terrainHeight(safeX, safeZ) + 1.1
       let nextY = pos.current.y + velocityY.current * dt
       if (nextY <= groundY) {

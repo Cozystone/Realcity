@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Cloud, Environment, Sky, Stars } from '@react-three/drei'
+import { Environment, Sky, Stars } from '@react-three/drei'
 import * as THREE from 'three'
 import { useCityStore } from '../engine/cityStore'
+import { exposeTextureCatalog, makeProceduralTexture } from './proceduralTextures'
 
 function sunFor(minutes) {
   const hour = minutes / 60
@@ -29,20 +30,78 @@ export default function Atmosphere() {
       seed = (seed * 1664525 + 1013904223) & 0xffffffff
       return (seed >>> 0) / 4294967296
     }
-    return Array.from({ length: 16 }, (_, i) => ({
-      x: (rnd() - 0.5) * 3400,
-      y: 250 + rnd() * 260,
-      z: (rnd() - 0.5) * 3400,
-      sx: 45 + rnd() * 160,
-      sy: 18 + rnd() * 42,
-      sz: 50 + rnd() * 135,
-      speed: 0.45 + rnd() * 1.35,
-      phase: i * 0.51,
-      opacity: 0.13 + rnd() * 0.34,
-    }))
+    const visibleAnchors = [
+      { x: -520, y: 185, z: -780 },
+      { x: 420, y: 215, z: -1080 },
+      { x: -860, y: 235, z: 360 },
+      { x: 760, y: 205, z: 560 },
+      { x: -120, y: 255, z: -1340 },
+      { x: 1160, y: 265, z: -340 },
+    ]
+    return Array.from({ length: 18 }, (_, i) => {
+      const anchor = visibleAnchors[i]
+      const width = anchor ? 68 + rnd() * 96 : 80 + rnd() * 155
+      const depth = anchor ? 38 + rnd() * 72 : 42 + rnd() * 115
+      const height = anchor ? 9 + rnd() * 15 : 12 + rnd() * 23
+      const opacity = anchor ? 0.34 + rnd() * 0.2 : 0.2 + rnd() * 0.26
+      const puffCount = 7 + Math.floor(rnd() * 6)
+      const puffs = Array.from({ length: puffCount }, (_, puffIndex) => {
+        const angle = rnd() * Math.PI * 2
+        const spread = Math.sqrt(rnd())
+        const centerBias = puffIndex < 2 ? 0.32 : 1
+        return {
+          x: Math.cos(angle) * width * 0.36 * spread * centerBias,
+          y: (rnd() - 0.28) * height * 0.72,
+          z: Math.sin(angle) * depth * 0.42 * spread * centerBias,
+          sx: width * (0.2 + rnd() * 0.25),
+          sy: height * (0.42 + rnd() * 0.38),
+          sz: depth * (0.24 + rnd() * 0.28),
+          shade: rnd() > 0.58 ? '#f8fbff' : '#edf4fa',
+          opacity: opacity * (0.72 + rnd() * 0.4),
+        }
+      })
+      puffs.push({
+        x: 0,
+        y: -height * 0.34,
+        z: 0,
+        sx: width * 0.58,
+        sy: height * 0.18,
+        sz: depth * 0.52,
+        shade: '#dfe8f0',
+        opacity: opacity * 0.54,
+      })
+      return {
+        x: anchor?.x ?? (rnd() - 0.5) * 3400,
+        y: anchor?.y ?? (250 + rnd() * 235),
+        z: anchor?.z ?? (rnd() - 0.5) * 3400,
+        speed: 0.35 + rnd() * 1.1,
+        phase: i * 0.51,
+        opacity,
+        width,
+        depth,
+        height,
+        puffs,
+      }
+    })
   }, [])
 
   const cloudRefs = useRef([])
+  const cloudTexture = useMemo(() => makeProceduralTexture('cloud-vapor', { size: 128, seed: 909, repeatX: 1.4, repeatY: 1 }), [])
+
+  useEffect(() => {
+    exposeTextureCatalog()
+    if (typeof window !== 'undefined' && import.meta.env.DEV) {
+      window.__REALCITY_CLOUDS__ = {
+        system: 'layered-procedural-puffs',
+        count: clouds.length,
+        puffCount: clouds.reduce((sum, cloud) => sum + cloud.puffs.length, 0),
+        averagePuffs: clouds.reduce((sum, cloud) => sum + cloud.puffs.length, 0) / clouds.length,
+        maxVerticalAspect: Math.max(...clouds.map(cloud => Number((cloud.height / Math.max(1, cloud.width)).toFixed(3)))),
+        hasFlattenedUndersides: clouds.every(cloud => cloud.puffs.some(puff => puff.sy < cloud.height * 0.25 && puff.y < 0)),
+        textured: !!cloudTexture,
+      }
+    }
+  }, [clouds, cloudTexture])
 
   useFrame((state, delta) => {
     const { timeMinutes, weather } = useCityStore.getState()
@@ -146,16 +205,28 @@ export default function Atmosphere() {
         <meshBasicMaterial color="#d9e5ff" toneMapped={false} />
       </mesh>
       {clouds.map((cloud, i) => (
-        <Cloud
+        <group
           key={i}
           ref={node => { cloudRefs.current[i] = node }}
           position={[cloud.x, cloud.y, cloud.z]}
-          opacity={cloud.opacity}
-          scale={[cloud.sx, cloud.sy, cloud.sz]}
-          segments={10}
-          speed={0}
-          color="#eef4fb"
-        />
+          rotation={[0, cloud.phase * 0.34, 0]}
+          renderOrder={-2}
+        >
+          {cloud.puffs.map((puff, puffIndex) => (
+            <mesh key={puffIndex} position={[puff.x, puff.y, puff.z]} scale={[puff.sx, puff.sy, puff.sz]} frustumCulled={false}>
+              <sphereGeometry args={[1, 18, 12]} />
+              <meshStandardMaterial
+                map={cloudTexture}
+                color={puff.shade}
+                transparent
+                opacity={Math.min(0.7, puff.opacity)}
+                roughness={1}
+                metalness={0}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
+        </group>
       ))}
     </>
   )
