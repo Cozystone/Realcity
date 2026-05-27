@@ -67,6 +67,10 @@ export const useCityStore = create((set, get) => ({
     floor: 0,
     floorCount: 0,
     verticalCore: null,
+    floorLabel: null,
+    floorZone: null,
+    accessHint: null,
+    coreHint: null,
   },
   weather: {
     label: 'Clear',
@@ -140,7 +144,9 @@ export const useCityStore = create((set, get) => ({
       (player.placeId || null) === (current.placeId || null) &&
       !!player.indoors === !!current.indoors &&
       (player.floor || 0) === (current.floor || 0) &&
-      (player.floorCount || 0) === (current.floorCount || 0)
+      (player.floorCount || 0) === (current.floorCount || 0) &&
+      (player.floorLabel || null) === (current.floorLabel || null) &&
+      (player.floorZone || null) === (current.floorZone || null)
     ) return
 
     set({ player })

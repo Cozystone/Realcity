@@ -78,12 +78,27 @@ async function inspectBuildingAccess(page) {
       building.interior?.floorNavigation?.reachableFloors === building.interior?.floors &&
       building.interior?.floorNavigation?.floorHeight === building.interior?.floorHeight
     )
+    const floorDirectoryReady = city.buildings.filter(building =>
+      Array.isArray(building.interior?.floorDirectory) &&
+      building.interior.floorDirectory.length === building.interior.floors &&
+      building.interior.floorDirectory.every(entry => entry.level > 0 && entry.label && entry.zone && entry.access && entry.core && entry.guide)
+    )
+    const currentInteriorDirectoryReady = city.buildings.filter(building => {
+      const face = building.interior?.entryPortal?.face || building.facadePlan?.entryFace || 'south'
+      const inside = probe(building, face, 0, -1.1)
+      const interior = collision.currentInterior(city, inside.x, inside.z)
+      return interior?.id === building.id &&
+        Array.isArray(interior.floorDirectory) &&
+        interior.floorDirectory.length === building.interior.floors
+    })
 
     return {
       buildingCount: city.buildings.length,
       doorEntryTests: doorEntryTests.length,
       blockedSideWallTests: blockedSideWallTests.length,
       floorNavigationReady: floorReady.length,
+      floorDirectoryReady: floorDirectoryReady.length,
+      currentInteriorDirectoryReady: currentInteriorDirectoryReady.length,
     }
   })
 
@@ -91,6 +106,8 @@ async function inspectBuildingAccess(page) {
   assert(result.doorEntryTests === result.buildingCount, `Not every procedural building can be entered through its door: ${result.doorEntryTests}/${result.buildingCount}`)
   assert(result.blockedSideWallTests === result.buildingCount, `Some procedural side walls are passable away from doors: ${result.blockedSideWallTests}/${result.buildingCount}`)
   assert(result.floorNavigationReady === result.buildingCount, `Procedural building floor navigation metadata is incomplete: ${result.floorNavigationReady}/${result.buildingCount}`)
+  assert(result.floorDirectoryReady === result.buildingCount, `Procedural building floor directories are incomplete: ${result.floorDirectoryReady}/${result.buildingCount}`)
+  assert(result.currentInteriorDirectoryReady === result.buildingCount, `Runtime interior lookup does not expose floor directories: ${result.currentInteriorDirectoryReady}/${result.buildingCount}`)
   return result
 }
 
@@ -369,11 +386,13 @@ async function inspectLandmarkInteriors(page) {
         verticalCore: place.interior?.verticalCore || '',
         floorCount: place.interior?.floorCount || 0,
         lobbyZones: place.interior?.lobbyZones?.length || 0,
+        floorDirectory: place.interior?.floorDirectory?.length || 0,
+        floorDirectoryComplete: (place.interior?.floorDirectory || []).every(entry => entry.level > 0 && entry.label && entry.zone && entry.access && entry.core && entry.guide),
       }))
   })
   assert(Array.isArray(interiors), 'City metadata was not exposed for interior verification')
   assert(interiors.length >= 8, 'Expected landmark interiors for most named buildings')
-  const broken = interiors.filter(item => !item.hasInterior || !item.solidWalls || item.doorWidth <= 0 || !item.verticalCore || item.floorCount <= 0 || item.lobbyZones < 3)
+  const broken = interiors.filter(item => !item.hasInterior || !item.solidWalls || item.doorWidth <= 0 || !item.verticalCore || item.floorCount <= 0 || item.lobbyZones < 3 || item.floorDirectory !== item.floorCount || !item.floorDirectoryComplete)
   assert(broken.length === 0, `Incomplete landmark interiors: ${broken.map(item => item.id).join(', ')}`)
   return interiors
 }
@@ -426,6 +445,11 @@ async function inspectCityNorms(page) {
     )
     const entryFaces = new Set(city.buildings.map(building => building.facadePlan?.entryFace).filter(Boolean))
     const buildingInteriors = city.buildings.filter(building => building.interior?.solidWalls && building.interior?.floors >= 1 && building.interior?.lobbyDepth > 0 && building.interior?.verticalCore && Array.isArray(building.interior?.zones) && building.interior.zones.length >= 4)
+    const buildingFloorDirectories = city.buildings.filter(building =>
+      Array.isArray(building.interior?.floorDirectory) &&
+      building.interior.floorDirectory.length === building.interior.floors &&
+      building.interior.floorDirectory.every(entry => entry.level > 0 && entry.label && entry.zone && entry.access && entry.core && entry.guide)
+    )
     const entryPortals = city.buildings.filter(building => building.interior?.entryPortal?.rule === 'pass-through-door-only' && building.interior?.entryPortal?.width > 0 && building.interior?.entryPortal?.face === building.facadePlan?.entryFace)
     const floorNavigation = city.buildings.filter(building => building.interior?.floorNavigation?.method === building.interior?.verticalCore && building.interior?.floorNavigation?.reachableFloors === building.interior?.floors)
     const interiorCoreTypes = new Set(city.buildings.map(building => building.interior?.verticalCore).filter(Boolean))
@@ -476,6 +500,7 @@ async function inspectCityNorms(page) {
       stableBalconies: stableBalconies.length,
       entryFaceVariants: entryFaces.size,
       buildingInteriors: buildingInteriors.length,
+      buildingFloorDirectories: buildingFloorDirectories.length,
       entryPortals: entryPortals.length,
       floorNavigation: floorNavigation.length,
       interiorCoreTypes: interiorCoreTypes.size,
@@ -521,6 +546,7 @@ async function inspectCityNorms(page) {
   assert(norms.stableBalconies === norms.buildingCount, 'Apartment balcony patterns are not using stable facade rules')
   assert(norms.entryFaceVariants >= 4, `Building entry faces do not vary enough: ${norms.entryFaceVariants}`)
   assert(norms.buildingInteriors === norms.buildingCount, 'Procedural building interior plans are incomplete')
+  assert(norms.buildingFloorDirectories === norms.buildingCount, 'Procedural building floor directories are incomplete')
   assert(norms.entryPortals === norms.buildingCount, 'Procedural building entry portals are incomplete')
   assert(norms.floorNavigation === norms.buildingCount, 'Procedural floor navigation metadata is incomplete')
   assert(norms.interiorCoreTypes >= 3, `Building vertical core types are not diverse enough: ${norms.interiorCoreTypes}`)

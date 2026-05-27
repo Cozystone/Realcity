@@ -126,6 +126,26 @@ function emitCollisionOnce(cooldowns, key, cooldownMs, callback) {
   callback()
 }
 
+function indoorFloorInfo(place, floorIndex = 0) {
+  if (!place) return null
+  const directory = Array.isArray(place.floorDirectory) ? place.floorDirectory : []
+  const entry = directory[Math.max(0, Math.min(directory.length - 1, floorIndex))]
+  const level = floorIndex + 1
+  const core = place.verticalCore === 'elevator'
+    ? 'Elevator bank'
+    : place.verticalCore === 'escalator'
+      ? 'Escalator hall'
+      : 'Stair core'
+  return entry || {
+    level,
+    label: level === 1 ? 'Ground lobby' : `Floor ${level}`,
+    zone: level === 1 ? 'lobby and entry hall' : 'upper floor rooms',
+    access: place.publicAccess || 'building access',
+    core,
+    guide: `${core} connects to ${place.floorCount || 1} floors.`,
+  }
+}
+
 function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, cooldowns) {
   let px = x
   let pz = z
@@ -503,7 +523,8 @@ export default function PlayerRig({ city }) {
       lastPlace.current = place?.id || null
       floorLevel.current = 0
       if (place) {
-        storeNow.setPulse(`You entered ${place.name}. ${place.verticalCore === 'elevator' ? 'Elevators' : place.verticalCore === 'escalator' ? 'Escalators' : 'Stairs'} are visible from the lobby.`)
+        const info = indoorFloorInfo(place, 0)
+        storeNow.setPulse(`You entered ${place.name}. ${info.label}: ${info.zone}. ${info.core} is visible from the lobby.`)
       }
     }
     floorCooldown.current = Math.max(0, floorCooldown.current - dt)
@@ -519,11 +540,12 @@ export default function PlayerRig({ city }) {
           velocityY.current = 0
           grounded.current = true
           pos.current.y = terrainHeight(pos.current.x, pos.current.z) + 1.1 + floorLevel.current * (place.floorHeight || 3.6)
-          const core = place.verticalCore === 'elevator' ? 'Elevator' : place.verticalCore === 'escalator' ? 'Escalator' : 'Stairs'
-          storeNow.setPulse(`${core} to floor ${floorLevel.current + 1} of ${place.floorCount} in ${place.name}.`)
+          const info = indoorFloorInfo(place, floorLevel.current)
+          storeNow.setPulse(`${info.core} to ${info.label} in ${place.name}: ${info.zone}.`)
         }
       }
     }
+    const floorInfo = indoorFloorInfo(place, floorLevel.current)
     storeNow.setPlayer({
       x: pos.current.x,
       y: pos.current.y,
@@ -538,6 +560,10 @@ export default function PlayerRig({ city }) {
       floor: place ? floorLevel.current + 1 : 0,
       floorCount: place?.floorCount || 0,
       verticalCore: place?.verticalCore || null,
+      floorLabel: floorInfo?.label || null,
+      floorZone: floorInfo?.zone || null,
+      accessHint: floorInfo?.access || null,
+      coreHint: floorInfo?.core || null,
     })
   })
 

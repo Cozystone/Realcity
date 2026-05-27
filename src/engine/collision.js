@@ -123,6 +123,7 @@ export function currentInterior(city, x, z) {
         verticalCore: interior.verticalCore,
         floorCount: interior.floorCount || 1,
         floorHeight: interior.floorHeight || 4.2,
+        floorDirectory: interior.floorDirectory || [],
       }
     }
   }
@@ -142,6 +143,7 @@ export function currentInterior(city, x, z) {
         floorCount: interior.floors || 1,
         floorHeight: interior.floorHeight || 3.6,
         publicAccess: interior.publicAccess,
+        floorDirectory: interior.floorDirectory || [],
       }
     }
   }

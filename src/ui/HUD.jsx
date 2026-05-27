@@ -639,6 +639,14 @@ function ContextPrompts({ nearbyAgent, mission, ride, player, onOpenMap }) {
     actions.push({ keyName: 'E', label: 'Talk', detail: 'near NPC', primary: true })
   }
 
+  if (player?.indoors && player.floorCount > 1) {
+    actions.push({
+      keyName: 'PgUp/Dn',
+      label: player.coreHint || 'Floor core',
+      detail: player.floorLabel || `Floor ${player.floor}`,
+    })
+  }
+
   actions.push(
     { keyName: 'T', label: 'Taxi', detail: 'phone route', onClick: () => openPhone('taxi') },
     { keyName: 'H', label: 'Hail', detail: 'passing cab', onClick: pressHailTaxi },
@@ -984,6 +992,8 @@ export default function HUD({ city }) {
         <h1>{clockLabel(timeMinutes)}</h1>
         <p>Day {day} / {weather.label} / {weather.tempC}C</p>
         <span>{player.indoors ? `${player.placeName} / Floor ${player.floor || 1}${player.floorCount ? ` of ${player.floorCount}` : ''}` : player.district}</span>
+        {player.indoors ? <small>{player.floorLabel} / {player.floorZone}</small> : null}
+        {player.indoors && player.accessHint ? <small>{player.accessHint} / {player.coreHint}</small> : null}
       </section>
 
       <Compass heading={viewHeading} />

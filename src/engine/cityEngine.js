@@ -378,6 +378,69 @@ function createFacadePlan(type, form, entryFace, rng) {
   }
 }
 
+function floorDirectoryFor({ type, kind, floors, zones = [], verticalCore, unitCount = 1, publicAccess = 'public' }) {
+  const count = Math.max(1, floors || 1)
+  const coreLabel = verticalCore === 'elevator'
+    ? 'elevator bank'
+    : verticalCore === 'escalator'
+      ? 'escalator hall'
+      : 'stair core'
+
+  return Array.from({ length: count }, (_, index) => {
+    const level = index + 1
+    let label = level === 1 ? 'Ground lobby' : `Floor ${level}`
+    let zone = zones[index % Math.max(1, zones.length)] || 'tenant space'
+    let access = publicAccess
+
+    if (kind === 'hospital') {
+      zone = level === 1 ? 'reception and triage' : level === 2 ? 'clinics and imaging' : 'patient rooms and staff stations'
+      label = level === 1 ? 'Hospital reception' : `Care floor ${level}`
+      access = level === 1 ? 'public care entry' : 'staff guided'
+    } else if (kind === 'transit') {
+      zone = level === 1 ? 'ticketing and gates' : 'platform concourse and transfers'
+      label = level === 1 ? 'Station concourse' : `Transit level ${level}`
+      access = 'public transit'
+    } else if (kind === 'finance') {
+      zone = level === 1 ? 'banking hall and security desk' : level < count ? 'offices and meeting rooms' : 'executive sky lobby'
+      label = level === 1 ? 'Bank lobby' : `Office floor ${level}`
+      access = level === 1 ? 'public counter' : 'badge controlled'
+    } else if (kind === 'logistics') {
+      zone = level === 1 ? 'dispatch desk and loading office' : 'secure storage mezzanine'
+      label = level === 1 ? 'Depot office' : `Operations floor ${level}`
+      access = 'staff and escorted visitors'
+    } else if (kind === 'cafe' || kind === 'retail') {
+      zone = level === 1 ? 'shopfront and cashier' : 'back office and stock room'
+      label = level === 1 ? 'Public shop floor' : `Service floor ${level}`
+      access = level === 1 ? 'public retail' : 'staff only'
+    } else if (kind === 'school') {
+      zone = level === 1 ? 'front office and commons' : 'classrooms and labs'
+      label = level === 1 ? 'School commons' : `Learning floor ${level}`
+      access = 'school visitors'
+    } else if (type === 'house') {
+      zone = level === 1 ? 'foyer, living room, and kitchen' : level === count ? 'bedrooms and attic storage' : 'bedrooms and family rooms'
+      label = level === 1 ? 'Home ground floor' : `Home floor ${level}`
+      access = 'private home'
+    } else if (type === 'apartment') {
+      zone = level === 1 ? 'mail room, lobby, and resident services' : `${unitCount} apartments and corridor alcoves`
+      label = level === 1 ? 'Residential lobby' : `Residential floor ${level}`
+      access = level === 1 ? 'residents and guests' : 'resident access'
+    } else if (type === 'office' || type === 'skyscraper') {
+      zone = level === 1 ? 'entry lobby, reception, and security' : level % 7 === 0 ? 'shared amenity lounge and meeting rooms' : 'tenant offices and service corridor'
+      label = level === 1 ? 'Office lobby' : level % 7 === 0 ? `Amenity floor ${level}` : `Tenant floor ${level}`
+      access = level === 1 ? 'lobby public' : 'badge controlled'
+    }
+
+    return {
+      level,
+      label,
+      zone,
+      access,
+      core: coreLabel,
+      guide: `${coreLabel} connects to ${count} ${count === 1 ? 'floor' : 'floors'}.`,
+    }
+  })
+}
+
 function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
   const floorHeight = type === 'house' ? 3.1 : type === 'apartment' ? 3.35 : 4.05
   const floors = Math.max(1, Math.floor(h / floorHeight))
@@ -394,6 +457,12 @@ function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
       ? Math.max(2, Math.floor((w + d) / 8))
       : Math.max(3, Math.floor((w + d) / 7))
   const doorWidth = clamp(type === 'house' ? w * 0.22 : w * 0.3, 1.5, Math.max(1.6, w * 0.58))
+  const zones = type === 'house'
+    ? ['entry', 'living', 'kitchen', 'bedroom']
+    : type === 'apartment'
+      ? ['entry lobby', 'mail room', 'residential corridor', 'units']
+      : ['entry lobby', 'reception', 'vertical core', 'tenant floors']
+  const publicAccess = type === 'office' || type === 'skyscraper' ? 'lobby-public' : type === 'apartment' ? 'residents-and-guests' : 'private-home'
   return {
     entryFace,
     solidWalls: true,
@@ -405,7 +474,7 @@ function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
     doorWidth,
     corridorType: type === 'house' ? 'room-to-room' : form.profile === 'atrium' ? 'atrium-loop' : form.profile === 'bar' ? 'linear-spine' : 'central-core',
     verticalCore,
-    publicAccess: type === 'office' || type === 'skyscraper' ? 'lobby-public' : type === 'apartment' ? 'residents-and-guests' : 'private-home',
+    publicAccess,
     entryPortal: {
       face: entryFace,
       width: doorWidth,
@@ -417,11 +486,8 @@ function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
       floorHeight,
       canChangeFloors: floors > 1,
     },
-    zones: type === 'house'
-      ? ['entry', 'living', 'kitchen', 'bedroom']
-      : type === 'apartment'
-        ? ['entry lobby', 'mail room', 'residential corridor', 'units']
-        : ['entry lobby', 'reception', 'vertical core', 'tenant floors'],
+    zones,
+    floorDirectory: floorDirectoryFor({ type, floors, zones, verticalCore, unitCount, publicAccess }),
     unitsPerFloor: unitCount,
     coreOffset: {
       along: (rng() - 0.5) * Math.min(w, d) * 0.24,
@@ -531,6 +597,15 @@ function landmarkInteriorFor(place, footprint) {
   const depth = Math.max(9, Math.min(interior.depth * scale, footprint.depth - 2))
   const doorLimit = Math.max(3.4, width - 4)
 
+  const floorCount = Math.max(1, Math.floor((place.kind === 'finance' ? 9 : place.kind === 'hospital' ? 4 : place.kind === 'logistics' ? 2 : 3) * Math.max(0.72, scale)))
+  const lobbyZones = place.kind === 'hospital'
+    ? ['reception', 'triage', 'elevator hall', 'waiting']
+    : place.kind === 'transit'
+      ? ['ticketing', 'platform access', 'escalator hall', 'retail kiosks']
+      : place.kind === 'logistics'
+        ? ['dispatch desk', 'loading office', 'stairs', 'secure storage']
+        : ['reception', 'public lobby', 'vertical core', 'service room']
+
   return {
     ...interior,
     width,
@@ -541,14 +616,16 @@ function landmarkInteriorFor(place, footprint) {
     entranceSide: 'front',
     solidWalls: true,
     entryRule: 'front-door-only',
-    floorCount: Math.max(1, Math.floor((place.kind === 'finance' ? 9 : place.kind === 'hospital' ? 4 : place.kind === 'logistics' ? 2 : 3) * Math.max(0.72, scale))),
-    lobbyZones: place.kind === 'hospital'
-      ? ['reception', 'triage', 'elevator hall', 'waiting']
-      : place.kind === 'transit'
-        ? ['ticketing', 'platform access', 'escalator hall', 'retail kiosks']
-        : place.kind === 'logistics'
-          ? ['dispatch desk', 'loading office', 'stairs', 'secure storage']
-          : ['reception', 'public lobby', 'vertical core', 'service room'],
+    floorCount,
+    lobbyZones,
+    floorDirectory: floorDirectoryFor({
+      kind: place.kind,
+      floors: floorCount,
+      zones: lobbyZones,
+      verticalCore: interior.verticalCore,
+      unitCount: Math.max(2, Math.floor((width + depth) / 12)),
+      publicAccess: 'public landmark',
+    }),
     partitionGrid: place.kind === 'cafe' || place.kind === 'retail' ? 'open-front-retail' : place.kind === 'finance' ? 'secure-core' : 'public-lobby',
   }
 }
