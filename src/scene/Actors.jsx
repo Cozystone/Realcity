@@ -1744,6 +1744,79 @@ function shouldStopForSignal(car, pose, roads, timeMinutes) {
   return null
 }
 
+function trafficStateForCar(car, roads, index, store) {
+  if (car.kind === 'taxi') ensureTaxiCruise(car, roads, index)
+  const dim = car.dimensions || { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 }
+  const assignedPose = assignedTaxiPose(car, store)
+  const pose = assignedPose || taxiPoseForCar(car, roads, index)
+  const road = car.activeRoad || car.road
+  const direction = car.activeDirection ?? car.direction
+  const laneOffset = road.axis === 'x' ? pose.z - road.z : pose.x - road.x
+  const along = road.axis === 'x'
+    ? clampValue(pose.x, road.from, road.to)
+    : clampValue(pose.z, road.from, road.to)
+  return {
+    car,
+    index,
+    dim,
+    assignedPose,
+    pose,
+    trafficCar: { ...car, road, direction },
+    road,
+    direction,
+    along,
+    laneOffset,
+    laneKey: `${road.id}:${direction}:${laneOffset.toFixed(1)}`,
+  }
+}
+
+function frontVehicleFor(state, trafficStates) {
+  if (state.assignedPose) return null
+  const span = Math.max(1, state.road.to - state.road.from)
+  let best = null
+  for (const other of trafficStates) {
+    if (!other || other.index === state.index || other.assignedPose) continue
+    if (other.laneKey !== state.laneKey) continue
+    let distance = state.direction > 0
+      ? other.along - state.along
+      : state.along - other.along
+    if (distance <= -2) distance += span
+    if (distance <= 0.8 || distance > 140) continue
+    if (!best || distance < best.distance) best = { state: other, distance }
+  }
+  if (!best) return null
+
+  const temperamentGap = {
+    careful: 18,
+    patient: 16,
+    calm: 14,
+    hurried: 11,
+  }[state.car.driverTemperament] || 14
+  const desiredGap = temperamentGap + state.dim.length * 0.8 + Math.min(13, state.car.speed * 0.72)
+  const cautionGap = desiredGap + 18
+  if (best.distance >= cautionGap) {
+    return {
+      vehicleId: best.state.car.id,
+      driverName: best.state.car.driverName,
+      distance: Number(best.distance.toFixed(2)),
+      desiredGap: Number(desiredGap.toFixed(2)),
+      intensity: 0,
+    }
+  }
+
+  const intensity = best.distance <= desiredGap
+    ? clampValue(0.58 + (desiredGap - best.distance) / Math.max(1, desiredGap), 0.58, 1)
+    : clampValue(((cautionGap - best.distance) / Math.max(1, cautionGap - desiredGap)) * 0.42, 0.04, 0.42)
+
+  return {
+    vehicleId: best.state.car.id,
+    driverName: best.state.car.driverName,
+    distance: Number(best.distance.toFixed(2)),
+    desiredGap: Number(desiredGap.toFixed(2)),
+    intensity,
+  }
+}
+
 function pointInVehicleBody(pose, dim, point, padding = 0.72) {
   const dx = point.x - pose.x
   const dz = point.z - pose.z
@@ -1801,21 +1874,31 @@ function Traffic({ cars, roads }) {
       colorsReady.current = true
     }
 
+    const trafficStates = cars.map((car, index) => trafficStateForCar(car, roads, index, store))
+
     for (let i = 0; i < cars.length; i += 1) {
       const car = cars[i]
-      if (car.kind === 'taxi') ensureTaxiCruise(car, roads, i)
-      const dim = car.dimensions || { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 }
-      const assignedPose = assignedTaxiPose(car, store)
-      const currentPose = assignedPose || taxiPoseForCar(car, roads, i)
-      const trafficCar = car.activeRoad
-        ? { ...car, road: car.activeRoad, direction: car.activeDirection ?? car.direction }
-        : car
+      const trafficState = trafficStates[i]
+      const dim = trafficState.dim
+      const assignedPose = trafficState.assignedPose
+      const currentPose = trafficState.pose
+      const trafficCar = trafficState.trafficCar
       const playerContact = pointInVehicleBody(currentPose, dim, store.player, 0.74)
       const hazard = assignedPose ? null : shouldYieldToPedestrian(trafficCar, currentPose, pedestrians)
       const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes)
-      const shouldBrake = !assignedPose && (hazard || signalStop || playerContact)
+      const follow = assignedPose ? null : frontVehicleFor(trafficState, trafficStates)
+      const brakingReason = playerContact
+        ? 'player-contact'
+        : signalStop
+          ? `${signalStop.signal}-signal`
+          : hazard
+            ? hazard.player ? 'player-yield' : 'pedestrian-yield'
+            : follow?.intensity > 0.15
+              ? 'following-vehicle'
+              : null
+      const shouldBrake = !assignedPose && !!brakingReason
       car.brake = shouldBrake
-        ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
+        ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
       if (playerContact && yieldPulse.current <= 0) {
         yieldPulse.current = 3.5
@@ -1829,8 +1912,13 @@ function Traffic({ cars, roads }) {
         yieldPulse.current = 4
         store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'Traffic'} stops for a ${signalStop.signal} light on ${car.road.name}.`)
       }
+      if (follow && follow.distance < follow.desiredGap * 0.62 && yieldPulse.current <= 0) {
+        yieldPulse.current = 4.5
+        store.setPulse(`${car.driverName} eases off behind ${follow.driverName || 'the car ahead'} to keep the lane gap.`)
+      }
       const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
-      const speedFactor = Math.max(0, 1 - car.brake * 0.98)
+      const followFactor = follow ? clampValue(1 - follow.intensity * (car.driverTemperament === 'hurried' ? 0.52 : 0.68), 0.18, 1) : 1
+      const speedFactor = Math.max(0, (1 - car.brake * 0.98) * followFactor)
       if (!assignedPose) {
         if (car.kind === 'taxi' && car.cruisePath?.length >= 2 && car.cruiseMeters > 0) {
           car.cruiseProgress = ((car.cruiseProgress || 0) + car.speed * wave * speedFactor * dt) % car.cruiseMeters
@@ -1844,9 +1932,17 @@ function Traffic({ cars, roads }) {
         id: car.id,
         kind: car.kind,
         bodyStyle: car.bodyStyle,
+        driverName: car.driverName,
+        driverTemperament: car.driverTemperament,
         routeMode: car.kind === 'taxi' ? (car.assignment ? 'assigned-dispatch' : car.cruiseRouteMode || 'single-road') : 'traffic-lane',
         assignment: car.assignment || null,
         cruiseRoutePoints: car.cruisePath?.length || 0,
+        activeRoadName: trafficState.road.name,
+        laneKey: trafficState.laneKey,
+        brakingReason,
+        followingVehicleId: follow?.vehicleId || null,
+        followDistance: follow?.distance ?? null,
+        desiredGap: follow?.desiredGap ?? null,
         x,
         z,
         yaw,

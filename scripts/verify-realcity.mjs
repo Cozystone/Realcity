@@ -532,7 +532,7 @@ async function inspectCityNorms(page) {
   assert(norms.houseRoofs.length >= 3, `House roof styles are not diverse enough: ${norms.houseRoofs.join(', ')}`)
   assert(norms.houseAccessoryCount >= 20, 'Houses did not receive enough porches, garages, chimneys, or wings')
   assert(norms.laneViolations === 0, `${norms.laneViolations} cars violate right-hand lane placement`)
-  assert(norms.trafficRules?.drivingSide === 'right-hand' && norms.trafficRules?.signals, 'Traffic rule metadata is incomplete')
+  assert(norms.trafficRules?.drivingSide === 'right-hand' && norms.trafficRules?.signals && norms.trafficRules?.followingDistance, 'Traffic rule metadata is incomplete')
   assert(norms.detailedCars === 120, 'Vehicle style/dimension metadata is incomplete')
   assert(norms.carBodyStyles >= 5, `Vehicle body style variation is too low: ${norms.carBodyStyles}`)
   assert(norms.appearanceReady === norms.npcCount, 'NPC appearance metadata is incomplete')
@@ -813,6 +813,9 @@ async function inspectCollisionAndMaterials(page) {
       vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
       taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.cruiseRoutePoints >= 8).length,
       vehicleBoundsReady: (state?.vehicleSamples || []).filter(sample => sample.width > 0 && sample.length > 0 && typeof sample.yaw === 'number').length,
+      vehicleDriverSamples: (state?.vehicleSamples || []).filter(sample => sample.driverName && sample.driverTemperament && sample.activeRoadName && sample.laneKey).length,
+      vehicleFollowingSamples: (state?.vehicleSamples || []).filter(sample => sample.followingVehicleId && typeof sample.followDistance === 'number' && typeof sample.desiredGap === 'number').length,
+      vehicleFollowingBrakes: (state?.vehicleSamples || []).filter(sample => sample.brakingReason === 'following-vehicle').length,
       clouds: window.__REALCITY_CLOUDS__ || null,
       textures: window.__REALCITY_TEXTURES__ || null,
     }
@@ -830,6 +833,9 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.npcWallViolations.length === 0, `NPCs are inside solid building walls: ${JSON.stringify(result.npcWallViolations)}`)
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
   assert(result.vehicleBoundsReady === result.vehicleSamples, 'Vehicle collision samples do not expose oriented bounds')
+  assert(result.vehicleDriverSamples === result.vehicleSamples, `Vehicle driver/lane metadata is incomplete: ${result.vehicleDriverSamples}/${result.vehicleSamples}`)
+  assert(result.vehicleFollowingSamples >= 20, `Vehicles are not tracking same-lane following distance: ${result.vehicleFollowingSamples}`)
+  assert(result.vehicleFollowingBrakes >= 1, `No vehicles are braking for the car ahead: ${result.vehicleFollowingBrakes}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')

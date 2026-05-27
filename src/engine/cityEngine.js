@@ -1143,6 +1143,7 @@ export function createRealCity(seed = 20260525) {
       laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',
       signals: `Main intersections alternate east-west and north-south green phases every ${TRAFFIC_SIGNAL_CYCLE_SECONDS / 2} seconds with a ${TRAFFIC_SIGNAL_YELLOW_SECONDS} second yellow interval.`,
       yielding: 'Drivers brake for pedestrians in or near a lane and stop at red/yellow signal approaches.',
+      followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
     },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',

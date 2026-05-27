@@ -115,7 +115,7 @@ export const useCityStore = create((set, get) => ({
     pedestrianRadius: 0.82,
     vehiclePadding: 0.78,
     solidObjects: ['buildings', 'landmarks', 'pedestrians', 'vehicles'],
-    reactions: ['push-away', 'stumble', 'fall', 'driver-brake'],
+    reactions: ['push-away', 'stumble', 'fall', 'driver-brake', 'following-distance'],
   },
   pulse: 'Morning traffic is building around Central Station.',
 
