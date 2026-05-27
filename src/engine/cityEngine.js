@@ -1036,6 +1036,8 @@ export function createRealCity(seed = 20260525) {
       zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
       npcDiversity: 'Every NPC carries a distinct name, body archetype, walking cadence, outfit/accessory signature, voice register, gesture style, and speech flavor.',
       collision: 'Buildings, landmark interiors, pedestrians, and vehicles are treated as solid bodies; contacts push actors apart, make pedestrians stumble or fall, and force drivers to brake.',
+      streetHierarchy: 'Sidewalks are segmented before intersections, curbs mark the road edge, and zebra crosswalks with stop bars are the only pedestrian surfaces crossing traffic lanes.',
+      facadeSystem: 'Procedural facades use bright wall palettes, mullion grids, reflective/lit window cells, balcony rails, and trim so buildings read as walls and glass rather than black blocks.',
     },
     zoningRules: {
       roadSetback: BUILDING_ROAD_SETBACK,

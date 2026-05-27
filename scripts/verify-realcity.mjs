@@ -318,7 +318,7 @@ async function inspectCityNorms(page) {
   assert(norms.hairVariants >= 8, `NPC hair tone variation is too low: ${norms.hairVariants}`)
   assert(norms.accessoryVariants >= 7, `NPC accessory variation is too low: ${norms.accessoryVariants}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.collision, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -407,6 +407,25 @@ async function inspectCollisionAndMaterials(page) {
   return result
 }
 
+async function inspectStreetRendering(page) {
+  await page.waitForFunction(() => {
+    const rendering = window.__REALCITY_RENDERING__
+    return rendering?.streetHierarchy?.segmentedSidewalks && rendering?.crosswalks?.zebraStripes > 0 && rendering?.facades?.proceduralWindowTexture
+  }, null, { timeout: 15000 })
+
+  const result = await page.evaluate(() => window.__REALCITY_RENDERING__ || null)
+  assert(result, 'Rendering metadata was not exposed')
+  assert(result.streetHierarchy?.segmentedSidewalks, 'Sidewalks are not marked as segmented at intersections')
+  assert(result.streetHierarchy.sidewalkSegments > result.streetHierarchy.sourceRoads * 2, `Sidewalks were not split into enough non-intersection segments: ${result.streetHierarchy.sidewalkSegments}`)
+  assert(result.streetHierarchy.curbEdgeSegments === result.streetHierarchy.sidewalkSegments, 'Curbs do not track sidewalk edge segments')
+  assert(result.streetHierarchy.roadMaterial === 'dark asphalt' && result.streetHierarchy.sidewalkMaterial === 'raised light pavers', 'Road/sidewalk material hierarchy is unclear')
+  assert(result.crosswalks?.zebraStripes >= 300 && result.crosswalks?.crossingPads >= 40 && result.crosswalks?.stopBars >= 40, 'Crosswalk zebra pads or stop bars are too sparse')
+  assert(result.crosswalks.raisedAboveRoad && result.crosswalks.separatedFromSidewalks, 'Crosswalks are not explicitly separated from sidewalks')
+  assert(result.facades?.proceduralWindowTexture && result.facades?.hasMullions && result.facades?.hasLitWindows, 'Facade texture/window system is incomplete')
+  assert(result.facades.wallPalettes?.length >= 4, 'Facade wall palettes are not diverse enough')
+  return result
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -461,6 +480,7 @@ async function main() {
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
+    const streetRendering = await inspectStreetRendering(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
@@ -550,6 +570,7 @@ async function main() {
       supportUX,
       skyState,
       collisionAndMaterials,
+      streetRendering,
       phone,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),

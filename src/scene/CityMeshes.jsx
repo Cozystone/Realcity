@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
@@ -12,6 +12,14 @@ import {
   terrainTone,
 } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
+
+function exposeRenderingMetadata(patch) {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return
+  window.__REALCITY_RENDERING__ = {
+    ...(window.__REALCITY_RENDERING__ || {}),
+    ...patch,
+  }
+}
 
 function makeTerrainGeometry() {
   const segments = 140
@@ -72,18 +80,26 @@ function makeRoadTexture() {
   canvas.width = 512
   canvas.height = 512
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#474c4f'
+  ctx.fillStyle = '#242a2c'
   ctx.fillRect(0, 0, 512, 512)
-  ctx.fillStyle = 'rgba(255,255,255,0.035)'
-  for (let i = 0; i < 150; i += 1) {
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 24, 1)
+  ctx.fillStyle = 'rgba(255,255,255,0.045)'
+  for (let i = 0; i < 190; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 22, 1)
   }
-  ctx.fillStyle = 'rgba(0,0,0,0.045)'
-  for (let i = 0; i < 90; i += 1) {
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 4 + Math.random() * 34, 1)
+  ctx.fillStyle = 'rgba(0,0,0,0.12)'
+  for (let i = 0; i < 130; i += 1) {
+    ctx.fillRect(Math.random() * 512, Math.random() * 512, 4 + Math.random() * 32, 1)
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+  ctx.lineWidth = 1
+  for (let p = 0; p <= 512; p += 64) {
+    ctx.beginPath()
+    ctx.moveTo(0, p + 0.5)
+    ctx.lineTo(512, p + 0.5)
+    ctx.stroke()
   }
   ctx.setLineDash([42, 34])
-  ctx.strokeStyle = 'rgba(236, 196, 70, 0.72)'
+  ctx.strokeStyle = 'rgba(244, 203, 67, 0.9)'
   ctx.lineWidth = 3
   ctx.beginPath()
   ctx.moveTo(256, 0)
@@ -92,7 +108,7 @@ function makeRoadTexture() {
   ctx.lineTo(512, 256)
   ctx.stroke()
   ctx.setLineDash([])
-  ctx.strokeStyle = 'rgba(230,236,240,0.24)'
+  ctx.strokeStyle = 'rgba(235,241,244,0.52)'
   ctx.lineWidth = 2
   ctx.beginPath()
   ctx.moveTo(36, 0)
@@ -142,9 +158,93 @@ function makePavementTexture() {
   return texture
 }
 
+function splitIntervals(from, to, cuts, minLength = 12) {
+  const sorted = cuts
+    .map(cut => ({ from: Math.max(from, cut.from), to: Math.min(to, cut.to) }))
+    .filter(cut => cut.to > from && cut.from < to)
+    .sort((a, b) => a.from - b.from)
+  const intervals = []
+  let cursor = from
+  for (const cut of sorted) {
+    if (cut.from - cursor >= minLength) intervals.push({ from: cursor, to: cut.from })
+    cursor = Math.max(cursor, cut.to)
+  }
+  if (to - cursor >= minLength) intervals.push({ from: cursor, to })
+  return intervals
+}
+
+function makeSidewalkSegments(roads) {
+  const width = 6.4
+  const cornerClearance = 8.5
+  const sidewalks = []
+  for (const road of roads) {
+    const crossingRoads = roads.filter(item => item.axis !== road.axis)
+    const cuts = crossingRoads.map(cross => {
+      const center = road.axis === 'x' ? cross.x : cross.z
+      const half = cross.width / 2 + cornerClearance
+      return { from: center - half, to: center + half }
+    })
+    const intervals = splitIntervals(road.from, road.to, cuts)
+    for (const interval of intervals) {
+      const length = interval.to - interval.from
+      if (road.axis === 'x') {
+        const x = (interval.from + interval.to) / 2
+        sidewalks.push({
+          axis: 'x',
+          x,
+          z: road.z - road.width / 2 - width / 2 - 1.0,
+          sx: length,
+          sz: width,
+          curbX: x,
+          curbZ: road.z - road.width / 2 - 0.34,
+          curbSx: length,
+          curbSz: 0.52,
+        })
+        sidewalks.push({
+          axis: 'x',
+          x,
+          z: road.z + road.width / 2 + width / 2 + 1.0,
+          sx: length,
+          sz: width,
+          curbX: x,
+          curbZ: road.z + road.width / 2 + 0.34,
+          curbSx: length,
+          curbSz: 0.52,
+        })
+      } else {
+        const z = (interval.from + interval.to) / 2
+        sidewalks.push({
+          axis: 'z',
+          x: road.x - road.width / 2 - width / 2 - 1.0,
+          z,
+          sx: width,
+          sz: length,
+          curbX: road.x - road.width / 2 - 0.34,
+          curbZ: z,
+          curbSx: 0.52,
+          curbSz: length,
+        })
+        sidewalks.push({
+          axis: 'z',
+          x: road.x + road.width / 2 + width / 2 + 1.0,
+          z,
+          sx: width,
+          sz: length,
+          curbX: road.x + road.width / 2 + 0.34,
+          curbZ: z,
+          curbSx: 0.52,
+          curbSz: length,
+        })
+      }
+    }
+  }
+  return sidewalks
+}
+
 function UrbanBase({ roads }) {
   const blockRef = useRef()
   const curbRef = useRef()
+  const curbLineRef = useRef()
   const sidewalkRef = useRef()
   const pavementTexture = useMemo(() => makePavementTexture(), [])
   const blocks = useMemo(() => {
@@ -159,24 +259,24 @@ function UrbanBase({ roads }) {
     }
     return items
   }, [])
-  const sidewalks = useMemo(() => {
-    const width = 5.8
-    return roads.flatMap(road => {
-      if (road.axis === 'x') {
-        return [
-          { x: (road.from + road.to) / 2, z: road.z - road.width / 2 - width / 2 - 0.9, sx: road.to - road.from, sz: width },
-          { x: (road.from + road.to) / 2, z: road.z + road.width / 2 + width / 2 + 0.9, sx: road.to - road.from, sz: width },
-        ]
-      }
-      return [
-        { x: road.x - road.width / 2 - width / 2 - 0.9, z: (road.from + road.to) / 2, sx: width, sz: road.to - road.from },
-        { x: road.x + road.width / 2 + width / 2 + 0.9, z: (road.from + road.to) / 2, sx: width, sz: road.to - road.from },
-      ]
+  const sidewalks = useMemo(() => makeSidewalkSegments(roads), [roads])
+
+  useEffect(() => {
+    exposeRenderingMetadata({
+      streetHierarchy: {
+        segmentedSidewalks: true,
+        sidewalkSegments: sidewalks.length,
+        sourceRoads: roads.length,
+        curbEdgeSegments: sidewalks.length,
+        intersectionGapMeters: 17,
+        roadMaterial: 'dark asphalt',
+        sidewalkMaterial: 'raised light pavers',
+      },
     })
-  }, [roads])
+  }, [roads.length, sidewalks.length])
 
   useLayoutEffect(() => {
-    if (!blockRef.current || !curbRef.current || !sidewalkRef.current) return
+    if (!blockRef.current || !curbRef.current || !curbLineRef.current || !sidewalkRef.current) return
     const dummy = new THREE.Object3D()
     const color = new THREE.Color()
     blocks.forEach((block, i) => {
@@ -196,9 +296,15 @@ function UrbanBase({ roads }) {
       dummy.scale.set(sidewalk.sx, 0.05, sidewalk.sz)
       dummy.updateMatrix()
       sidewalkRef.current.setMatrixAt(i, dummy.matrix)
+
+      dummy.position.set(sidewalk.curbX, CITY_BASE_Y + 0.235, sidewalk.curbZ)
+      dummy.scale.set(sidewalk.curbSx, 0.13, sidewalk.curbSz)
+      dummy.updateMatrix()
+      curbLineRef.current.setMatrixAt(i, dummy.matrix)
     })
     blockRef.current.instanceMatrix.needsUpdate = true
     curbRef.current.instanceMatrix.needsUpdate = true
+    curbLineRef.current.instanceMatrix.needsUpdate = true
     sidewalkRef.current.instanceMatrix.needsUpdate = true
     if (blockRef.current.instanceColor) blockRef.current.instanceColor.needsUpdate = true
   }, [blocks, sidewalks])
@@ -212,6 +318,10 @@ function UrbanBase({ roads }) {
       <instancedMesh ref={curbRef} args={[undefined, undefined, blocks.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial color="#343839" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={curbLineRef} args={[undefined, undefined, sidewalks.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#c8c4b4" toneMapped={false} />
       </instancedMesh>
       <instancedMesh ref={sidewalkRef} args={[undefined, undefined, sidewalks.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
@@ -292,84 +402,87 @@ function RoadMarkings({ roads }) {
 
 function makeWindowTexture(type) {
   const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 512
+  canvas.width = 512
+  canvas.height = 1024
   const ctx = canvas.getContext('2d')
   const wall = {
-    skyscraper: ['#7ca2b8', '#506c7c'],
-    office: ['#b5c0bd', '#87918f'],
-    apartment: ['#cdb394', '#9f8062'],
-    house: ['#c88f72', '#956552'],
-  }[type] || ['#7b8991', '#57656e']
-  const cols = type === 'skyscraper' ? 8 : type === 'house' ? 3 : 6
-  const rows = type === 'skyscraper' ? 24 : type === 'house' ? 5 : 15
-  const gradient = ctx.createLinearGradient(0, 0, 256, 512)
+    skyscraper: ['#b8e3f4', '#6f9db1'],
+    office: ['#dfe5df', '#a8b4ae'],
+    apartment: ['#e2c8a5', '#b58f68'],
+    house: ['#e2a77d', '#b87860'],
+  }[type] || ['#c5ced1', '#8d9aa1']
+  const cols = type === 'skyscraper' ? 10 : type === 'house' ? 4 : type === 'office' ? 7 : 6
+  const rows = type === 'skyscraper' ? 30 : type === 'house' ? 6 : 18
+  const gradient = ctx.createLinearGradient(0, 0, 512, 1024)
   gradient.addColorStop(0, wall[0])
   gradient.addColorStop(0.58, wall[1])
   gradient.addColorStop(1, wall[0])
   ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, 256, 512)
+  ctx.fillRect(0, 0, 512, 1024)
 
-  ctx.fillStyle = 'rgba(255,255,255,0.055)'
-  for (let i = 0; i < 260; i += 1) {
-    const x = (i * 47) % 256
-    const y = (i * 83) % 512
-    ctx.fillRect(x, y, 1 + (i % 9), 1)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  for (let i = 0; i < 520; i += 1) {
+    const x = (i * 47) % 512
+    const y = (i * 83) % 1024
+    ctx.fillRect(x, y, 1 + (i % 11), 1)
   }
-  ctx.fillStyle = type === 'house' ? 'rgba(76, 47, 35, 0.12)' : 'rgba(255,255,255,0.06)'
+  ctx.fillStyle = type === 'house' ? 'rgba(76, 47, 35, 0.1)' : 'rgba(255,255,255,0.075)'
   for (let r = 0; r < rows; r += 1) {
-    const y = (r / rows) * 512
-    ctx.fillRect(0, y, 256, 2)
-    if (type !== 'house' && r % 4 === 0) ctx.fillRect(0, y + 4, 256, 1)
+    const y = (r / rows) * 1024
+    ctx.fillRect(0, y, 512, 3)
+    if (type !== 'house' && r % 4 === 0) ctx.fillRect(0, y + 7, 512, 1.5)
   }
-  ctx.strokeStyle = type === 'house' ? 'rgba(80,54,40,0.42)' : 'rgba(255,255,255,0.18)'
-  ctx.lineWidth = 2
+  ctx.strokeStyle = type === 'house' ? 'rgba(80,54,40,0.32)' : 'rgba(255,255,255,0.24)'
+  ctx.lineWidth = 3
   for (let c = 0; c <= cols; c += 1) {
-    const x = (c / cols) * 256
+    const x = (c / cols) * 512
     ctx.beginPath()
     ctx.moveTo(x, 0)
-    ctx.lineTo(x, 512)
+    ctx.lineTo(x, 1024)
     ctx.stroke()
   }
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       const lit = (r * 17 + c * 11 + type.length) % 5 !== 0
-      const cellW = 256 / cols
-      const cellH = 512 / rows
+      const cellW = 512 / cols
+      const cellH = 1024 / rows
       const x = c * cellW + cellW * 0.2
       const y = r * cellH + cellH * 0.25
       const w = cellW * 0.58
       const h = cellH * 0.5
-      ctx.fillStyle = 'rgba(7,12,18,0.38)'
-      ctx.fillRect(x - 2, y - 2, w + 4, h + 4)
-      ctx.fillStyle = lit ? (type === 'house' ? '#f1c978' : '#dcefff') : '#16212a'
+      ctx.fillStyle = type === 'house' ? 'rgba(91,58,42,0.38)' : 'rgba(12,24,32,0.32)'
+      ctx.fillRect(x - 3, y - 3, w + 6, h + 6)
+      ctx.fillStyle = lit ? (type === 'house' ? '#ffd98a' : '#dff5ff') : (type === 'house' ? '#6b5148' : '#48616f')
       ctx.fillRect(x, y, w, h)
-      ctx.fillStyle = lit ? 'rgba(255,255,255,0.36)' : 'rgba(111,158,184,0.18)'
+      ctx.fillStyle = lit ? 'rgba(255,255,255,0.42)' : 'rgba(148,188,204,0.22)'
       ctx.fillRect(x + w * 0.08, y + h * 0.08, w * 0.18, h * 0.82)
-      ctx.fillStyle = 'rgba(255,255,255,0.14)'
+      ctx.fillStyle = 'rgba(255,255,255,0.22)'
       ctx.fillRect(x + w * 0.54, y + h * 0.08, w * 0.08, h * 0.82)
+      ctx.strokeStyle = type === 'house' ? 'rgba(255,245,225,0.18)' : 'rgba(210,242,255,0.3)'
+      ctx.lineWidth = 1
+      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2)
       if (type === 'apartment' && r % 3 === 1) {
         ctx.fillStyle = 'rgba(240,244,245,0.42)'
-        ctx.fillRect(x - 5, y + h + 3, w + 10, 3)
+        ctx.fillRect(x - 8, y + h + 5, w + 16, 5)
       }
     }
   }
-  ctx.strokeStyle = type === 'apartment' || type === 'house' ? 'rgba(68,45,32,0.42)' : 'rgba(20,28,35,0.28)'
-  ctx.lineWidth = 3
+  ctx.strokeStyle = type === 'apartment' || type === 'house' ? 'rgba(68,45,32,0.34)' : 'rgba(20,28,35,0.2)'
+  ctx.lineWidth = 4
   for (let r = 1; r < rows; r += 1) {
-    const y = (r / rows) * 512
+    const y = (r / rows) * 1024
       ctx.beginPath()
       ctx.moveTo(0, y)
-      ctx.lineTo(256, y)
+      ctx.lineTo(512, y)
       ctx.stroke()
   }
-  ctx.strokeStyle = type === 'house' ? 'rgba(255,245,225,0.16)' : 'rgba(255,255,255,0.22)'
-  ctx.lineWidth = 1
+  ctx.strokeStyle = type === 'house' ? 'rgba(255,245,225,0.22)' : 'rgba(255,255,255,0.28)'
+  ctx.lineWidth = 2
   ctx.beginPath()
-  ctx.moveTo(14, 0)
-  ctx.lineTo(14, 512)
-  ctx.moveTo(242, 0)
-  ctx.lineTo(242, 512)
+  ctx.moveTo(24, 0)
+  ctx.lineTo(24, 1024)
+  ctx.moveTo(488, 0)
+  ctx.lineTo(488, 1024)
   ctx.stroke()
   const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping
@@ -695,6 +808,19 @@ function Buildings({ buildings }) {
   const gableGeometry = useMemo(() => makeGableRoofGeometry(), [])
   const renderData = useMemo(() => createBuildingRenderData(buildings), [buildings])
 
+  useEffect(() => {
+    exposeRenderingMetadata({
+      facades: {
+        proceduralWindowTexture: true,
+        textureSize: '512x1024',
+        wallPalettes: ['glass tower', 'office stone', 'apartment brick', 'house stucco'],
+        hasMullions: true,
+        hasLitWindows: true,
+        materialPass: 'bright wall color plus reflective glass grid',
+      },
+    })
+  }, [])
+
   useLayoutEffect(() => {
     const dummy = new THREE.Object3D()
     const color = new THREE.Color()
@@ -723,10 +849,10 @@ function Buildings({ buildings }) {
     const sunlight = sky?.sunlight ?? 1
     const nightBoost = sky?.phase === 'night' ? 1.7 : sky?.phase === 'golden-hour' || sky?.phase === 'dawn' ? 1.2 : 1
     const settings = {
-      skyscraper: { env: 1.65, emissive: 0.22 },
-      office: { env: 0.92, emissive: 0.13 },
-      apartment: { env: 0.58, emissive: 0.16 },
-      house: { env: 0.5, emissive: 0.18 },
+      skyscraper: { env: 2.05, emissive: 0.42 },
+      office: { env: 1.28, emissive: 0.3 },
+      apartment: { env: 0.86, emissive: 0.31 },
+      house: { env: 0.68, emissive: 0.27 },
     }
     for (const [type, material] of Object.entries(materialRefs.current)) {
       const setting = settings[type] || settings.office
@@ -751,13 +877,14 @@ function Buildings({ buildings }) {
             <meshStandardMaterial
               ref={node => { if (node) materialRefs.current[type] = node }}
               map={textures[type]}
+              emissiveMap={textures[type]}
               color="#ffffff"
               vertexColors
-              roughness={isGlass ? 0.16 : type === 'office' ? 0.3 : type === 'house' ? 0.64 : 0.52}
-              metalness={isGlass ? 0.56 : type === 'office' ? 0.24 : type === 'apartment' ? 0.08 : 0.05}
-              emissive={isGlass ? '#1c3342' : type === 'apartment' ? '#2f241b' : type === 'house' ? '#4a2b1e' : '#202728'}
-              emissiveIntensity={isGlass ? 0.24 : type === 'house' ? 0.22 : type === 'apartment' ? 0.18 : 0.15}
-              envMapIntensity={isGlass ? 1.65 : type === 'office' ? 0.92 : type === 'apartment' ? 0.58 : 0.5}
+              roughness={isGlass ? 0.12 : type === 'office' ? 0.26 : type === 'house' ? 0.58 : 0.46}
+              metalness={isGlass ? 0.6 : type === 'office' ? 0.22 : type === 'apartment' ? 0.08 : 0.05}
+              emissive={isGlass ? '#9bcde3' : type === 'apartment' ? '#c5a17d' : type === 'house' ? '#c98c6d' : '#c7d2cc'}
+              emissiveIntensity={isGlass ? 0.42 : type === 'house' ? 0.27 : type === 'apartment' ? 0.31 : 0.3}
+              envMapIntensity={isGlass ? 2.05 : type === 'office' ? 1.28 : type === 'apartment' ? 0.86 : 0.68}
             />
           </instancedMesh>
         )

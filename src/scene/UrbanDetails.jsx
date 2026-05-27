@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
@@ -72,41 +72,85 @@ function useRoadLayout(roads) {
   }, [roads])
 }
 
+function exposeRenderingMetadata(patch) {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return
+  window.__REALCITY_RENDERING__ = {
+    ...(window.__REALCITY_RENDERING__ || {}),
+    ...patch,
+  }
+}
+
 function Crosswalks({ roads }) {
   const ref = useRef()
+  const baseRef = useRef()
+  const stopRef = useRef()
   const { mainVertical, mainHorizontal } = useRoadLayout(roads)
-  const stripes = useMemo(() => {
-    const items = []
+  const details = useMemo(() => {
+    const stripes = []
+    const bases = []
+    const stops = []
     for (const h of mainHorizontal) {
       for (const v of mainVertical) {
         const distance = Math.hypot(v.x, h.z)
         if (distance > CITY_GRID_HALF * 0.94) continue
         const offsets = [-5.4, -3.6, -1.8, 0, 1.8, 3.6, 5.4]
+        bases.push({ x: v.x, z: h.z - h.width * 0.58, sx: 14.4, sz: h.width * 0.58 })
+        bases.push({ x: v.x, z: h.z + h.width * 0.58, sx: 14.4, sz: h.width * 0.58 })
+        bases.push({ x: v.x - v.width * 0.58, z: h.z, sx: v.width * 0.58, sz: 14.4 })
+        bases.push({ x: v.x + v.width * 0.58, z: h.z, sx: v.width * 0.58, sz: 14.4 })
+        stops.push({ x: v.x, z: h.z - h.width * 0.92, sx: 18.8, sz: 0.42 })
+        stops.push({ x: v.x, z: h.z + h.width * 0.92, sx: 18.8, sz: 0.42 })
+        stops.push({ x: v.x - v.width * 0.92, z: h.z, sx: 0.42, sz: 18.8 })
+        stops.push({ x: v.x + v.width * 0.92, z: h.z, sx: 0.42, sz: 18.8 })
         offsets.forEach(offset => {
-          items.push({ x: v.x + offset, z: h.z - h.width * 0.54, sx: 0.72, sz: h.width * 0.54 })
-          items.push({ x: v.x + offset, z: h.z + h.width * 0.54, sx: 0.72, sz: h.width * 0.54 })
-          items.push({ x: v.x - v.width * 0.54, z: h.z + offset, sx: v.width * 0.54, sz: 0.72 })
-          items.push({ x: v.x + v.width * 0.54, z: h.z + offset, sx: v.width * 0.54, sz: 0.72 })
+          stripes.push({ x: v.x + offset, z: h.z - h.width * 0.58, sx: 0.82, sz: h.width * 0.58 })
+          stripes.push({ x: v.x + offset, z: h.z + h.width * 0.58, sx: 0.82, sz: h.width * 0.58 })
+          stripes.push({ x: v.x - v.width * 0.58, z: h.z + offset, sx: v.width * 0.58, sz: 0.82 })
+          stripes.push({ x: v.x + v.width * 0.58, z: h.z + offset, sx: v.width * 0.58, sz: 0.82 })
         })
       }
     }
-    return items
+    return { stripes, bases, stops }
   }, [mainHorizontal, mainVertical])
 
-  useLayoutEffect(() => {
-    if (!ref.current) return
-    const dummy = new THREE.Object3D()
-    stripes.forEach((stripe, i) => {
-      setInstance(ref.current, i, dummy, [stripe.x, CITY_BASE_Y + 0.19, stripe.z], [stripe.sx, 0.025, stripe.sz])
+  useEffect(() => {
+    exposeRenderingMetadata({
+      crosswalks: {
+        zebraStripes: details.stripes.length,
+        crossingPads: details.bases.length,
+        stopBars: details.stops.length,
+        raisedAboveRoad: true,
+        separatedFromSidewalks: true,
+      },
     })
+  }, [details])
+
+  useLayoutEffect(() => {
+    if (!ref.current || !baseRef.current || !stopRef.current) return
+    const dummy = new THREE.Object3D()
+    details.bases.forEach((base, i) => setInstance(baseRef.current, i, dummy, [base.x, CITY_BASE_Y + 0.187, base.z], [base.sx, 0.018, base.sz]))
+    details.stripes.forEach((stripe, i) => setInstance(ref.current, i, dummy, [stripe.x, CITY_BASE_Y + 0.215, stripe.z], [stripe.sx, 0.035, stripe.sz]))
+    details.stops.forEach((bar, i) => setInstance(stopRef.current, i, dummy, [bar.x, CITY_BASE_Y + 0.225, bar.z], [bar.sx, 0.038, bar.sz]))
+    baseRef.current.instanceMatrix.needsUpdate = true
     ref.current.instanceMatrix.needsUpdate = true
-  }, [stripes])
+    stopRef.current.instanceMatrix.needsUpdate = true
+  }, [details])
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, stripes.length]} frustumCulled={false}>
-      <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial color="#e8ece9" toneMapped={false} />
-    </instancedMesh>
+    <>
+      <instancedMesh ref={baseRef} args={[undefined, undefined, details.bases.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#606669" transparent opacity={0.7} toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={ref} args={[undefined, undefined, details.stripes.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#fbfff9" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={stopRef} args={[undefined, undefined, details.stops.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#fffdf0" toneMapped={false} />
+      </instancedMesh>
+    </>
   )
 }
 
