@@ -19,6 +19,8 @@ const NPC_TAXI_MAX_ACTIVE = 4
 const NPC_TAXI_MIN_DISTANCE = 520
 const NPC_TAXI_DISPATCH_SPEED = 16
 const NPC_TAXI_RIDE_SPEED = 22
+const NPC_GLANCE_RADIUS = 24
+const NPC_GLANCE_PULSE_RADIUS = 12
 const WALK_ROUTE_WAYPOINT_RADIUS = 1.8
 const WALK_ROUTE_REPLAN_SECONDS = 2.35
 const WALK_ROUTE_MAX_WAYPOINTS = 12
@@ -1180,6 +1182,9 @@ class Agent {
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
     this.glanceCooldown = 1 + Math.random() * 5
+    this.socialReaction = null
+    this.playerDistance = null
+    this.facingPlayerAngle = null
     this.mission = null
     this.bumpVelocity = new THREE.Vector2()
     this.bumpTimer = 0
@@ -1555,6 +1560,9 @@ class Agent {
       currentIntent: this.currentIntent,
       activity: this.activity,
       placeName: this.placeName,
+      socialReaction: this.socialReaction,
+      playerDistance: this.playerDistance,
+      facingPlayerAngle: this.facingPlayerAngle,
       workId: this.workId,
       workName: work?.name,
       workAddress: work?.address,
@@ -2834,13 +2842,21 @@ function NPCs({ city }) {
         nearestAgent = agent
         nearestDistance = playerDistance
       }
-      if (!agent.mission && agentState !== 'walking' && agent.talkTimer <= 0 && playerDistance < 8.5) {
+      agent.playerDistance = Number(playerDistance.toFixed(2))
+      agent.facingPlayerAngle = null
+      agent.socialReaction = null
+      if (!agent.mission && agentState !== 'walking' && playerDistance < NPC_GLANCE_RADIUS) {
         const desired = Math.atan2(store.player.x - agent.pos.x, store.player.z - agent.pos.z)
         const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
-        agent.heading += turn * Math.min(1, dt * 3.2)
+        agent.heading += turn * Math.min(1, dt * 3.8)
+        const afterTurn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
+        agent.facingPlayerAngle = Number(Math.abs(afterTurn).toFixed(3))
+        agent.socialReaction = Math.abs(afterTurn) < 0.72 ? 'glancing-at-player' : 'turning-toward-player'
         if (agent.glanceCooldown <= 0) {
           agent.glanceCooldown = 7 + Math.random() * 8
-          if (playerDistance < 5.5) store.setPulse(`${agent.name} glances over as you pass through ${agent.placeName}.`)
+          if (playerDistance < NPC_GLANCE_PULSE_RADIUS) {
+            store.setPulse(`${agent.name} glances over as you pass through ${agent.placeName}.`)
+          }
         }
       }
 
@@ -2976,6 +2992,9 @@ function NPCs({ city }) {
         z: agent.pos.z,
         radius: 0.82,
         state: agent.fallTimer > 0 ? 'fallen' : agent.bumpTimer > 0 ? 'stumbling' : agent.activity,
+        socialReaction: agent.socialReaction || null,
+        playerDistance: agent.playerDistance,
+        facingPlayerAngle: agent.facingPlayerAngle,
         currentIntent: agent.currentIntent || null,
         autonomyGoal: agent.autonomy?.dailyGoal || null,
         relationshipStyle: agent.autonomy?.relationshipStyle || null,

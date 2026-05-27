@@ -578,7 +578,7 @@ async function inspectCityNorms(page) {
   assert(norms.autonomyGoals >= 20, `NPC daily goal variation is too low: ${norms.autonomyGoals}`)
   assert(norms.relationshipStyles >= 6, `NPC relationship style variation is too low: ${norms.relationshipStyles}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.npcAutonomy && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.npcAutonomy && norms.socialNorms?.npcMobility && norms.socialNorms?.humanReactions && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -863,6 +863,17 @@ async function inspectCollisionAndMaterials(page) {
       pedestrianPurposeSamples: samples.filter(sample => sample.targetName && sample.routeMode).length,
       pedestrianStableRouteSamples: samples.filter(sample => sample.stableRoute && (sample.routeMode === 'dwelling' || sample.routePoints > 0)).length,
       pedestrianMultiPointRoutes: samples.filter(sample => sample.routePoints >= 2).length,
+      pedestrianSocialReactions: samples.filter(sample =>
+        ['glancing-at-player', 'turning-toward-player'].includes(sample.socialReaction) &&
+        sample.playerDistance < 24 &&
+        typeof sample.facingPlayerAngle === 'number'
+      ).length,
+      pedestrianGlanceSamples: samples.filter(sample =>
+        sample.socialReaction === 'glancing-at-player' &&
+        sample.playerDistance < 24 &&
+        typeof sample.facingPlayerAngle === 'number' &&
+        sample.facingPlayerAngle < 0.9
+      ).length,
       pedestrianRoadViolations: pedestrianRoadViolations.map(sample => ({
         id: sample.id,
         x: Number(sample.x.toFixed(2)),
@@ -892,6 +903,8 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.pedestrianRouteModes.includes('direct') || result.pedestrianWaypointSamples > 0, `Pedestrian route modes were not exposed: ${result.pedestrianRouteModes.join(', ')}`)
   assert(result.pedestrianStableRouteSamples > 120, `NPCs do not expose stable sidewalk routes: ${result.pedestrianStableRouteSamples}/${result.pedestrianSamples}`)
   assert(result.pedestrianMultiPointRoutes > 8, `NPC multi-waypoint routing is too sparse: ${result.pedestrianMultiPointRoutes}`)
+  assert(result.pedestrianSocialReactions >= 1, `Nearby NPCs are not exposing social reactions to the player: ${JSON.stringify(result.activePedestrianStates)}`)
+  assert(result.pedestrianGlanceSamples >= 1, `No nearby NPC exposes a glancing-at-player state: ${result.pedestrianGlanceSamples}`)
   assert(result.pedestrianRoadViolations.length === 0, `NPCs are walking in vehicle lanes away from crosswalks: ${JSON.stringify(result.pedestrianRoadViolations)}`)
   assert(result.npcWallViolations.length === 0, `NPCs are inside solid building walls: ${JSON.stringify(result.npcWallViolations)}`)
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)

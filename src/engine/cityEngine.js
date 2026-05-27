@@ -1207,6 +1207,7 @@ export function createRealCity(seed = 20260525) {
       npcDiversity: 'Every NPC carries a distinct name, body archetype, walking cadence, outfit/accessory signature, voice register, gesture style, and speech flavor.',
       npcAutonomy: 'Every NPC has a daily goal, mutable needs, relationship style, and short memory feed that can surface as live city events.',
       npcMobility: 'Long-distance late commuters can autonomously hail a cruising fleet taxi, wait curbside, board from the passenger side, ride lane-following routes, and continue from the dropoff curb.',
+      humanReactions: 'Idle NPCs within conversational distance turn toward the player, expose a glancing-at-player state, and may pulse a short social acknowledgement.',
       collision: 'Buildings, landmark interiors, pedestrians, and vehicles are treated as solid bodies; contacts push actors apart, make pedestrians stumble or fall, and force drivers to brake.',
       streetHierarchy: 'Sidewalks are segmented before intersections, curbs mark the road edge, and zebra crosswalks with stop bars are the only pedestrian surfaces crossing traffic lanes.',
       facadeSystem: 'Procedural facades use bright wall palettes, mullion grids, reflective/lit window cells, balcony rails, and trim so buildings read as walls and glass rather than black blocks.',

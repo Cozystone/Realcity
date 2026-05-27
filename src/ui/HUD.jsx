@@ -387,6 +387,7 @@ function AgentCard({ agent, stats, pulse }) {
         <h2>{agent.name}</h2>
         <p>{agent.job} / {agent.age} / {agent.gender}</p>
         <p>{agent.activity} at {agent.placeName}</p>
+        {agent.socialReaction ? <small>{agent.socialReaction.replaceAll('-', ' ')}</small> : null}
         {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
         {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}
       </aside>
@@ -531,16 +532,16 @@ function InteractionPanel({ interaction }) {
   const workLabel = interaction.agent.workAddress || interaction.agent.workName || 'your workplace'
   const presets = [
     {
-      label: '직장까지',
-      text: `나를 ${workLabel}까지 데려다줘요. 택시가 빠르면 택시를 타요.`,
+      label: 'To work',
+      text: `Please take me to ${workLabel}. If it is far or urgent, call a taxi and stay with me until we arrive.`,
     },
     {
-      label: '택시 이동',
-      text: '가까운 택시를 잡아서 목적지까지 같이 가줘요.',
+      label: 'Taxi ride',
+      text: 'Please call the nearest passing taxi, wait with me at the curb, and ride with me to the destination.',
     },
     {
-      label: '일정 묻기',
-      text: '지금 어디로 가는 중이고 오늘 일정은 어떻게 돼요?',
+      label: 'Ask schedule',
+      text: 'Where are you going now, what is your schedule today, and can I come with you?',
     },
   ]
   const submit = (event) => {
