@@ -1759,9 +1759,12 @@ function NPCs({ city }) {
     agent.heading = plazaAgent ? Math.atan2(-x, 40 - z) : Math.atan2(target.x - agent.home.x, target.z - agent.home.z)
     return agent
   }), [city.npcs, places])
+  const hipsRef = useRef()
   const torsoRef = useRef()
   const neckRef = useRef()
   const headRef = useRef()
+  const hairBackRef = useRef()
+  const faceMarkRef = useRef()
   const legRef = useRef()
   const armRef = useRef()
   const sleeveRef = useRef()
@@ -1808,8 +1811,73 @@ function NPCs({ city }) {
     })
   }, [agents.length, city.cars.length, city.tiles.length])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const unique = selector => new Set(agents.map(agent => selector(agent)).filter(Boolean)).size
+    window.__REALCITY_ACTOR_RENDERING__ = {
+      npcBase: 'player-avatar-shared-humanoid',
+      playerReference: 'PlayerRig.Character',
+      rigScale: {
+        npcBaseY: 0.95,
+        playerBaseY: 1.1,
+        playerCharacterOffsetY: -0.9,
+        torsoCapsuleTotalHeight: 0.94,
+        armCapsuleTotalHeight: 0.53,
+        legCapsuleTotalHeight: 0.65,
+      },
+      bodyParts: [
+        'hips',
+        'torso',
+        'chest',
+        'neck',
+        'head',
+        'hairCap',
+        'hairBack',
+        'ears',
+        'eyes',
+        'brows',
+        'nose',
+        'mouth',
+        'faceMarks',
+        'arms',
+        'sleeves',
+        'hands',
+        'legs',
+        'shoes',
+        'belt',
+        'bag',
+        'hat',
+        'scarf',
+        'skirt',
+        'glasses',
+      ],
+      variation: {
+        count: agents.length,
+        heightVariants: unique(agent => agent.appearance?.heightScale?.toFixed(2)),
+        bodyVariants: unique(agent => agent.appearance?.bodyArchetype),
+        ageBands: unique(agent => agent.appearance?.ageBand),
+        ages: unique(agent => String(agent.age)),
+        genders: unique(agent => agent.gender),
+        hairStyles: unique(agent => agent.appearance?.hairStyle),
+        outfitSignatures: unique(agent => agent.appearance?.signature),
+        skinTones: unique(agent => agent.appearance?.skinColor),
+        faceAccessoryVariants: unique(agent => `${agent.appearance?.glassesStyle}:${agent.appearance?.ageBand}:${agent.gender}`),
+      },
+      samplePeople: agents.slice(0, 12).map(agent => ({
+        id: agent.id,
+        name: agent.name,
+        age: agent.age,
+        gender: agent.gender,
+        heightScale: Number((agent.appearance?.heightScale ?? 1).toFixed(3)),
+        bodyArchetype: agent.appearance?.bodyArchetype,
+        hairStyle: agent.appearance?.hairStyle,
+        outfit: agent.appearance?.styleBrief,
+      })),
+    }
+  }, [agents])
+
   useFrame((state, delta) => {
-    if (!torsoRef.current || !neckRef.current || !headRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !beltRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current) return
+    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !beltRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -1821,11 +1889,15 @@ function NPCs({ city }) {
     if (!colorsReady.current) {
       agents.forEach((agent, i) => {
         const look = agentLook(agent)
+        hipsRef.current.setColorAt(i, color.set(look.pantsColor))
         torsoRef.current.setColorAt(i, color.set(look.topColor))
         chestRef.current.setColorAt(i, color.set(look.jacketColor))
         neckRef.current.setColorAt(i, color.set(skinTone(agent)))
         headRef.current.setColorAt(i, color.set(skinTone(agent)))
         hairRef.current.setColorAt(i, color.set(hairTone(agent)))
+        hairBackRef.current.setColorAt(i, color.set(hairTone(agent)))
+        faceMarkRef.current.setColorAt(i * 2, color.set(agent.appearance?.ageBand === 'senior' ? '#7b5b4e' : hairTone(agent)))
+        faceMarkRef.current.setColorAt(i * 2 + 1, color.set(agent.appearance?.ageBand === 'senior' ? '#6f5b52' : hairTone(agent)))
         armRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         armRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         sleeveRef.current.setColorAt(i * 2, color.set(look.topColor))
@@ -1846,11 +1918,14 @@ function NPCs({ city }) {
         skirtRef.current.setColorAt(i, color.set(look.pantsColor))
         scarfRef.current.setColorAt(i, color.set(look.accessoryColor))
       })
+      if (hipsRef.current.instanceColor) hipsRef.current.instanceColor.needsUpdate = true
       if (torsoRef.current.instanceColor) torsoRef.current.instanceColor.needsUpdate = true
       if (chestRef.current.instanceColor) chestRef.current.instanceColor.needsUpdate = true
       if (neckRef.current.instanceColor) neckRef.current.instanceColor.needsUpdate = true
       if (headRef.current.instanceColor) headRef.current.instanceColor.needsUpdate = true
       if (hairRef.current.instanceColor) hairRef.current.instanceColor.needsUpdate = true
+      if (hairBackRef.current.instanceColor) hairBackRef.current.instanceColor.needsUpdate = true
+      if (faceMarkRef.current.instanceColor) faceMarkRef.current.instanceColor.needsUpdate = true
       if (armRef.current.instanceColor) armRef.current.instanceColor.needsUpdate = true
       if (sleeveRef.current.instanceColor) sleeveRef.current.instanceColor.needsUpdate = true
       if (handRef.current.instanceColor) handRef.current.instanceColor.needsUpdate = true
@@ -1904,43 +1979,64 @@ function NPCs({ city }) {
       const bodyScale = look.bodyScale || 1
       const legScale = look.legScale || 1
       const headScale = look.headScale || 1
-      const hairLong = look.hairStyle === 'long' || look.hairStyle === 'bob'
+      const longHair = look.hairStyle === 'long'
+      const bobHair = look.hairStyle === 'bob'
+      const hairLong = longHair || bobHair
       const hairBun = look.hairStyle === 'bun'
+      const shaved = look.hairStyle === 'shaved'
       const hatVisible = (look.hatStyle && look.hatStyle !== 'none') || look.hairStyle === 'cap'
       const bagVisible = look.bagStyle && look.bagStyle !== 'none'
       const skirtVisible = look.bottomStyle === 'skirt'
       const glassesVisible = look.glassesStyle && look.glassesStyle !== 'none'
       const scarfVisible = look.scarfStyle && look.scarfStyle !== 'none'
-      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, 0.04 * height, 0], [0.2 * shoulder, (walking ? 0.5 : 0.46) * height * bodyScale, 0.16 * bodyScale], bodyRotX, bodyRotZ)
-      setLocalPart(neckRef.current, i, dummy, base, agent.heading, [0, 0.49 * height, 0.01], [0.075 * headScale, 0.105 * height, 0.075 * headScale], bodyRotX * 0.82, bodyRotZ)
-      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, 0.72 * height, 0.025], [0.22 * headScale, 0.24 * headScale, 0.22 * headScale], bodyRotX * 0.68, bodyRotZ)
-      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, (hairLong ? 0.82 : 0.87) * height, hairLong ? -0.055 : -0.02], [0.245 * headScale, (hairBun ? 0.15 : hairLong ? 0.22 : 0.105) * headScale, 0.24 * headScale], bodyRotX * 0.68, bodyRotZ)
-      setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
-      setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.22 * headScale, 0.72 * height, 0.02], [0.026, 0.038, 0.018])
-      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
-      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.75 * height, 0.225], [0.021, 0.021, 0.012])
-      setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.792 * height, 0.231], [0.055, 0.008, 0.01], 0, -0.08)
-      setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.792 * height, 0.231], [0.055, 0.008, 0.01], 0, 0.08)
-      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.695 * height, 0.246], [0.024, 0.04, 0.024])
-      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, 0.632 * height, 0.238], [0.068, 0.01, 0.012])
-      setLocalPart(glassesRef.current, i * 2, dummy, base, agent.heading, [-0.072 * headScale, 0.752 * height, 0.242], glassesVisible ? [0.058, 0.014, 0.014] : [0.001, 0.001, 0.001])
-      setLocalPart(glassesRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * headScale, 0.752 * height, 0.242], glassesVisible ? [0.058, 0.014, 0.014] : [0.001, 0.001, 0.001])
-      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, 0.17 * height, 0.168], [0.15 * shoulder, 0.18 * height, 0.018], bodyRotX, bodyRotZ)
-      setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, -0.17 * height, 0.158], [0.17 * shoulder, 0.02, 0.024])
-      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.19 * shoulder, 0.08 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
-      setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
-      setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.13 * height, 0], skirtVisible ? [0.19 * shoulder, 0.24 * height, 0.16] : [0.001, 0.001, 0.001])
-      setLocalPart(scarfRef.current, i, dummy, base, agent.heading, [0, 0.445 * height, 0.155], scarfVisible ? [0.18 * shoulder, look.scarfStyle === 'wide' ? 0.05 : 0.032, 0.04] : [0.001, 0.001, 0.001])
-      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.085 * shoulder, -0.45 * height, 0], [0.052, 0.38 * height * legScale, 0.052], fallen ? 0.55 : stride, bodyRotZ * 0.35)
-      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.085 * shoulder, -0.45 * height, 0], [0.052, 0.38 * height * legScale, 0.052], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
-      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], fallen ? 0.92 : -stride * 0.58 * armSwing, bodyRotZ)
-      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, 0.14 * height, 0.02], [0.044, 0.31 * height, 0.044], fallen ? -0.72 : stride * 0.58 * armSwing, bodyRotZ)
-      setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.225 * shoulder, 0.28 * height, 0.026], [0.056, 0.13 * height, 0.056], -stride * 0.38 * armSwing)
-      setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.225 * shoulder, 0.28 * height, 0.026], [0.056, 0.13 * height, 0.056], stride * 0.38 * armSwing)
-      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
-      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.235 * shoulder, -0.2 * height, 0.035], [0.055, 0.055, 0.055])
-      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.085 * shoulder, -0.86 * height, 0.055], [0.064, 0.043, 0.11])
-      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.085 * shoulder, -0.86 * height, 0.055], [0.064, 0.043, 0.11])
+      const seniorFace = look.ageBand === 'senior' || agent.age >= 60
+      const facialHair = agent.gender === 'man' && (seniorFace || hashValue(`${agent.id}_face_hair`) % 4 === 0)
+      const hipY = 0.03 * height
+      const torsoY = 0.45 * height
+      const chestY = 0.52 * height
+      const shoulderY = 0.59 * height
+      const neckY = 0.82 * height
+      const headY = 0.97 * height
+      const eyeY = 1.0 * height
+      const browY = 1.04 * height
+      const mouthY = 0.875 * height
+      const hairY = (hairLong ? 1.02 : 1.13) * height
+      const hairBackY = (longHair ? 0.78 : bobHair ? 0.9 : 0.97) * height
+      const hairCapHeight = hairBun ? 0.15 : longHair ? 0.22 : bobHair ? 0.16 : 0.105
+      setLocalPart(hipsRef.current, i, dummy, base, agent.heading, [0, hipY, 0], [0.38 * shoulder, 0.2 * height * bodyScale, 0.25 * bodyScale], bodyRotX, bodyRotZ)
+      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, torsoY, 0], [0.21 * shoulder, (walking ? 0.25 : 0.235) * height * bodyScale, 0.16 * bodyScale], bodyRotX, bodyRotZ)
+      setLocalPart(neckRef.current, i, dummy, base, agent.heading, [0, neckY, 0.01], [0.075 * headScale, 0.12 * height, 0.075 * headScale], bodyRotX * 0.82, bodyRotZ)
+      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, headY, 0.025], [0.205 * headScale, 0.225 * headScale, 0.205 * headScale], bodyRotX * 0.68, bodyRotZ)
+      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, hairY, hairLong ? -0.055 : -0.02], shaved ? [0.16 * headScale, 0.035 * headScale, 0.17 * headScale] : [0.215 * headScale, hairCapHeight * headScale, 0.22 * headScale], bodyRotX * 0.68, bodyRotZ)
+      setLocalPart(hairBackRef.current, i, dummy, base, agent.heading, [0, hairBackY, hairLong ? -0.16 : -0.145], shaved ? [0.001, 0.001, 0.001] : [0.33 * headScale, (longHair ? 0.42 : bobHair ? 0.26 : 0.14) * headScale, 0.075 * headScale], bodyRotX * 0.64, bodyRotZ)
+      setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
+      setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
+      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.188], [0.022, 0.022, 0.014])
+      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.188], [0.022, 0.022, 0.014])
+      setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, -0.08)
+      setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, 0.08)
+      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.215], [0.026, 0.052, 0.026])
+      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, mouthY, 0.202], [0.088, 0.012, 0.014])
+      setLocalPart(faceMarkRef.current, i * 2, dummy, base, agent.heading, [0, 0.915 * height, 0.222], facialHair ? [0.12 * headScale, 0.018, 0.012] : [0.001, 0.001, 0.001])
+      setLocalPart(faceMarkRef.current, i * 2 + 1, dummy, base, agent.heading, [0, 1.025 * height, 0.21], seniorFace ? [0.13 * headScale, 0.008, 0.01] : [0.001, 0.001, 0.001])
+      setLocalPart(glassesRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
+      setLocalPart(glassesRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
+      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, chestY, 0.18], [0.28 * shoulder, 0.34 * height, 0.035], bodyRotX, bodyRotZ)
+      setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, 0.15 * height, 0.158], [0.19 * shoulder, 0.025, 0.032])
+      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.24 * shoulder, 0.38 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
+      setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 1.18 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
+      setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.05 * height, 0], skirtVisible ? [0.22 * shoulder, 0.3 * height, 0.18] : [0.001, 0.001, 0.001])
+      setLocalPart(scarfRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.15], scarfVisible ? [0.19 * shoulder, look.scarfStyle === 'wide' ? 0.052 : 0.034, 0.044] : [0.001, 0.001, 0.001])
+      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? 0.55 : stride, bodyRotZ * 0.35)
+      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
+      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.33 * height, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? 0.92 : -stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.33 * height, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? -0.72 : stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], -stride * 0.38 * armSwing)
+      setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], stride * 0.38 * armSwing)
+      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.08 * height, 0.035], [0.065, 0.065, 0.065])
+      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height, 0.035], [0.065, 0.065, 0.065])
+      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
+      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
     }
 
     socialClock.current += dt
@@ -2018,10 +2114,13 @@ function NPCs({ city }) {
         : null)
     }
 
+    hipsRef.current.instanceMatrix.needsUpdate = true
     torsoRef.current.instanceMatrix.needsUpdate = true
     neckRef.current.instanceMatrix.needsUpdate = true
     headRef.current.instanceMatrix.needsUpdate = true
     hairRef.current.instanceMatrix.needsUpdate = true
+    hairBackRef.current.instanceMatrix.needsUpdate = true
+    faceMarkRef.current.instanceMatrix.needsUpdate = true
     eyeRef.current.instanceMatrix.needsUpdate = true
     browRef.current.instanceMatrix.needsUpdate = true
     noseRef.current.instanceMatrix.needsUpdate = true
@@ -2180,6 +2279,10 @@ function NPCs({ city }) {
 
   return (
     <>
+      <instancedMesh ref={hipsRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.fabric} color="#ffffff" vertexColors roughness={0.82} metalness={0.03} />
+      </instancedMesh>
       <instancedMesh ref={torsoRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <capsuleGeometry args={[1, 2, 8, 14]} />
         <meshStandardMaterial map={textures.fabric} color="#ffffff" vertexColors roughness={0.78} metalness={0.03} />
@@ -2204,6 +2307,10 @@ function NPCs({ city }) {
         <sphereGeometry args={[1, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.56]} />
         <meshStandardMaterial map={textures.hair} color="#19130f" vertexColors roughness={0.9} />
       </instancedMesh>
+      <instancedMesh ref={hairBackRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.hair} color="#19130f" vertexColors roughness={0.9} />
+      </instancedMesh>
       <instancedMesh ref={eyeRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
         <meshStandardMaterial color="#05070a" roughness={0.38} />
@@ -2223,6 +2330,10 @@ function NPCs({ city }) {
       <instancedMesh ref={mouthRef} args={[undefined, undefined, agents.length]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#6e2f2f" roughness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={faceMarkRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#4b2b22" vertexColors roughness={0.76} />
       </instancedMesh>
       <instancedMesh ref={earRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />

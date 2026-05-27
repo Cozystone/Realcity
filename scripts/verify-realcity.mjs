@@ -481,6 +481,32 @@ async function inspectSupportUX(page) {
   }
 }
 
+async function inspectActorRendering(page) {
+  await page.waitForFunction(() => {
+    const actor = window.__REALCITY_ACTOR_RENDERING__
+    return actor?.npcBase === 'player-avatar-shared-humanoid' &&
+      actor.bodyParts?.includes('hips') &&
+      actor.bodyParts?.includes('hairBack') &&
+      actor.bodyParts?.includes('faceMarks') &&
+      actor.variation?.count > 100
+  }, null, { timeout: 15000 })
+
+  const actor = await page.evaluate(() => window.__REALCITY_ACTOR_RENDERING__ || null)
+  assert(actor, 'Actor rendering metadata was not exposed')
+  assert(actor.playerReference === 'PlayerRig.Character', `NPCs are not tied to the player avatar base: ${actor.playerReference}`)
+  assert(actor.rigScale?.torsoCapsuleTotalHeight === 0.94, 'NPC torso was not matched to the player avatar torso capsule')
+  assert(actor.rigScale?.armCapsuleTotalHeight === 0.53, 'NPC arm capsule proportions do not match the player avatar')
+  assert(actor.rigScale?.legCapsuleTotalHeight === 0.65, 'NPC leg capsule proportions do not match the player avatar')
+  assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'brows', 'nose', 'mouth', 'faceMarks', 'arms', 'hands', 'legs', 'shoes'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(actor.variation.heightVariants >= 8, `NPC height variation is too low in actor rendering: ${actor.variation.heightVariants}`)
+  assert(actor.variation.bodyVariants >= 7, `NPC body type variation is too low in actor rendering: ${actor.variation.bodyVariants}`)
+  assert(actor.variation.ageBands >= 3 && actor.variation.ages >= 40, `NPC age variation is too low in actor rendering: ${JSON.stringify(actor.variation)}`)
+  assert(actor.variation.hairStyles >= 5, `NPC hair style variation is too low in actor rendering: ${actor.variation.hairStyles}`)
+  assert(actor.variation.outfitSignatures >= 120, `NPC outfit variation is too low in actor rendering: ${actor.variation.outfitSignatures}`)
+  assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit), 'NPC actor samples do not expose person-like identity and style')
+  return actor
+}
+
 async function inspectPhone(page) {
   await page.locator('.phone-toggle').click()
   await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
@@ -727,6 +753,7 @@ async function main() {
     const buildingAccess = await inspectBuildingAccess(page)
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
+    const actorRendering = await inspectActorRendering(page)
     const supportUX = await inspectSupportUX(page)
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
@@ -880,6 +907,7 @@ async function main() {
       buildingAccess,
       interiors,
       cityNorms,
+      actorRendering,
       supportUX,
       skyState,
       collisionAndMaterials,
