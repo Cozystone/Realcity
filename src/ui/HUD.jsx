@@ -744,6 +744,13 @@ function MissionPanel({ mission, ride }) {
       {mission.destination?.address ? <small>{mission.destination.address}</small> : null}
       <small>{phase}</small>
       {taxiRoute.length >= 2 ? <small>{Math.round(routeMeters)}m road route plotted</small> : null}
+      {mission.offer || mission.reasoning || mission.safety ? (
+        <div className="mission-rationale">
+          {mission.offer ? <span>{mission.offer}</span> : null}
+          {mission.reasoning ? <span>{mission.reasoning}</span> : null}
+          {mission.safety ? <span>{mission.safety}</span> : null}
+        </div>
+      ) : null}
       <ol>
         {(mission.steps || []).slice(0, 4).map(step => <li key={step}>{step}</li>)}
       </ol>

@@ -1171,6 +1171,24 @@ async function main() {
     const missionText = await page.locator('.mission-panel').innerText({ timeout: 5000 })
     assert(/escort/i.test(missionText), `Mission panel did not describe an escort: ${missionText}`)
     if (addressRoute?.address) assert(missionText.includes(addressRoute.address), `Mission panel did not resolve the requested address ${addressRoute.address}: ${missionText}`)
+    const missionPlan = await page.evaluate(() => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const mission = state?.mission || {}
+      const focused = state?.focusedAgent || {}
+      return {
+        reasoning: mission.reasoning || '',
+        safety: mission.safety || '',
+        offer: mission.offer || '',
+        urgency: mission.urgency || '',
+        source: mission.source || '',
+        requestEvents: (state?.cityEvents || []).filter(event => event.kind === 'request' && event.agentId === mission.agentId).length,
+        focusedMemory: focused.memories?.[0]?.text || '',
+      }
+    })
+    assert(missionPlan.reasoning && missionPlan.safety && missionPlan.offer && missionPlan.urgency, `NPC action plan did not expose reasoning/safety/offer/urgency: ${JSON.stringify(missionPlan)}`)
+    assert(/sidewalk|curb|taxi|road|crosswalk|lane/i.test(missionPlan.safety), `NPC safety norm is not concrete enough: ${JSON.stringify(missionPlan)}`)
+    assert(missionPlan.requestEvents >= 1 && /Player asked/i.test(missionPlan.focusedMemory), `NPC request memory/event was not recorded: ${JSON.stringify(missionPlan)}`)
+    assert(missionText.includes(missionPlan.offer.slice(0, 24)), `Mission panel did not display the NPC offer: ${JSON.stringify({ missionText, missionPlan })}`)
 
     await page.waitForFunction(() => {
       const state = window.__REALCITY_STORE__?.getState()

@@ -620,6 +620,30 @@ select {
   font-weight: 800;
 }
 
+.mission-rationale {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+  padding: 8px;
+  border: 1px solid rgba(98, 216, 166, 0.18);
+  border-radius: 8px;
+  background: rgba(98, 216, 166, 0.07);
+}
+
+.mission-rationale span {
+  overflow: hidden;
+  color: rgba(238, 244, 255, 0.7);
+  font-size: 11px;
+  line-height: 1.32;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-rationale span:first-child {
+  color: rgba(98, 216, 166, 0.86);
+  font-weight: 820;
+}
+
 .mission-panel ol {
   margin: 9px 0 0;
   padding-left: 18px;

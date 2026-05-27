@@ -296,6 +296,46 @@ function resolvePlanPlace(plan, request, places = []) {
   return matchRequestedPlace(request, list)
 }
 
+function planDetails(agent, plan, request, context = {}, resolvedPlace = null) {
+  const destinationName = resolvedPlace?.address || resolvedPlace?.name || plan.targetPlaceName || agent.workName || 'the destination'
+  const distance = resolvedPlace
+    ? distanceTo(resolvedPlace, context)
+    : plan.destination === 'work'
+      ? context.distanceToWork || 0
+      : 0
+  const far = distance > 420
+  const urgent = /urgent|hurry|quick|fast|急|빨리|급해|서둘/.test(String(request || '').toLowerCase())
+  const modeReason = plan.mode === 'taxi'
+    ? far
+      ? `${Math.round(distance)}m is far enough that a taxi is safer and faster than walking.`
+      : 'The player asked for a ride, so the NPC will use a taxi instead of walking.'
+    : plan.mode === 'walk'
+      ? `${destinationName} is close enough for a sidewalk route.`
+      : 'The request is best handled as conversation before movement.'
+  const safety = plan.mode === 'taxi'
+    ? 'Wait at the curb, let the taxi stop in the lane, board only after it arrives, and follow the road route.'
+    : plan.mode === 'walk'
+      ? 'Stay on sidewalks, use crosswalks at road crossings, and avoid cutting through buildings or traffic lanes.'
+      : 'Clarify the request before committing to movement or transport.'
+  const offer = plan.mode === 'taxi'
+    ? `I can call a taxi and ride with you to ${destinationName}.`
+    : plan.mode === 'walk'
+      ? `I can walk with you to ${destinationName} and stop at the entrance.`
+      : 'I can answer first, then help choose a destination or transport option.'
+
+  return {
+    reasoning: modeReason,
+    safety,
+    offer,
+    urgency: urgent ? 'urgent' : far ? 'normal-far' : 'normal',
+  }
+}
+
+function cleanPlanText(value, fallback, maxLength = 150) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return (text || fallback).slice(0, maxLength)
+}
+
 export async function planLocalNPCAction(agent, request, context = {}) {
   const places = Array.isArray(context.places) ? context.places : []
   const schema = {
@@ -306,6 +346,10 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     targetPlaceId: 'known city place id or empty string',
     targetPlaceName: 'known city place name or empty string',
     speech: 'Korean sentence spoken by the NPC',
+    reasoning: 'short private reason for the chosen action',
+    safety: 'one concrete safety or social norm to follow',
+    offer: 'what the NPC is offering to do for the player',
+    urgency: 'low | normal | urgent',
     steps: ['short action step 1', 'short action step 2'],
   }
 
@@ -320,6 +364,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     'Return only strict JSON matching this schema:',
     JSON.stringify(schema),
     'Use Korean for speech. Keep steps concrete and executable in a 3D city simulation.',
+    'Always include reasoning, safety, offer, and urgency so the simulation can show the NPC decision.',
     'Keep the speech in the NPC personal speech style, voice, and gesture flavor; do not make every NPC sound the same.',
     'If the player asks to be taken to the NPC workplace, use destination "work".',
     'If the player names a known city place, use destination "named_place" and set targetPlaceId.',
@@ -371,6 +416,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     ? safe
     : parsedCanRoute || !safeAcceptsRoute ? (parsed || safe) : safe
   const resolvedPlace = resolvePlanPlace(plan, request, places)
+  const details = planDetails(agent, plan, request, context, resolvedPlace)
 
   return {
     intent: typeof plan.intent === 'string' ? plan.intent : safe.intent,
@@ -380,6 +426,10 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     targetPlaceId: resolvedPlace?.id || (typeof plan.targetPlaceId === 'string' ? plan.targetPlaceId : safe.targetPlaceId || ''),
     targetPlaceName: resolvedPlace?.name || (typeof plan.targetPlaceName === 'string' ? plan.targetPlaceName : safe.targetPlaceName || ''),
     speech: styleNpcSpeech(agent, typeof plan.speech === 'string' && plan.speech.trim() ? plan.speech : safe.speech),
+    reasoning: cleanPlanText(plan.reasoning, details.reasoning, 170),
+    safety: cleanPlanText(plan.safety, details.safety, 170),
+    offer: cleanPlanText(plan.offer, details.offer, 150),
+    urgency: ['low', 'normal', 'urgent', 'normal-far'].includes(plan.urgency) ? plan.urgency : details.urgency,
     steps: Array.isArray(plan.steps) && plan.steps.length
       ? plan.steps.slice(0, 5).map(step => String(step).slice(0, 90))
       : safe.steps,

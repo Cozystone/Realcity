@@ -2873,6 +2873,16 @@ function NPCs({ city }) {
         player: { x: store.player.x, z: store.player.z },
         places: cityPlaces,
       })
+      best.remember('player-request', `Player asked: ${request}. ${plan.offer || plan.reasoning || plan.intent}.`, best.placeName, 0.84)
+      store.addCityEvent({
+        id: `request_${best.id}_${Date.now()}`,
+        kind: 'request',
+        agentId: best.id,
+        agentName: best.name,
+        placeName: best.placeName,
+        topic: plan.reasoning || plan.intent,
+        text: `${best.name} considers the player's request: ${plan.offer || plan.intent}. ${plan.safety || ''}`.slice(0, 180),
+      })
       const updatedSnapshot = best.snapshot(places)
 
       if (plan.decision !== 'accept' || plan.mode === 'talk') {
@@ -2892,9 +2902,14 @@ function NPCs({ city }) {
         agentName: best.name,
         mode,
         phase: mode === 'taxi' ? 'to_pickup' : 'leading',
+        source: plan.source,
         destination: destinationTarget,
         pickup: nearestRoadPickup(best.pos, city.roads),
         steps: plan.steps,
+        reasoning: plan.reasoning,
+        safety: plan.safety,
+        offer: plan.offer,
+        urgency: plan.urgency,
         request,
       }
 
@@ -2910,6 +2925,10 @@ function NPCs({ city }) {
         destination: destinationTarget,
         pickup: mission.pickup,
         steps: plan.steps,
+        reasoning: plan.reasoning,
+        safety: plan.safety,
+        offer: plan.offer,
+        urgency: plan.urgency,
         request,
         source: plan.source,
         summary: plan.speech,
