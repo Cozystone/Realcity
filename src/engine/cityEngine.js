@@ -103,6 +103,19 @@ const SPEECH_STYLES = [
   { id: 'reserved', label: 'reserved', prefix: '가능합니다. ', flavor: '감정을 적게 드러내고 차분하게 말함' },
 ]
 
+const READABLE_SPEECH_STYLES = [
+  { id: 'polite_brief', label: 'polite and brief', prefix: '네.', flavor: '짧고 정중하게 말함' },
+  { id: 'warm_chatty', label: 'warm and chatty', prefix: '좋아요.', flavor: '따뜻하고 친근하게 말함' },
+  { id: 'dry_direct', label: 'dry and direct', prefix: '간단히 말하면,', flavor: '군더더기 없이 건조하게 말함' },
+  { id: 'careful_formal', label: 'careful and formal', prefix: '확인했습니다.', flavor: '위험과 절차를 먼저 확인함' },
+  { id: 'bright_casual', label: 'bright and casual', prefix: '좋죠.', flavor: '밝고 가볍게 대답함' },
+  { id: 'tired_soft', label: 'tired but kind', prefix: '음,', flavor: '조용하지만 친절하게 말함' },
+  { id: 'street_practical', label: 'street practical', prefix: '바로 보면,', flavor: '길과 교통을 현실적으로 짚어 말함' },
+  { id: 'curious_precise', label: 'curious and precise', prefix: '확인해볼게요.', flavor: '질문을 정리하고 이유를 설명함' },
+  { id: 'playful', label: 'playful', prefix: '좋지.', flavor: '농담을 살짝 섞어 말함' },
+  { id: 'reserved', label: 'reserved', prefix: '가능합니다.', flavor: '감정을 작게 드러내며 차분히 말함' },
+]
+
 const GESTURE_STYLES = [
   'quick nod', 'hands in pockets', 'checks phone often', 'points while speaking', 'small wave',
   'adjusts bag strap', 'folds arms', 'looks around before answering', 'half-smile', 'formal bow',
@@ -185,7 +198,7 @@ function uniqueName(rng, usedNames, index) {
 }
 
 function createSpeechStyle(rng, role, personality, index) {
-  const base = SPEECH_STYLES[(index + Math.floor(rng() * SPEECH_STYLES.length)) % SPEECH_STYLES.length]
+  const base = READABLE_SPEECH_STYLES[(index + Math.floor(rng() * READABLE_SPEECH_STYLES.length)) % READABLE_SPEECH_STYLES.length]
   const voice = `${pick(rng, VOICE_PACES)} ${pick(rng, VOICE_REGISTERS)}`
   const gesture = GESTURE_STYLES[(index * 3 + Math.floor(rng() * GESTURE_STYLES.length)) % GESTURE_STYLES.length]
   return {

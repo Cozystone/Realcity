@@ -627,6 +627,11 @@ async function inspectActorRendering(page) {
   assert(actor.variation.hairStyles >= 5, `NPC hair style variation is too low in actor rendering: ${actor.variation.hairStyles}`)
   assert(actor.variation.outfitSignatures >= 120, `NPC outfit variation is too low in actor rendering: ${actor.variation.outfitSignatures}`)
   assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit), 'NPC actor samples do not expose person-like identity and style')
+  const readablePrefixes = ['네.', '좋아요.', '간단히 말하면,', '확인했습니다.', '좋죠.', '음,', '바로 보면,', '확인해볼게요.', '좋지.', '가능합니다.']
+  const brokenTextPattern = /[�]|[媛醫吏蹂諛濡湲鍮]/u
+  assert(actor.speechSamples?.length >= 10, 'NPC speech style samples were not exposed')
+  assert(actor.speechSamples.every(sample => readablePrefixes.includes(sample.prefix)), `NPC speech prefixes are not readable Korean: ${JSON.stringify(actor.speechSamples)}`)
+  assert(actor.speechSamples.every(sample => !brokenTextPattern.test(`${sample.prefix} ${sample.flavor}`)), `NPC speech style samples contain mojibake: ${JSON.stringify(actor.speechSamples)}`)
   return actor
 }
 
@@ -757,6 +762,7 @@ async function inspectPhone(page) {
   const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(taxiText.includes('Taxi') && await page.locator('.phone-route-list button').count() > 0, 'Phone taxi app did not expose route targets')
   assert(taxiText.includes('RealCity Taxi') && taxiText.includes('Dispatches a cruising cab directly'), `Phone taxi app did not describe direct cab dispatch: ${taxiText}`)
+  assert(taxiText.includes('no NPC relay') && taxiText.includes('Direct cab dispatch'), `Phone taxi app did not make direct taxi dispatch explicit: ${taxiText}`)
   assert(!taxiText.includes('Contact dispatch'), `Phone taxi app still exposes contact-mediated taxi dispatch: ${taxiText}`)
   assert(await page.locator('.phone-taxi .phone-route-list').count() === 1, 'Phone taxi app should expose only one direct dispatch route list')
 

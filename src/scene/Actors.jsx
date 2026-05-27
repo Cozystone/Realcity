@@ -2752,6 +2752,14 @@ function NPCs({ city }) {
         hairStyle: agent.appearance?.hairStyle,
         outfit: agent.appearance?.styleBrief,
       })),
+      speechSamples: agents.slice(0, 12).map(agent => ({
+        id: agent.id,
+        name: agent.name,
+        prefix: agent.speechStyle?.prefix || '',
+        label: agent.speechStyle?.label || '',
+        flavor: agent.speechStyle?.flavor || '',
+        signature: agent.speechStyle?.signature || '',
+      })),
     }
   }, [agents])
 

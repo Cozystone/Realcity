@@ -100,32 +100,46 @@ function buildRouteTargets(city, player) {
   }))
 }
 
-function seedThread(contact) {
-  const agent = phoneAgent(contact)
+function cleanSeedThread(contact) {
   return [
     {
       from: 'them',
-      text: styleNpcSpeech(agent, `${contact.placeName}${contact.workAddress ? `, ${contact.workAddress}` : ''} 근처에 있어요. 길 안내나 부탁이 필요하면 메시지 주세요.`),
+      text: styleNpcSpeech(phoneAgent(contact), `${contact.placeName}${contact.workAddress ? `, ${contact.workAddress}` : ''} 근처에 있어요. 길 안내나 약속이 필요하면 메시지 주세요.`),
     },
   ]
 }
 
-function replyFor(contact, text, player, timeMinutes) {
-  const lower = text.toLowerCase()
-  const agent = phoneAgent(contact)
-  if (/taxi|ride|drive|escort|guide|take|bring|walk|workplace|office|meet/.test(lower)) {
-    return styleNpcSpeech(agent, `${contact.placeName}에서 출발하는 동선을 확인하고, 걸어갈지 택시를 탈지 판단해볼게요.`)
+function cleanReplyFor(contact, text, player, timeMinutes) {
+  const messageText = text.toLowerCase()
+  const npc = phoneAgent(contact)
+  if (/taxi|cab|ride|drive/.test(messageText)) {
+    return styleNpcSpeech(npc, 'RealPhone Taxi 앱에서 목적지를 고르면 가장 가까운 운행 택시가 직접 길가로 옵니다. 사람에게 대신 부탁하는 방식은 아니에요.')
   }
-  if (/where|location|busy|doing|now/.test(lower)) {
-    return styleNpcSpeech(agent, `지금은 ${contact.placeName} 근처에서 ${contact.activity} 중이에요. 현재 시각은 ${clockLabel(timeMinutes)}입니다.`)
+  if (/escort|guide|take|bring|walk|workplace|office|meet/.test(messageText)) {
+    return styleNpcSpeech(npc, `${contact.placeName}에서 출발하는 동선을 확인해볼게요. 걸을지 택시를 탈지는 거리와 도로 상황을 보고 정하면 됩니다.`)
   }
-  if (/music|song|radio/.test(lower)) {
-    return styleNpcSpeech(agent, '휴대폰에서 Night Market Lo-Fi를 틀어보세요. 해가 진 뒤 도시 분위기랑 잘 맞아요.')
+  if (/where|location|busy|doing|now/.test(messageText)) {
+    return styleNpcSpeech(npc, `지금은 ${contact.placeName} 근처에서 ${contact.activity} 중이에요. 현재 시각은 ${clockLabel(timeMinutes)}입니다.`)
+  }
+  if (/music|song|radio/.test(messageText)) {
+    return styleNpcSpeech(npc, '밤길이면 Night Market Lo-Fi가 잘 맞아요. 도시 소리랑 섞이면 꽤 자연스럽습니다.')
   }
   if (player.indoors) {
-    return styleNpcSpeech(agent, `지금 ${player.placeName} 안에 계신 거죠? 필요하면 입구 근처에서 만날게요.`)
+    return styleNpcSpeech(npc, `지금 ${player.placeName} 안에 계시군요. 필요하면 입구 근처에서 만나겠습니다.`)
   }
-  return styleNpcSpeech(agent, `메시지 봤어요. 저는 ${contact.relation.toLowerCase()} 범위의 연락처니까 위치를 계속 신경 쓰고 있을게요.`)
+  return styleNpcSpeech(npc, `메시지 봤어요. ${contact.relation.toLowerCase()} 연락처니까 위치와 상황을 계속 확인하고 있을게요.`)
+}
+
+function cleanCallText(contact) {
+  return styleNpcSpeech(phoneAgent(contact), `전화 받았어요. 지금은 ${contact.placeName} 근처에서 ${contact.activity} 중입니다.`)
+}
+
+function seedThread(contact) {
+  return cleanSeedThread(contact)
+}
+
+function replyFor(contact, text, player, timeMinutes) {
+  return cleanReplyFor(contact, text, player, timeMinutes)
 }
 
 function phoneAgent(contact) {
@@ -247,10 +261,11 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
 
   const callContact = (contact = selected) => {
     if (!contact) return
-    const text = styleNpcSpeech(phoneAgent(contact), `전화 받았어요. 저는 ${contact.placeName} 근처에서 ${contact.activity} 중입니다.`)
+    const directText = cleanCallText(contact)
     appendThread(contact, [{ from: 'system', text: `Call connected with ${contact.name}.` }])
-    useCityStore.getState().showDialogue({ speaker: contact.name, role: contact.job, text, agent: phoneAgent(contact) })
+    useCityStore.getState().showDialogue({ speaker: contact.name, role: contact.job, text: directText, agent: phoneAgent(contact) })
     useCityStore.getState().setPulse(`Calling ${contact.name} through RealPhone.`)
+    return
   }
 
   const toggleMusic = (index = trackIndex) => {
@@ -426,7 +441,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
             <div className="phone-app phone-taxi">
               <div className="phone-taxi-summary">
                 <strong>RealCity Taxi</strong>
-                <small>Dispatches a cruising cab directly to your curb</small>
+                <small>Dispatches a cruising cab directly to your curb / no NPC relay</small>
               </div>
               <div className="phone-route-list">
                 {routeTargets.map(target => (
@@ -436,7 +451,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     onClick={() => requestDirectTaxiToTarget(target)}
                   >
                     <strong>{target.address || target.name}</strong>
-                    <span>Call taxi / {Math.round(target.distance)}m / press F to board</span>
+                    <span>Direct cab dispatch / {Math.round(target.distance)}m / press F to board</span>
                   </button>
                 ))}
               </div>
