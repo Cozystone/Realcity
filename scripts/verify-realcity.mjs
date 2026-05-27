@@ -507,6 +507,28 @@ async function inspectCollisionAndMaterials(page) {
     const state = window.__REALCITY_STORE__?.getState()
     const city = window.__REALCITY_CITY__
     const samples = state?.pedestrianSamples || []
+    const nearCrosswalk = (x, z, road, roads) => {
+      const crossRoads = roads.filter(item => item.axis !== road.axis)
+      return crossRoads.some(cross => {
+        if (road.axis === 'x') return Math.abs(x - cross.x) < Math.max(road.width, cross.width) * 0.72
+        return Math.abs(z - cross.z) < Math.max(road.width, cross.width) * 0.72
+      })
+    }
+    const pedestrianRoadViolations = city
+      ? samples.filter(sample => {
+          if (['fallen', 'stumbling', 'boarding taxi', 'riding with player'].includes(sample.state)) return false
+          return (city.roads || []).some(road => {
+            if (road.axis === 'x') {
+              if (sample.x < road.from || sample.x > road.to) return false
+              if (Math.abs(sample.z - road.z) >= road.width / 2 - 0.35) return false
+              return !nearCrosswalk(sample.x, sample.z, road, city.roads || [])
+            }
+            if (sample.z < road.from || sample.z > road.to) return false
+            if (Math.abs(sample.x - road.x) >= road.width / 2 - 0.35) return false
+            return !nearCrosswalk(sample.x, sample.z, road, city.roads || [])
+          })
+        })
+      : []
     const npcWallViolations = city
       ? samples.filter(sample => {
           const buildingHit = (city.getNearbyBuildings?.(sample.x, sample.z) || city.buildings || []).some(building => {
@@ -528,6 +550,18 @@ async function inspectCollisionAndMaterials(page) {
       pedestrianSamples: samples.length,
       vehicleSamples: state?.vehicleSamples?.length || 0,
       activePedestrianStates: [...new Set(samples.map(sample => sample.state).filter(Boolean))].slice(0, 12),
+      pedestrianRouteModes: [...new Set(samples.map(sample => sample.routeMode).filter(Boolean))],
+      pedestrianWaypointSamples: samples.filter(sample => ['sidewalk-waypoint', 'crosswalk-crossing'].includes(sample.routeMode)).length,
+      pedestrianPurposeSamples: samples.filter(sample => sample.targetName && sample.routeMode).length,
+      pedestrianRoadViolations: pedestrianRoadViolations.map(sample => ({
+        id: sample.id,
+        x: Number(sample.x.toFixed(2)),
+        z: Number(sample.z.toFixed(2)),
+        state: sample.state,
+        routeMode: sample.routeMode,
+        targetName: sample.targetName,
+        routeRoadName: sample.routeRoadName,
+      })).slice(0, 8),
       npcWallViolations: npcWallViolations.map(sample => ({ id: sample.id, x: Number(sample.x.toFixed(2)), z: Number(sample.z.toFixed(2)), state: sample.state })).slice(0, 8),
       vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
       taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.cruiseRoutePoints >= 8).length,
@@ -541,6 +575,9 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.rules?.solidObjects?.includes('buildings') && result.rules?.solidObjects?.includes('landmarks'), 'Static building/landmark collision rules are missing')
   assert(result.rules?.reactions?.includes('push-away') && result.rules?.reactions?.includes('fall') && result.rules?.reactions?.includes('driver-brake'), 'Collision reaction metadata is incomplete')
   assert(result.pedestrianSamples > 100, `Pedestrian collision samples are too sparse: ${result.pedestrianSamples}`)
+  assert(result.pedestrianPurposeSamples === result.pedestrianSamples, `Pedestrian route purpose metadata is incomplete: ${result.pedestrianPurposeSamples}/${result.pedestrianSamples}`)
+  assert(result.pedestrianRouteModes.includes('direct') || result.pedestrianWaypointSamples > 0, `Pedestrian route modes were not exposed: ${result.pedestrianRouteModes.join(', ')}`)
+  assert(result.pedestrianRoadViolations.length === 0, `NPCs are walking in vehicle lanes away from crosswalks: ${JSON.stringify(result.pedestrianRoadViolations)}`)
   assert(result.npcWallViolations.length === 0, `NPCs are inside solid building walls: ${JSON.stringify(result.npcWallViolations)}`)
   assert(result.vehicleSamples === 120, `Vehicle collision samples are incomplete: ${result.vehicleSamples}`)
   assert(result.vehicleBoundsReady === result.vehicleSamples, 'Vehicle collision samples do not expose oriented bounds')

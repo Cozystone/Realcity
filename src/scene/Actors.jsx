@@ -23,12 +23,78 @@ function smoothstep(t) {
   return t * t * (3 - 2 * t)
 }
 
+function clampValue(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
 function scheduleFor(agent, timeMinutes) {
   const hour = timeMinutes / 60
   return agent.schedule.find(slot => hour >= slot.start && hour < slot.end) || agent.schedule[0]
 }
 
-function entranceTargetFor(destination) {
+function nearestRoadForPlace(place, roads = []) {
+  if (!place || !roads.length) return null
+  const linked = roads.find(road => road.id === place.roadId)
+  if (linked) return linked
+
+  let best = null
+  let bestDistance = Infinity
+  for (const road of roads) {
+    const along = road.axis === 'x'
+      ? clampValue(place.x, road.from, road.to)
+      : clampValue(place.z, road.from, road.to)
+    const distance = road.axis === 'x'
+      ? Math.hypot(place.x - along, place.z - road.z)
+      : Math.hypot(place.x - road.x, place.z - along)
+    if (distance < bestDistance) {
+      best = road
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
+function sidewalkAccessForPlace(place, offset = { x: 0, z: 0 }, roads = []) {
+  const road = nearestRoadForPlace(place, roads)
+  if (!road) return null
+
+  const curbOffset = road.width / 2 + 4.9
+  if (road.axis === 'x') {
+    const side = place.z >= road.z ? 1 : -1
+    const x = clampValue(place.x + offset.x * 0.22, road.from + 6, road.to - 6)
+    const z = road.z + side * curbOffset
+    return {
+      x,
+      z,
+      y: terrainHeight(x, z),
+      name: place.name || 'destination',
+      kind: place.kind,
+      address: place.address,
+      roadName: road.name,
+      roadId: road.id,
+      roadAxis: road.axis,
+      entryRule: 'road-sidewalk-access',
+    }
+  }
+
+  const side = place.x >= road.x ? 1 : -1
+  const x = road.x + side * curbOffset
+  const z = clampValue(place.z + offset.z * 0.22, road.from + 6, road.to - 6)
+  return {
+    x,
+    z,
+    y: terrainHeight(x, z),
+    name: place.name || 'destination',
+    kind: place.kind,
+    address: place.address,
+    roadName: road.name,
+    roadId: road.id,
+    roadAxis: road.axis,
+    entryRule: 'road-sidewalk-access',
+  }
+}
+
+function entranceTargetFor(destination, roads = [], offset = { x: 0, z: 0 }) {
   const interior = destination?.interior
   if (!interior) {
     const x = destination.x
@@ -41,6 +107,15 @@ function entranceTargetFor(destination) {
       kind: destination.kind,
       address: destination.address,
       roadName: destination.roadName,
+    }
+  }
+
+  const sidewalkAccess = sidewalkAccessForPlace(destination, offset, roads)
+  if (sidewalkAccess) {
+    return {
+      ...sidewalkAccess,
+      placeName: destination.name,
+      interiorId: destination.id,
     }
   }
 
@@ -59,19 +134,26 @@ function entranceTargetFor(destination) {
   }
 }
 
-function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }) {
+function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }, roads = []) {
   if (!place?.interior?.solidWalls) {
     const x = place.x + offset.x
     const z = place.z + offset.z
-    return {
+    return pedestrianSafeTarget({
       x,
       z,
       y: terrainHeight(x, z),
       name: place.name,
+    }, { x: place.x, z: place.z }, roads)
+  }
+
+  const entry = entranceTargetFor(place, roads, offset)
+  if (entry.entryRule === 'road-sidewalk-access') {
+    return {
+      ...entry,
+      name: place.name,
     }
   }
 
-  const entry = entranceTargetFor(place)
   const lateral = Math.max(-place.interior.doorWidth * 0.42, Math.min(place.interior.doorWidth * 0.42, offset.x * 0.18))
   const setback = 2.2 + Math.min(5.5, Math.abs(offset.z) * 0.18)
   const x = entry.x + lateral
@@ -85,14 +167,14 @@ function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }) {
   }
 }
 
-function targetFor(agent, places, timeMinutes) {
+function targetFor(agent, places, timeMinutes, roads = []) {
   const slot = scheduleFor(agent, timeMinutes)
   if (slot.target === 'home') {
-    return { ...agent.home, activity: slot.activity }
+    return { ...pedestrianSafeTarget(agent.home, agent.pos || agent.home, roads), activity: slot.activity }
   }
   const id = slot.target === 'work' ? agent.workId : agent.thirdId
   const place = places.get(id) || [...places.values()][0]
-  return { ...scheduleTargetForPlace(place, agent.offset), activity: slot.activity }
+  return { ...scheduleTargetForPlace(place, agent.offset, roads), activity: slot.activity }
 }
 
 function nearCrosswalk(x, z, road, roads) {
@@ -105,6 +187,151 @@ function nearCrosswalk(x, z, road, roads) {
     }
   }
   return false
+}
+
+function pedestrianSafeTarget(target, from = target, roads = []) {
+  if (!target || !roads.length) return target
+  let x = target.x
+  let z = target.z
+  let adjustedRoadName = null
+
+  for (const road of roads) {
+    if (road.axis === 'x') {
+      if (x < road.from || x > road.to) continue
+      const lateral = z - road.z
+      if (Math.abs(lateral) >= road.width / 2 - 0.35) continue
+      const reference = Math.abs(lateral) > 0.15 ? lateral : (from.z ?? z) - road.z
+      const side = reference >= 0 ? 1 : -1
+      z = road.z + side * (road.width / 2 + 4.4)
+      adjustedRoadName = road.name
+    } else {
+      if (z < road.from || z > road.to) continue
+      const lateral = x - road.x
+      if (Math.abs(lateral) >= road.width / 2 - 0.35) continue
+      const reference = Math.abs(lateral) > 0.15 ? lateral : (from.x ?? x) - road.x
+      const side = reference >= 0 ? 1 : -1
+      x = road.x + side * (road.width / 2 + 4.4)
+      adjustedRoadName = road.name
+    }
+  }
+
+  if (!adjustedRoadName) return target
+  return {
+    ...target,
+    x,
+    z,
+    y: terrainHeight(x, z),
+    adjustedRoadName,
+  }
+}
+
+function roadSeparatesPoints(road, from, to) {
+  if (road.axis === 'x') {
+    const fromSide = from.z - road.z
+    const toSide = to.z - road.z
+    const crossesCenter = fromSide * toSide < 0
+    const segmentMin = Math.min(from.x, to.x)
+    const segmentMax = Math.max(from.x, to.x)
+    return crossesCenter && segmentMax >= road.from && segmentMin <= road.to
+  }
+  const fromSide = from.x - road.x
+  const toSide = to.x - road.x
+  const crossesCenter = fromSide * toSide < 0
+  const segmentMin = Math.min(from.z, to.z)
+  const segmentMax = Math.max(from.z, to.z)
+  return crossesCenter && segmentMax >= road.from && segmentMin <= road.to
+}
+
+function nearestCrosswalkForRoad(road, from, to, roads) {
+  const crossRoads = roads.filter(item => item.axis !== road.axis)
+  let best = null
+  let bestScore = Infinity
+  for (const cross of crossRoads) {
+    const intersection = road.axis === 'x'
+      ? { x: cross.x, z: road.z }
+      : { x: road.x, z: cross.z }
+    if (road.axis === 'x') {
+      if (intersection.x < road.from || intersection.x > road.to) continue
+      if (intersection.z < cross.from || intersection.z > cross.to) continue
+    } else {
+      if (intersection.z < road.from || intersection.z > road.to) continue
+      if (intersection.x < cross.from || intersection.x > cross.to) continue
+    }
+    const score = Math.hypot(from.x - intersection.x, from.z - intersection.z) * 1.25 +
+      Math.hypot(to.x - intersection.x, to.z - intersection.z) * 0.35 -
+      (cross.main ? 14 : 0)
+    if (score < bestScore) {
+      best = { ...intersection, crossRoad: cross }
+      bestScore = score
+    }
+  }
+  return best
+}
+
+function pedestrianWaypoint(agent, target, roads = []) {
+  const from = { x: agent.pos.x, z: agent.pos.z }
+  const crossingRoad = roads
+    .filter(road => roadSeparatesPoints(road, from, target))
+    .sort((a, b) => {
+      const da = a.axis === 'x' ? Math.abs(from.z - a.z) : Math.abs(from.x - a.x)
+      const db = b.axis === 'x' ? Math.abs(from.z - b.z) : Math.abs(from.x - b.x)
+      return da - db
+    })[0]
+
+  if (!crossingRoad) {
+    agent.walkPlan = {
+      mode: 'direct',
+      targetName: target.name || 'destination',
+      waypointName: target.name || 'destination',
+      waypoint: { x: target.x, z: target.z },
+      distanceToTarget: Math.hypot(target.x - from.x, target.z - from.z),
+      distanceToWaypoint: Math.hypot(target.x - from.x, target.z - from.z),
+    }
+    return target
+  }
+
+  const crosswalk = nearestCrosswalkForRoad(crossingRoad, from, target, roads)
+  if (!crosswalk) {
+    agent.walkPlan = {
+      mode: 'curb-avoidance',
+      roadName: crossingRoad.name,
+      targetName: target.name || 'destination',
+      waypointName: target.name || 'destination',
+      waypoint: { x: target.x, z: target.z },
+      distanceToTarget: Math.hypot(target.x - from.x, target.z - from.z),
+      distanceToWaypoint: Math.hypot(target.x - from.x, target.z - from.z),
+    }
+    return target
+  }
+
+  const curbOffset = crossingRoad.width / 2 + 4.2
+  let approach
+  let exit
+  if (crossingRoad.axis === 'x') {
+    const fromSide = from.z >= crossingRoad.z ? 1 : -1
+    const toSide = target.z >= crossingRoad.z ? 1 : -1
+    approach = { x: crosswalk.x, z: crossingRoad.z + fromSide * curbOffset, y: terrainHeight(crosswalk.x, crossingRoad.z + fromSide * curbOffset), name: `${crossingRoad.name} crosswalk approach` }
+    exit = { x: crosswalk.x, z: crossingRoad.z + toSide * curbOffset, y: terrainHeight(crosswalk.x, crossingRoad.z + toSide * curbOffset), name: `${crossingRoad.name} crosswalk exit` }
+  } else {
+    const fromSide = from.x >= crossingRoad.x ? 1 : -1
+    const toSide = target.x >= crossingRoad.x ? 1 : -1
+    approach = { x: crossingRoad.x + fromSide * curbOffset, z: crosswalk.z, y: terrainHeight(crossingRoad.x + fromSide * curbOffset, crosswalk.z), name: `${crossingRoad.name} crosswalk approach` }
+    exit = { x: crossingRoad.x + toSide * curbOffset, z: crosswalk.z, y: terrainHeight(crossingRoad.x + toSide * curbOffset, crosswalk.z), name: `${crossingRoad.name} crosswalk exit` }
+  }
+
+  const approachDistance = Math.hypot(from.x - approach.x, from.z - approach.z)
+  const shouldCross = approachDistance < 2.8 || nearCrosswalk(from.x, from.z, crossingRoad, roads)
+  agent.walkPlan = {
+    mode: shouldCross ? 'crosswalk-crossing' : 'sidewalk-waypoint',
+    roadName: crossingRoad.name,
+    crosswalk: { x: crosswalk.x, z: crosswalk.z },
+    waypointName: shouldCross ? exit.name : approach.name,
+    waypoint: shouldCross ? { x: exit.x, z: exit.z } : { x: approach.x, z: approach.z },
+    targetName: target.name || 'destination',
+    distanceToTarget: Math.hypot(target.x - from.x, target.z - from.z),
+    distanceToWaypoint: shouldCross ? Math.hypot(exit.x - from.x, exit.z - from.z) : approachDistance,
+  }
+  return shouldCross ? exit : approach
 }
 
 function enforcePedestrianNorms(previous, next, roads = []) {
@@ -161,16 +388,19 @@ function resolveAgentMovement(agent, previous, next, target, cityOrRoads) {
       bestScore = score
     }
   }
-  if (best === previous) agent.heading += 1.35 * delta
-  else if (collided) agent.heading += Math.sin(agent.id.length + performance.now() * 0.001) * delta * 1.8
+  if (best === previous) agent.heading += 0.18
+  else if (collided) agent.heading += Math.sin(agent.id.length + performance.now() * 0.001) * 0.08
   return best
 }
 
 function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
-  const dx = target.x - agent.pos.x
-  const dz = target.z - agent.pos.z
+  const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads?.roads
+  const safeTarget = roads?.length ? pedestrianSafeTarget(target, agent.pos, roads) : target
+  const waypoint = roads?.length ? pedestrianWaypoint(agent, safeTarget, roads) : safeTarget
+  const dx = waypoint.x - agent.pos.x
+  const dz = waypoint.z - agent.pos.z
   const distance = Math.hypot(dx, dz)
-  if (distance <= 0.001) return 0
+  if (distance <= 0.001) return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
 
   const desired = Math.atan2(dx, dz)
   const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
@@ -181,11 +411,11 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
     x: agent.pos.x + Math.sin(agent.heading) * step,
     z: agent.pos.z + Math.cos(agent.heading) * step,
   }
-  const safe = resolveAgentMovement(agent, previous, next, target, cityOrRoads)
+  const safe = resolveAgentMovement(agent, previous, next, waypoint, cityOrRoads)
   agent.pos.x = safe.x
   agent.pos.z = safe.z
   agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
-  return distance
+  return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
 }
 
 function advanceTaxi(taxi, delta) {
@@ -504,7 +734,7 @@ class Agent {
 
     if (this.mission) return this.updateMission(delta, city)
 
-    const target = targetFor(this, places, timeMinutes)
+    const target = targetFor(this, places, timeMinutes, roads)
     this.activity = target.activity
     this.placeName = target.name
 
@@ -1437,7 +1667,7 @@ function NPCs({ city }) {
   const destinations = useMemo(() => new Map([...city.landmarks, ...(city.addressBook || [])].map(place => [place.id, place])), [city.landmarks, city.addressBook])
   const agents = useMemo(() => city.npcs.map((npc, i) => {
     const agent = new Agent(npc)
-    const target = targetFor(agent, places, useCityStore.getState().timeMinutes)
+    const target = targetFor(agent, places, useCityStore.getState().timeMinutes, city.roads)
     const spread = 2.4 + (i % 5) * 0.7
     const plazaAgent = i < 10
     const x = plazaAgent ? Math.sin(i * 1.9) * (8 + i * 1.1) : target.x + Math.sin(i * 2.13) * spread
@@ -1656,6 +1886,16 @@ function NPCs({ city }) {
         z: agent.pos.z,
         radius: 0.82,
         state: agent.fallTimer > 0 ? 'fallen' : agent.bumpTimer > 0 ? 'stumbling' : agent.activity,
+        targetName: agent.walkPlan?.targetName || agent.placeName || null,
+        routeMode: agent.walkPlan?.mode || 'direct',
+        routeRoadName: agent.walkPlan?.roadName || null,
+        waypointName: agent.walkPlan?.waypointName || null,
+        waypointX: agent.walkPlan?.waypoint?.x ?? null,
+        waypointZ: agent.walkPlan?.waypoint?.z ?? null,
+        crosswalkX: agent.walkPlan?.crosswalk?.x ?? null,
+        crosswalkZ: agent.walkPlan?.crosswalk?.z ?? null,
+        distanceToTarget: agent.walkPlan?.distanceToTarget ? Number(agent.walkPlan.distanceToTarget.toFixed(2)) : null,
+        distanceToWaypoint: agent.walkPlan?.distanceToWaypoint ? Number(agent.walkPlan.distanceToWaypoint.toFixed(2)) : null,
       })))
       store.setNearbyAgent(nearestAgent && nearestDistance <= 24
         ? { ...nearestAgent.snapshot(places), distance: nearestDistance }
