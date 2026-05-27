@@ -1765,6 +1765,7 @@ function NPCs({ city }) {
   const headRef = useRef()
   const hairBackRef = useRef()
   const faceMarkRef = useRef()
+  const cheekRef = useRef()
   const legRef = useRef()
   const armRef = useRef()
   const sleeveRef = useRef()
@@ -1775,7 +1776,11 @@ function NPCs({ city }) {
   const mouthRef = useRef()
   const shoeRef = useRef()
   const chestRef = useRef()
+  const collarRef = useRef()
+  const lapelRef = useRef()
+  const badgeRef = useRef()
   const beltRef = useRef()
+  const cuffRef = useRef()
   const bagRef = useRef()
   const handRef = useRef()
   const earRef = useRef()
@@ -1839,11 +1844,16 @@ function NPCs({ city }) {
         'nose',
         'mouth',
         'faceMarks',
+        'cheeks',
         'arms',
         'sleeves',
         'hands',
         'legs',
         'shoes',
+        'collar',
+        'lapels',
+        'badge',
+        'cuffs',
         'belt',
         'bag',
         'hat',
@@ -1863,6 +1873,7 @@ function NPCs({ city }) {
         skinTones: unique(agent => agent.appearance?.skinColor),
         faceAccessoryVariants: unique(agent => `${agent.appearance?.glassesStyle}:${agent.appearance?.ageBand}:${agent.gender}`),
       },
+      streetReadableDetails: ['collar', 'lapels', 'cheeks', 'front badge', 'pant cuffs'],
       samplePeople: agents.slice(0, 12).map(agent => ({
         id: agent.id,
         name: agent.name,
@@ -1877,7 +1888,7 @@ function NPCs({ city }) {
   }, [agents])
 
   useFrame((state, delta) => {
-    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !beltRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current) return
+    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -1898,6 +1909,8 @@ function NPCs({ city }) {
         hairBackRef.current.setColorAt(i, color.set(hairTone(agent)))
         faceMarkRef.current.setColorAt(i * 2, color.set(agent.appearance?.ageBand === 'senior' ? '#7b5b4e' : hairTone(agent)))
         faceMarkRef.current.setColorAt(i * 2 + 1, color.set(agent.appearance?.ageBand === 'senior' ? '#6f5b52' : hairTone(agent)))
+        cheekRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
+        cheekRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         armRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         armRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         sleeveRef.current.setColorAt(i * 2, color.set(look.topColor))
@@ -1912,7 +1925,13 @@ function NPCs({ city }) {
         legRef.current.setColorAt(i * 2 + 1, color.set(look.pantsColor))
         shoeRef.current.setColorAt(i * 2, color.set(look.shoeColor))
         shoeRef.current.setColorAt(i * 2 + 1, color.set(look.shoeColor))
+        collarRef.current.setColorAt(i, color.set(look.outerwear === 'hoodie' ? look.topColor : '#eee4d4'))
+        lapelRef.current.setColorAt(i * 2, color.set(look.jacketColor))
+        lapelRef.current.setColorAt(i * 2 + 1, color.set(look.jacketColor))
+        badgeRef.current.setColorAt(i, color.set(look.accessoryColor))
         beltRef.current.setColorAt(i, color.set(look.accessoryColor))
+        cuffRef.current.setColorAt(i * 2, color.set(look.shoeColor))
+        cuffRef.current.setColorAt(i * 2 + 1, color.set(look.shoeColor))
         bagRef.current.setColorAt(i, color.set(look.accessoryColor))
         hatRef.current.setColorAt(i, color.set(look.accessoryColor))
         skirtRef.current.setColorAt(i, color.set(look.pantsColor))
@@ -1926,6 +1945,7 @@ function NPCs({ city }) {
       if (hairRef.current.instanceColor) hairRef.current.instanceColor.needsUpdate = true
       if (hairBackRef.current.instanceColor) hairBackRef.current.instanceColor.needsUpdate = true
       if (faceMarkRef.current.instanceColor) faceMarkRef.current.instanceColor.needsUpdate = true
+      if (cheekRef.current.instanceColor) cheekRef.current.instanceColor.needsUpdate = true
       if (armRef.current.instanceColor) armRef.current.instanceColor.needsUpdate = true
       if (sleeveRef.current.instanceColor) sleeveRef.current.instanceColor.needsUpdate = true
       if (handRef.current.instanceColor) handRef.current.instanceColor.needsUpdate = true
@@ -1933,7 +1953,11 @@ function NPCs({ city }) {
       if (browRef.current.instanceColor) browRef.current.instanceColor.needsUpdate = true
       if (legRef.current.instanceColor) legRef.current.instanceColor.needsUpdate = true
       if (shoeRef.current.instanceColor) shoeRef.current.instanceColor.needsUpdate = true
+      if (collarRef.current.instanceColor) collarRef.current.instanceColor.needsUpdate = true
+      if (lapelRef.current.instanceColor) lapelRef.current.instanceColor.needsUpdate = true
+      if (badgeRef.current.instanceColor) badgeRef.current.instanceColor.needsUpdate = true
       if (beltRef.current.instanceColor) beltRef.current.instanceColor.needsUpdate = true
+      if (cuffRef.current.instanceColor) cuffRef.current.instanceColor.needsUpdate = true
       if (bagRef.current.instanceColor) bagRef.current.instanceColor.needsUpdate = true
       if (hatRef.current.instanceColor) hatRef.current.instanceColor.needsUpdate = true
       if (skirtRef.current.instanceColor) skirtRef.current.instanceColor.needsUpdate = true
@@ -2019,9 +2043,15 @@ function NPCs({ city }) {
       setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, mouthY, 0.202], [0.088, 0.012, 0.014])
       setLocalPart(faceMarkRef.current, i * 2, dummy, base, agent.heading, [0, 0.915 * height, 0.222], facialHair ? [0.12 * headScale, 0.018, 0.012] : [0.001, 0.001, 0.001])
       setLocalPart(faceMarkRef.current, i * 2 + 1, dummy, base, agent.heading, [0, 1.025 * height, 0.21], seniorFace ? [0.13 * headScale, 0.008, 0.01] : [0.001, 0.001, 0.001])
+      setLocalPart(cheekRef.current, i * 2, dummy, base, agent.heading, [-0.07 * headScale, 0.925 * height, 0.218], [0.033, 0.018, 0.011])
+      setLocalPart(cheekRef.current, i * 2 + 1, dummy, base, agent.heading, [0.07 * headScale, 0.925 * height, 0.218], [0.033, 0.018, 0.011])
       setLocalPart(glassesRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
       setLocalPart(glassesRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
       setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, chestY, 0.18], [0.28 * shoulder, 0.34 * height, 0.035], bodyRotX, bodyRotZ)
+      setLocalPart(collarRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.205], [0.17 * shoulder, 0.03 * height, 0.018], bodyRotX, bodyRotZ)
+      setLocalPart(lapelRef.current, i * 2, dummy, base, agent.heading, [-0.072 * shoulder, 0.52 * height, 0.206], [0.035, 0.2 * height, 0.015], bodyRotX, bodyRotZ - 0.16)
+      setLocalPart(lapelRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * shoulder, 0.52 * height, 0.206], [0.035, 0.2 * height, 0.015], bodyRotX, bodyRotZ + 0.16)
+      setLocalPart(badgeRef.current, i, dummy, base, agent.heading, [0.105 * shoulder, 0.58 * height, 0.222], [0.028, 0.038, 0.012], bodyRotX, bodyRotZ)
       setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, 0.15 * height, 0.158], [0.19 * shoulder, 0.025, 0.032])
       setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.24 * shoulder, 0.38 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
       setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 1.18 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
@@ -2037,6 +2067,8 @@ function NPCs({ city }) {
       setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height, 0.035], [0.065, 0.065, 0.065])
       setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
       setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
+      setLocalPart(cuffRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? 0.55 : stride, bodyRotZ * 0.35)
+      setLocalPart(cuffRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
     }
 
     socialClock.current += dt
@@ -2121,12 +2153,17 @@ function NPCs({ city }) {
     hairRef.current.instanceMatrix.needsUpdate = true
     hairBackRef.current.instanceMatrix.needsUpdate = true
     faceMarkRef.current.instanceMatrix.needsUpdate = true
+    cheekRef.current.instanceMatrix.needsUpdate = true
     eyeRef.current.instanceMatrix.needsUpdate = true
     browRef.current.instanceMatrix.needsUpdate = true
     noseRef.current.instanceMatrix.needsUpdate = true
     mouthRef.current.instanceMatrix.needsUpdate = true
     chestRef.current.instanceMatrix.needsUpdate = true
+    collarRef.current.instanceMatrix.needsUpdate = true
+    lapelRef.current.instanceMatrix.needsUpdate = true
+    badgeRef.current.instanceMatrix.needsUpdate = true
     beltRef.current.instanceMatrix.needsUpdate = true
+    cuffRef.current.instanceMatrix.needsUpdate = true
     bagRef.current.instanceMatrix.needsUpdate = true
     handRef.current.instanceMatrix.needsUpdate = true
     earRef.current.instanceMatrix.needsUpdate = true
@@ -2291,6 +2328,18 @@ function NPCs({ city }) {
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial map={textures.fabric} color="#ffffff" vertexColors roughness={0.64} metalness={0.04} />
       </instancedMesh>
+      <instancedMesh ref={collarRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.fabric} color="#eee4d4" vertexColors roughness={0.62} metalness={0.02} />
+      </instancedMesh>
+      <instancedMesh ref={lapelRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.fabric} color="#ffffff" vertexColors roughness={0.68} metalness={0.03} />
+      </instancedMesh>
+      <instancedMesh ref={badgeRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.metal} color="#c49a4f" vertexColors roughness={0.38} metalness={0.36} />
+      </instancedMesh>
       <instancedMesh ref={beltRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial map={textures.metal} color="#473120" vertexColors roughness={0.62} metalness={0.12} />
@@ -2335,6 +2384,10 @@ function NPCs({ city }) {
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#4b2b22" vertexColors roughness={0.76} />
       </instancedMesh>
+      <instancedMesh ref={cheekRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshStandardMaterial map={textures.skin} color="#efc29a" vertexColors roughness={0.7} />
+      </instancedMesh>
       <instancedMesh ref={earRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
         <meshStandardMaterial map={textures.skin} color="#efc29a" vertexColors roughness={0.72} />
@@ -2374,6 +2427,10 @@ function NPCs({ city }) {
       <instancedMesh ref={shoeRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial map={textures.rubber} color="#10151c" vertexColors roughness={0.82} />
+      </instancedMesh>
+      <instancedMesh ref={cuffRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.rubber} color="#10151c" vertexColors roughness={0.78} />
       </instancedMesh>
     </>
   )

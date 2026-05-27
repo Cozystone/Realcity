@@ -1,6 +1,55 @@
 import { create } from 'zustand'
 import { DAY_MINUTES } from './cityEngine'
 
+const PLAYER_COLORS = ['#4aadff', '#ffb703', '#8ac926', '#ff6b9d', '#a78bfa', '#2dd4bf', '#f97316']
+
+function randomToken() {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const values = new Uint32Array(1)
+    crypto.getRandomValues(values)
+    return values[0].toString(36).slice(0, 6)
+  }
+  return Math.random().toString(36).slice(2, 8)
+}
+
+function defaultMultiplayerIdentity() {
+  const token = randomToken()
+  return {
+    playerId: `rc-${token}`,
+    name: `Player ${token.toUpperCase()}`,
+    roomId: 'lobby',
+    color: PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)],
+  }
+}
+
+function readMultiplayerIdentity() {
+  const fallback = defaultMultiplayerIdentity()
+  if (typeof window === 'undefined') return fallback
+  try {
+    const saved = JSON.parse(window.localStorage.getItem('realcity:multiplayer') || '{}')
+    return {
+      playerId: saved.playerId || fallback.playerId,
+      name: saved.name || fallback.name,
+      roomId: saved.roomId || fallback.roomId,
+      color: saved.color || fallback.color,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function persistMultiplayerIdentity(multiplayer) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem('realcity:multiplayer', JSON.stringify({
+    playerId: multiplayer.playerId,
+    name: multiplayer.name,
+    roomId: multiplayer.roomId,
+    color: multiplayer.color,
+  }))
+}
+
+const initialMultiplayer = readMultiplayerIdentity()
+
 export const useCityStore = create((set, get) => ({
   timeMinutes: 10 * 60 + 30,
   day: 1,
@@ -48,6 +97,19 @@ export const useCityStore = create((set, get) => ({
   cityEvents: [],
   pedestrianSamples: [],
   vehicleSamples: [],
+  multiplayer: {
+    enabled: false,
+    roomId: initialMultiplayer.roomId,
+    playerId: initialMultiplayer.playerId,
+    name: initialMultiplayer.name,
+    color: initialMultiplayer.color,
+    status: 'offline',
+    lastError: null,
+    updatedAt: 0,
+    serverTime: null,
+    playerCount: 1,
+    peers: [],
+  },
   collisionRules: {
     playerRadius: 0.72,
     pedestrianRadius: 0.82,
@@ -209,6 +271,43 @@ export const useCityStore = create((set, get) => ({
 
   setVehicleSamples(vehicleSamples) {
     set({ vehicleSamples })
+  },
+
+  setMultiplayerIdentity(patch) {
+    set(state => {
+      const next = {
+        ...state.multiplayer,
+        ...patch,
+        roomId: String(patch.roomId ?? state.multiplayer.roomId).trim().toLowerCase() || 'lobby',
+        playerId: String(patch.playerId ?? state.multiplayer.playerId).trim() || state.multiplayer.playerId,
+        name: String(patch.name ?? state.multiplayer.name).trim().slice(0, 28) || state.multiplayer.name,
+      }
+      persistMultiplayerIdentity(next)
+      return { multiplayer: next }
+    })
+  },
+
+  setMultiplayerEnabled(enabled) {
+    set(state => ({
+      multiplayer: {
+        ...state.multiplayer,
+        enabled,
+        status: enabled ? 'connecting' : 'offline',
+        lastError: null,
+        peers: enabled ? state.multiplayer.peers : [],
+        updatedAt: Date.now(),
+      },
+    }))
+  },
+
+  setMultiplayerPresence(patch) {
+    set(state => ({
+      multiplayer: {
+        ...state.multiplayer,
+        ...patch,
+        updatedAt: Date.now(),
+      },
+    }))
   },
 }))
 

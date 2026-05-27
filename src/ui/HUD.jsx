@@ -209,6 +209,92 @@ function AgentCard({ agent, stats, pulse }) {
   )
 }
 
+function MultiplayerPanel({ multiplayer }) {
+  const [form, setForm] = useState({
+    playerId: multiplayer.playerId,
+    name: multiplayer.name,
+    roomId: multiplayer.roomId,
+    color: multiplayer.color,
+  })
+
+  useEffect(() => {
+    if (!multiplayer.enabled) {
+      setForm({
+        playerId: multiplayer.playerId,
+        name: multiplayer.name,
+        roomId: multiplayer.roomId,
+        color: multiplayer.color,
+      })
+    }
+  }, [multiplayer.playerId, multiplayer.name, multiplayer.roomId, multiplayer.color, multiplayer.enabled])
+
+  const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const join = (event) => {
+    event.preventDefault()
+    const store = useCityStore.getState()
+    store.setMultiplayerIdentity(form)
+    store.setMultiplayerEnabled(true)
+  }
+  const leave = () => useCityStore.getState().setMultiplayerEnabled(false)
+
+  if (multiplayer.enabled) {
+    return (
+      <aside className="multiplayer-panel">
+        <div className="multiplayer-header">
+          <span className={`multiplayer-dot ${multiplayer.status}`} />
+          <strong>{multiplayer.name}</strong>
+          <button type="button" onClick={leave}>Leave</button>
+        </div>
+        <div className="multiplayer-grid">
+          <span>Room</span><strong>{multiplayer.roomId}</strong>
+          <span>ID</span><strong>{multiplayer.playerId}</strong>
+          <span>Online</span><strong>{multiplayer.playerCount}</strong>
+        </div>
+        {multiplayer.peers.length ? (
+          <ul>
+            {multiplayer.peers.slice(0, 4).map(peer => (
+              <li key={peer.id}>
+                <i style={{ background: peer.color }} />
+                <span>{peer.name}</span>
+                <small>{peer.district}</small>
+              </li>
+            ))}
+          </ul>
+        ) : <small>{multiplayer.status === 'online' ? 'Waiting for other players' : multiplayer.status}</small>}
+        {multiplayer.lastError ? <small className="multiplayer-error">{multiplayer.lastError}</small> : null}
+      </aside>
+    )
+  }
+
+  return (
+    <form className="multiplayer-panel" onSubmit={join} onKeyDown={event => event.stopPropagation()}>
+      <div className="multiplayer-title">
+        <strong>Multiplayer</strong>
+        <span>city room</span>
+      </div>
+      <div className="multiplayer-form">
+        <label>
+          <span>Name</span>
+          <input value={form.name} maxLength={28} onChange={event => update('name', event.target.value)} />
+        </label>
+        <label>
+          <span>ID</span>
+          <input value={form.playerId} maxLength={48} onChange={event => update('playerId', event.target.value)} />
+        </label>
+        <label>
+          <span>Room</span>
+          <input value={form.roomId} maxLength={32} onChange={event => update('roomId', event.target.value)} />
+        </label>
+        <label>
+          <span>Color</span>
+          <input type="color" value={form.color} onChange={event => update('color', event.target.value)} />
+        </label>
+      </div>
+      <button type="submit">Join Server</button>
+    </form>
+  )
+}
+
 function InteractionPanel({ interaction }) {
   const [text, setText] = useState('')
 
@@ -521,6 +607,7 @@ export default function HUD({ city }) {
   const interaction = useCityStore(state => state.interaction)
   const mission = useCityStore(state => state.mission)
   const ride = useCityStore(state => state.ride)
+  const multiplayer = useCityStore(state => state.multiplayer)
   const viewHeading = player.viewHeading ?? player.heading
   const displayedAgent = focusedAgent || nearbyAgent
 
@@ -556,6 +643,7 @@ export default function HUD({ city }) {
 
       <Compass heading={viewHeading} />
       <AgentCard agent={displayedAgent} stats={stats} pulse={pulse} />
+      <MultiplayerPanel multiplayer={multiplayer} />
       <Dialogue dialogue={dialogue} />
       <InteractionPanel interaction={interaction} />
       <MissionPanel mission={mission} ride={ride} />

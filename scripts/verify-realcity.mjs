@@ -488,6 +488,7 @@ async function inspectActorRendering(page) {
       actor.bodyParts?.includes('hips') &&
       actor.bodyParts?.includes('hairBack') &&
       actor.bodyParts?.includes('faceMarks') &&
+      actor.bodyParts?.includes('lapels') &&
       actor.variation?.count > 100
   }, null, { timeout: 15000 })
 
@@ -497,7 +498,8 @@ async function inspectActorRendering(page) {
   assert(actor.rigScale?.torsoCapsuleTotalHeight === 0.94, 'NPC torso was not matched to the player avatar torso capsule')
   assert(actor.rigScale?.armCapsuleTotalHeight === 0.53, 'NPC arm capsule proportions do not match the player avatar')
   assert(actor.rigScale?.legCapsuleTotalHeight === 0.65, 'NPC leg capsule proportions do not match the player avatar')
-  assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'brows', 'nose', 'mouth', 'faceMarks', 'arms', 'hands', 'legs', 'shoes'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'brows', 'nose', 'mouth', 'faceMarks', 'cheeks', 'arms', 'hands', 'legs', 'shoes', 'collar', 'lapels', 'badge', 'cuffs'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(['collar', 'lapels', 'cheeks', 'front badge', 'pant cuffs'].every(part => actor.streetReadableDetails?.includes(part)), `NPC street-readable detail metadata is incomplete: ${(actor.streetReadableDetails || []).join(', ')}`)
   assert(actor.variation.heightVariants >= 8, `NPC height variation is too low in actor rendering: ${actor.variation.heightVariants}`)
   assert(actor.variation.bodyVariants >= 7, `NPC body type variation is too low in actor rendering: ${actor.variation.bodyVariants}`)
   assert(actor.variation.ageBands >= 3 && actor.variation.ages >= 40, `NPC age variation is too low in actor rendering: ${JSON.stringify(actor.variation)}`)
@@ -505,6 +507,71 @@ async function inspectActorRendering(page) {
   assert(actor.variation.outfitSignatures >= 120, `NPC outfit variation is too low in actor rendering: ${actor.variation.outfitSignatures}`)
   assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit), 'NPC actor samples do not expose person-like identity and style')
   return actor
+}
+
+async function inspectMultiplayer(page) {
+  await page.locator('.multiplayer-panel').waitFor({ state: 'visible', timeout: 10000 })
+  const panelText = await page.locator('.multiplayer-panel').innerText({ timeout: 5000 })
+  assert(panelText.includes('Multiplayer') && panelText.includes('Join Server'), `Multiplayer join panel is missing: ${panelText}`)
+
+  const seeded = await page.evaluate(async () => {
+    const roomId = `verify-${Date.now()}`
+    const post = async (playerId, name, x, z, color) => {
+      const response = await fetch('/api/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          playerId,
+          name,
+          color,
+          pose: { x, y: 1.1, z, heading: 0.45, speed: 0, district: 'Verification' },
+        }),
+      })
+      return response.json()
+    }
+    await post('verify_peer_b', 'Verifier B', 24, 48, '#ffb703')
+    const self = await post('verify_peer_a', 'Verifier A', 0, 40, '#4aadff')
+    window.__REALCITY_STORE__?.getState().setMultiplayerIdentity({
+      playerId: 'verify_peer_a',
+      name: 'Verifier A',
+      roomId,
+      color: '#4aadff',
+    })
+    window.__REALCITY_STORE__?.getState().setMultiplayerEnabled(true)
+    return { roomId, apiPeers: self.peers.map(peer => peer.id), playerCount: self.playerCount }
+  })
+
+  assert(seeded.apiPeers.includes('verify_peer_b') && seeded.playerCount >= 2, `Multiplayer API did not return seeded peer: ${JSON.stringify(seeded)}`)
+  await page.waitForFunction(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.multiplayer?.status === 'online' &&
+      state.multiplayer.peers.some(peer => peer.id === 'verify_peer_b') &&
+      window.__REALCITY_MULTIPLAYER__?.peerCount >= 1
+  }, null, { timeout: 15000 })
+
+  const state = await page.evaluate(async (roomId) => {
+    const multiplayer = window.__REALCITY_STORE__?.getState().multiplayer
+    const rendering = window.__REALCITY_MULTIPLAYER__
+    for (const playerId of ['verify_peer_a', 'verify_peer_b']) {
+      await fetch('/api/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'leave', roomId, playerId }),
+      })
+    }
+    window.__REALCITY_STORE__?.getState().setMultiplayerEnabled(false)
+    return {
+      status: multiplayer?.status,
+      roomId: multiplayer?.roomId,
+      playerCount: multiplayer?.playerCount,
+      peers: multiplayer?.peers?.map(peer => ({ id: peer.id, name: peer.name, x: peer.x, z: peer.z })),
+      rendering,
+    }
+  }, seeded.roomId)
+
+  assert(state.peers.some(peer => peer.id === 'verify_peer_b' && Number.isFinite(peer.x) && Number.isFinite(peer.z)), `Multiplayer peer pose was not synchronized: ${JSON.stringify(state)}`)
+  return { panel: panelText.split(/\r?\n/).slice(0, 8), seeded, state }
 }
 
 async function inspectPhone(page) {
@@ -754,6 +821,7 @@ async function main() {
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
     const actorRendering = await inspectActorRendering(page)
+    const multiplayer = await inspectMultiplayer(page)
     const supportUX = await inspectSupportUX(page)
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
@@ -908,6 +976,7 @@ async function main() {
       interiors,
       cityNorms,
       actorRendering,
+      multiplayer,
       supportUX,
       skyState,
       collisionAndMaterials,

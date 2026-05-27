@@ -171,6 +171,191 @@ select {
   font-size: 11px;
 }
 
+.multiplayer-panel {
+  pointer-events: auto;
+  position: absolute;
+  top: 132px;
+  left: 20px;
+  width: 254px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  background: rgba(5, 9, 15, 0.62);
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
+}
+
+.multiplayer-title,
+.multiplayer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.multiplayer-title {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.multiplayer-title strong,
+.multiplayer-header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fbff;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiplayer-title span {
+  color: rgba(238, 244, 255, 0.46);
+  font-size: 11px;
+}
+
+.multiplayer-form {
+  display: grid;
+  grid-template-columns: 1fr 72px;
+  gap: 8px;
+}
+
+.multiplayer-form label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.multiplayer-form label:nth-child(2),
+.multiplayer-form label:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.multiplayer-form span,
+.multiplayer-grid span {
+  color: rgba(238, 244, 255, 0.46);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.multiplayer-form input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  outline: none;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fbff;
+  font-size: 12px;
+}
+
+.multiplayer-form input[type="color"] {
+  padding: 2px;
+}
+
+.multiplayer-panel > button,
+.multiplayer-header button {
+  height: 31px;
+  border: 1px solid rgba(74, 173, 255, 0.32);
+  border-radius: 7px;
+  background: rgba(74, 173, 255, 0.82);
+  color: #06111d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.multiplayer-panel > button {
+  width: 100%;
+  margin-top: 9px;
+}
+
+.multiplayer-header button {
+  margin-left: auto;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 244, 255, 0.82);
+}
+
+.multiplayer-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #8a94a6;
+  box-shadow: 0 0 0 3px rgba(138, 148, 166, 0.14);
+}
+
+.multiplayer-dot.online {
+  background: #8ac926;
+  box-shadow: 0 0 0 3px rgba(138, 201, 38, 0.18);
+}
+
+.multiplayer-dot.connecting {
+  background: #ffb703;
+  box-shadow: 0 0 0 3px rgba(255, 183, 3, 0.18);
+}
+
+.multiplayer-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+
+.multiplayer-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(238, 244, 255, 0.78);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiplayer-panel ul {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.multiplayer-panel li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 7px;
+  align-items: center;
+}
+
+.multiplayer-panel li i {
+  grid-row: span 2;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.multiplayer-panel li span,
+.multiplayer-panel li small,
+.multiplayer-panel > small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(238, 244, 255, 0.76);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiplayer-panel li small,
+.multiplayer-panel > small {
+  display: block;
+  margin-top: 2px;
+  color: rgba(238, 244, 255, 0.42);
+}
+
+.multiplayer-error {
+  color: #ff8a8a !important;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
