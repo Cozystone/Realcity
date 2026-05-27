@@ -917,7 +917,9 @@ async function inspectAgentAutonomy(page) {
       (state?.cityEvents || []).some(event => event.kind === 'conversation' && event.partnerName && event.topic) &&
       samples.length > 100 &&
       samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0) &&
-      samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionTopic).length >= 6
+      samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionTopic).length >= 6 &&
+      (samples.some(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName) ||
+        (state?.cityEvents || []).some(event => event.kind === 'mobility' && /taxi/i.test(event.text || '')))
   }, null, { timeout: 22000 })
 
   const result = await page.evaluate(() => {
@@ -926,7 +928,10 @@ async function inspectAgentAutonomy(page) {
     const cityEvents = state?.cityEvents || []
     const autonomousSamples = samples.filter(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0)
     const conversationEvents = cityEvents.filter(event => event.kind === 'conversation')
+    const mobilityEvents = cityEvents.filter(event => event.kind === 'mobility')
     const relationshipSamples = samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionPartner && sample.lastInteractionTopic)
+    const taxiCommuters = samples.filter(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName)
+    const autonomousTaxiVehicles = (state?.vehicleSamples || []).filter(sample => sample.routeMode === 'npc-autonomous-taxi' && sample.npcTaxiPhase && sample.npcTaxiTarget)
     return {
       cityEvents: cityEvents.length,
       eventKinds: [...new Set(cityEvents.map(event => event.kind).filter(Boolean))],
@@ -939,14 +944,22 @@ async function inspectAgentAutonomy(page) {
         text: event.text,
       })),
       conversationEvents: conversationEvents.length,
+      mobilityEvents: mobilityEvents.length,
       conversationMetadata: conversationEvents.slice(0, 5).map(event => ({
         agentName: event.agentName,
         partnerName: event.partnerName,
         topic: event.topic,
         relationshipTrust: event.relationshipTrust,
       })),
+      mobilityMetadata: mobilityEvents.slice(0, 5).map(event => ({
+        agentName: event.agentName,
+        topic: event.topic,
+        text: event.text,
+      })),
       autonomousSamples: autonomousSamples.length,
       relationshipSamples: relationshipSamples.length,
+      taxiCommuters: taxiCommuters.length,
+      autonomousTaxiVehicles: autonomousTaxiVehicles.length,
       knownContactSamples: samples.filter(sample => Array.isArray(sample.knownContacts) && sample.knownContacts.length > 0).length,
       memorySamples: samples.filter(sample => sample.lastMemory).length,
       needSamples: samples.filter(sample => typeof sample.energy === 'number' && typeof sample.hunger === 'number' && typeof sample.socialNeed === 'number').length,
@@ -959,6 +972,8 @@ async function inspectAgentAutonomy(page) {
         lastMemory: sample.lastMemory,
         lastInteractionPartner: sample.lastInteractionPartner,
         lastInteractionTopic: sample.lastInteractionTopic,
+        travelMode: sample.travelMode,
+        taxiPhase: sample.taxiPhase,
       })),
     }
   })
@@ -969,7 +984,10 @@ async function inspectAgentAutonomy(page) {
   assert(result.needSamples > 100, `NPC need samples are incomplete: ${result.needSamples}`)
   assert(result.relationshipStyles.length >= 6, `Runtime relationship styles are too sparse: ${result.relationshipStyles.join(', ')}`)
   assert(result.conversationEvents >= 1, 'NPC-to-NPC conversation events are missing from the live city feed')
+  assert(result.mobilityEvents >= 1, `NPC autonomous mobility events are missing: ${JSON.stringify(result.mobilityMetadata)}`)
   assert(result.conversationMetadata.every(event => event.agentName && event.partnerName && event.topic), `Conversation event metadata is incomplete: ${JSON.stringify(result.conversationMetadata)}`)
+  assert(result.taxiCommuters >= 1, `No NPC is actively using a self-called taxi: ${JSON.stringify(result.intentSamples)}`)
+  assert(result.autonomousTaxiVehicles >= 1, `No fleet taxi is rendering as an NPC autonomous taxi: ${JSON.stringify(result.mobilityMetadata)}`)
   assert(result.relationshipSamples >= 6, `NPC relationship state is too sparse: ${result.relationshipSamples}`)
   assert(result.knownContactSamples >= 6, `NPC known-contact samples are too sparse: ${result.knownContactSamples}`)
   assert(result.latestEvents.every(event => event.text && event.agentName), `Live city events are missing agent context: ${JSON.stringify(result.latestEvents)}`)

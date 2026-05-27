@@ -15,6 +15,10 @@ const TAXI_MIN_RIDE_SECONDS = 14
 const TAXI_MAX_RIDE_SECONDS = 120
 const TAXI_BOARDING_SECONDS = 1.45
 const TAXI_HAIL_RADIUS = 92
+const NPC_TAXI_MAX_ACTIVE = 4
+const NPC_TAXI_MIN_DISTANCE = 520
+const NPC_TAXI_DISPATCH_SPEED = 16
+const NPC_TAXI_RIDE_SPEED = 22
 const WALK_ROUTE_WAYPOINT_RADIUS = 1.8
 const WALK_ROUTE_REPLAN_SECONDS = 2.35
 const WALK_ROUTE_MAX_WAYPOINTS = 12
@@ -758,7 +762,8 @@ function assignedTaxiPose(car, store) {
   if (!car.assignment) return null
   const missionTaxi = store.mission?.taxi?.fleetCarId === car.id ? store.mission.taxi.pose : null
   const rideTaxi = store.ride?.taxiId === car.id ? store.ride.taxiPose : null
-  const pose = rideTaxi || missionTaxi
+  const npcTaxi = car.npcTaxi?.pose || null
+  const pose = rideTaxi || missionTaxi || npcTaxi
   return pose ? { x: pose.x, z: pose.z, yaw: pose.heading ?? pose.yaw ?? 0, heading: pose.heading ?? pose.yaw ?? 0 } : null
 }
 
@@ -956,6 +961,196 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
   return true
 }
 
+function activeNpcTaxiCount(cars = []) {
+  return cars.filter(car => String(car.assignment || '').startsWith('npc_taxi_')).length
+}
+
+function shouldUseAutonomousTaxi(agent, target, city) {
+  if (!target || agent.mission || agent.selfTaxi || agent.taxiCooldown > 0) return false
+  if (activeNpcTaxiCount(city.cars || []) >= NPC_TAXI_MAX_ACTIVE) return false
+  const distance = Math.hypot(target.x - agent.pos.x, target.z - agent.pos.z)
+  if (distance < NPC_TAXI_MIN_DISTANCE) return false
+  if (/resting|break|dwelling|available/i.test(target.activity || agent.activity || '')) return false
+  const longTripRoles = new Set(['banker', 'doctor', 'teacher', 'courier', 'barista', 'engineer', 'student', 'shopkeeper'])
+  return longTripRoles.has(agent.role) || distance > NPC_TAXI_MIN_DISTANCE * 1.35
+}
+
+function releaseAutonomousNpcTaxi(agent, city, dropoff) {
+  const taxi = agent.selfTaxi
+  if (!taxi) return
+  const car = city.cars?.find(item => item.assignmentTaxiId === taxi.id || item.npcTaxi?.id === taxi.id)
+  if (car) {
+    car.assignment = null
+    car.assignmentTaxiId = null
+    car.npcTaxi = null
+    if (dropoff && car.cruiseMeters) {
+      const pose = taxiCruisePose(car, city.roads || [], city.cars.indexOf(car))
+      if (pose) car.cruiseProgress = (car.cruiseProgress || 0) + Math.hypot(dropoff.x - pose.x, dropoff.z - pose.z)
+    }
+  }
+  agent.selfTaxi = null
+  agent.boardingTaxi = null
+  agent.taxiCooldown = 55 + (hashValue(agent.id) % 35)
+}
+
+function startAutonomousNpcTaxi(agent, target, city) {
+  const roads = city.roads || []
+  const cars = city.cars || []
+  if (!roads.length || !cars.length) return false
+  const pickup = nearestRoadPickup(agent.pos, roads)
+  const pickupStop = taxiStopForPickup(pickup, roads)
+  const dropoff = nearestRoadPickup(target, roads)
+  const dropoffStop = taxiStopForPickup(dropoff, roads)
+  const fleetTaxi = nearestAvailableTaxi(pickup, cars, roads, Infinity)
+  if (!fleetTaxi) return false
+
+  const routeToPickup = fleetTaxi.route || buildTaxiRoute(fleetTaxi.pose, pickupStop, roads)
+  const routeToDestination = buildTaxiRoute(pickupStop, dropoffStop, roads)
+  if (routeToDestination.routeMeters < NPC_TAXI_MIN_DISTANCE * 0.45) return false
+
+  const initialProgress = Math.max(0, routeToPickup.routeMeters - 520)
+  const firstPose = sampleRoute(routeToPickup.points, initialProgress)
+  const taxi = {
+    id: `npc_taxi_${agent.id}_${Math.round(performance.now())}`,
+    fleetCarId: fleetTaxi.car.id,
+    source: 'fleet',
+    driverName: fleetTaxi.car.driverName,
+    phase: 'dispatch',
+    path: routeToPickup.points,
+    destinationPath: routeToDestination.points,
+    routeMeters: routeToPickup.routeMeters,
+    destinationMeters: routeToDestination.routeMeters,
+    directMeters: routeToDestination.directMeters,
+    progress: initialProgress,
+    initialProgress,
+    speed: NPC_TAXI_DISPATCH_SPEED,
+    pickup,
+    pickupStop,
+    passengerPickup: pickup,
+    dropoff,
+    dropoffStop,
+    targetName: target.name,
+    routeNames: routeToDestination.roadNames,
+    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading },
+    requestedAt: performance.now(),
+  }
+
+  fleetTaxi.car.assignment = taxi.id
+  fleetTaxi.car.assignmentTaxiId = taxi.id
+  fleetTaxi.car.npcTaxi = taxi
+  agent.selfTaxi = taxi
+  agent.walkRoute = null
+  agent.walkPlan = null
+  agent.routeStatus = `${agent.name} called ${taxi.driverName}'s taxi for ${target.name}`
+  agent.currentIntent = `taking a taxi to ${target.name}`
+  agent.remember('mobility', `I called ${taxi.driverName}'s taxi to reach ${target.name}.`, agent.placeName, 0.68)
+
+  useCityStore.getState().addCityEvent({
+    id: `mobility_${taxi.id}`,
+    kind: 'mobility',
+    agentId: agent.id,
+    agentName: agent.name,
+    placeName: agent.placeName,
+    topic: 'autonomous taxi commute',
+    text: `${agent.name} books ${taxi.driverName}'s taxi for ${target.name} instead of walking ${Math.round(routeToDestination.routeMeters)}m.`,
+  })
+  return true
+}
+
+function updateAutonomousNpcTaxi(agent, target, delta, city) {
+  const taxi = agent.selfTaxi
+  if (!taxi) return false
+  const car = city.cars?.find(item => item.assignmentTaxiId === taxi.id)
+  if (!car) {
+    agent.selfTaxi = null
+    return false
+  }
+  car.npcTaxi = taxi
+
+  if (taxi.phase === 'dispatch') {
+    agent.activity = 'waiting for self-called taxi'
+    agent.placeName = taxi.pickup.roadName || agent.placeName
+    agent.currentIntent = `waiting at the curb for ${taxi.driverName}'s taxi to ${target.name}`
+    const curbDistance = Math.hypot(agent.pos.x - taxi.passengerPickup.x, agent.pos.z - taxi.passengerPickup.z)
+    if (curbDistance > 1.1) moveAgentToward(agent, taxi.passengerPickup, delta, 1.42 * agent.pace, city)
+    advanceTaxi(taxi, delta)
+    if (taxi.progress >= taxi.routeMeters - 0.2) {
+      const pose = sampleRoute(taxi.path, taxi.routeMeters)
+      taxi.progress = taxi.routeMeters
+      taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+      taxi.phase = 'boarding'
+      taxi.boardingStartedAt = performance.now()
+      agent.boardingTaxi = { missionId: taxi.id, x: agent.pos.x, z: agent.pos.z }
+      agent.remember('mobility', `${taxi.driverName}'s taxi arrived at the curb.`, agent.placeName, 0.62)
+    }
+    return true
+  }
+
+  if (taxi.phase === 'boarding') {
+    agent.activity = 'boarding self-called taxi'
+    const elapsed = (performance.now() - (taxi.boardingStartedAt || performance.now())) / (TAXI_BOARDING_SECONDS * 1000)
+    const t = smoothstep(clampValue(elapsed, 0, 1))
+    const door = taxiPassengerDoorPoint(taxi, 'agent')
+    const start = agent.boardingTaxi || { x: agent.pos.x, z: agent.pos.z }
+    agent.pos.x = start.x + (door.x - start.x) * t
+    agent.pos.z = start.z + (door.z - start.z) * t
+    agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
+    agent.heading = taxi.pose.heading ?? door.heading ?? agent.heading
+    if (elapsed >= 1) {
+      taxi.phase = 'ride'
+      taxi.path = taxi.destinationPath
+      taxi.routeMeters = taxi.destinationMeters
+      taxi.progress = 0
+      taxi.speed = NPC_TAXI_RIDE_SPEED
+      agent.boardingTaxi = null
+      useCityStore.getState().addCityEvent({
+        id: `mobility_board_${taxi.id}`,
+        kind: 'mobility',
+        agentId: agent.id,
+        agentName: agent.name,
+        placeName: agent.placeName,
+        topic: 'taxi boarding',
+        text: `${agent.name} gets into ${taxi.driverName}'s taxi and heads toward ${target.name}.`,
+      })
+    }
+    return true
+  }
+
+  if (taxi.phase === 'ride') {
+    agent.activity = 'riding self-called taxi'
+    agent.placeName = taxi.targetName || target.name
+    agent.currentIntent = `riding through traffic to ${target.name}`
+    advanceTaxi(taxi, delta)
+    const seat = taxiPassengerDoorPoint({ pose: taxi.pose, passengerPickup: taxi.passengerPickup }, 'inside')
+    agent.pos.x = seat.x
+    agent.pos.z = seat.z
+    agent.pos.y = terrainHeight(agent.pos.x, agent.pos.z) + 0.95
+    agent.heading = taxi.pose.heading
+    if (taxi.progress >= taxi.routeMeters - 0.2) {
+      const exit = taxi.dropoff || target
+      agent.pos.set(exit.x, terrainHeight(exit.x, exit.z) + 0.95, exit.z)
+      agent.heading = taxi.pose.heading
+      agent.remember('mobility', `I arrived by taxi at ${target.name}.`, target.name, 0.72)
+      useCityStore.getState().addCityEvent({
+        id: `mobility_arrive_${taxi.id}`,
+        kind: 'mobility',
+        agentId: agent.id,
+        agentName: agent.name,
+        placeName: target.name,
+        topic: 'taxi arrival',
+        text: `${agent.name} pays ${taxi.driverName} and continues from the curb toward ${target.name}.`,
+      })
+      releaseAutonomousNpcTaxi(agent, city, taxi.dropoff)
+      agent.walkRoute = null
+      agent.routeStatus = `taxi dropoff complete near ${target.name}`
+    }
+    return true
+  }
+
+  releaseAutonomousNpcTaxi(agent, city, taxi.dropoff)
+  return false
+}
+
 class Agent {
   constructor(data) {
     Object.assign(this, data)
@@ -991,6 +1186,8 @@ class Agent {
     this.fallTimer = 0
     this.walkRoute = null
     this.walkPlan = null
+    this.selfTaxi = null
+    this.taxiCooldown = 0
     this.stuckTimer = 0
     this.lastRouteDistance = null
     this.blockedContacts = 0
@@ -1002,6 +1199,7 @@ class Agent {
     this.socialCooldown = Math.max(0, this.socialCooldown - delta)
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
     this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
+    this.taxiCooldown = Math.max(0, this.taxiCooldown - delta)
     this.updateNeeds(delta)
     if (this.fallTimer > 0) {
       this.fallTimer = Math.max(0, this.fallTimer - delta)
@@ -1024,6 +1222,15 @@ class Agent {
     if (this.mission) return this.updateMission(delta, city)
 
     const target = targetFor(this, places, timeMinutes, roads)
+    if (this.selfTaxi) {
+      updateAutonomousNpcTaxi(this, target, delta, city)
+      return this.selfTaxi ? this.selfTaxi.phase : 'walking'
+    }
+    if (shouldUseAutonomousTaxi(this, target, city) && startAutonomousNpcTaxi(this, target, city)) {
+      updateAutonomousNpcTaxi(this, target, delta, city)
+      return 'taxi'
+    }
+
     this.activity = target.activity
     this.placeName = target.name
     this.currentIntent = this.routeStatus && this.stuckTimer > 0
@@ -1358,6 +1565,12 @@ class Agent {
       x: this.pos.x,
       z: this.pos.z,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
+      selfTaxi: this.selfTaxi ? {
+        id: this.selfTaxi.id,
+        phase: this.selfTaxi.phase,
+        driverName: this.selfTaxi.driverName,
+        targetName: this.selfTaxi.targetName,
+      } : null,
     }
   }
 }
@@ -1934,8 +2147,13 @@ function Traffic({ cars, roads }) {
         bodyStyle: car.bodyStyle,
         driverName: car.driverName,
         driverTemperament: car.driverTemperament,
-        routeMode: car.kind === 'taxi' ? (car.assignment ? 'assigned-dispatch' : car.cruiseRouteMode || 'single-road') : 'traffic-lane',
+        routeMode: car.kind === 'taxi'
+          ? (car.npcTaxi ? 'npc-autonomous-taxi' : car.assignment ? 'assigned-dispatch' : car.cruiseRouteMode || 'single-road')
+          : 'traffic-lane',
         assignment: car.assignment || null,
+        npcPassenger: car.npcTaxi?.id || null,
+        npcTaxiPhase: car.npcTaxi?.phase || null,
+        npcTaxiTarget: car.npcTaxi?.targetName || null,
         cruiseRoutePoints: car.cruisePath?.length || 0,
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
@@ -2366,15 +2584,30 @@ function NPCs({ city }) {
     const target = targetFor(agent, places, useCityStore.getState().timeMinutes, city.roads)
     const spread = 2.4 + (i % 5) * 0.7
     const plazaAgent = i < 10
-    const x = plazaAgent ? 8 + (i % 5) * 5.5 : target.x + Math.sin(i * 2.13) * spread
-    const z = plazaAgent ? 30 + Math.floor(i / 5) * 20 + Math.sin(i * 1.7) * 2 : target.z + Math.cos(i * 1.71) * spread
-    const spawn = pedestrianSafeTarget({ x, z, y: terrainHeight(x, z), name: plazaAgent ? 'Central Core plaza' : target.name }, target, city.roads)
-    const [safeX, safeZ] = resolveBuildingCollision(city, target.x, target.z, spawn.x, spawn.z, 0.68)
+    const lateTaxiCommuter = i >= 10 && i < 18 && Math.hypot(target.x - agent.home.x, target.z - agent.home.z) > NPC_TAXI_MIN_DISTANCE
+    const spawnAnchor = lateTaxiCommuter ? agent.home : target
+    const x = plazaAgent
+      ? 8 + (i % 5) * 5.5
+      : lateTaxiCommuter
+        ? agent.home.x + Math.sin(i * 1.73) * spread
+        : target.x + Math.sin(i * 2.13) * spread
+    const z = plazaAgent
+      ? 30 + Math.floor(i / 5) * 20 + Math.sin(i * 1.7) * 2
+      : lateTaxiCommuter
+        ? agent.home.z + Math.cos(i * 1.61) * spread
+        : target.z + Math.cos(i * 1.71) * spread
+    const spawn = pedestrianSafeTarget({ x, z, y: terrainHeight(x, z), name: plazaAgent ? 'Central Core plaza' : lateTaxiCommuter ? agent.home.name : target.name }, spawnAnchor, city.roads)
+    const [safeX, safeZ] = resolveBuildingCollision(city, spawn.x, spawn.z, spawn.x, spawn.z, 0.68)
     agent.pos.set(safeX, terrainHeight(safeX, safeZ) + 0.95, safeZ)
     agent.activity = plazaAgent ? 'available for directions' : target.activity
-    agent.placeName = plazaAgent ? 'Central Core plaza' : target.name
+    agent.placeName = plazaAgent ? 'Central Core plaza' : lateTaxiCommuter ? agent.home.name : target.name
     agent.heading = plazaAgent ? Math.atan2(-x, 40 - z) : Math.atan2(target.x - agent.home.x, target.z - agent.home.z)
-    agent.routeStatus = plazaAgent ? 'available near the central plaza' : `starting from ${target.name}`
+    agent.routeStatus = plazaAgent
+      ? 'available near the central plaza'
+      : lateTaxiCommuter
+        ? `late commute from ${agent.home.name} to ${target.name}`
+        : `starting from ${target.name}`
+    if (lateTaxiCommuter) agent.remember('mobility', `I am late for ${target.name} and should use a taxi.`, agent.home.name, 0.7)
     return agent
   }), [city.npcs, places])
   const hipsRef = useRef()
@@ -2764,6 +2997,11 @@ function NPCs({ city }) {
         hunger: agent.needs ? Number(agent.needs.hunger.toFixed(2)) : null,
         socialNeed: agent.needs ? Number(agent.needs.social.toFixed(2)) : null,
         targetName: agent.walkPlan?.targetName || agent.placeName || null,
+        travelMode: agent.selfTaxi ? 'taxi' : 'walk',
+        taxiPhase: agent.selfTaxi?.phase || null,
+        taxiDriverName: agent.selfTaxi?.driverName || null,
+        taxiTargetName: agent.selfTaxi?.targetName || null,
+        taxiRouteMeters: agent.selfTaxi?.routeMeters ? Number(agent.selfTaxi.routeMeters.toFixed(1)) : null,
         routeMode: agent.walkPlan?.mode || 'direct',
         routeRoadName: agent.walkPlan?.roadName || null,
         stableRoute: !!agent.walkPlan?.stableRoute,
