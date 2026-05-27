@@ -471,6 +471,7 @@ button.key-prompt {
 
 .control-ribbon {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
   padding: 6px 8px;

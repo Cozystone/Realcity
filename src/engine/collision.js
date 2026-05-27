@@ -9,6 +9,94 @@ function pushOutOfBox(px, pz, cx, cz, hw, hd) {
   return [px, cz + Math.sign(dz || 1) * hd]
 }
 
+function localPoint(item, x, z) {
+  const dx = x - item.x
+  const dz = z - item.z
+  const cos = Math.cos(item.rot || 0)
+  const sin = Math.sin(item.rot || 0)
+  return {
+    x: dx * cos - dz * sin,
+    z: dx * sin + dz * cos,
+  }
+}
+
+function worldPoint(item, lx, lz) {
+  const cos = Math.cos(item.rot || 0)
+  const sin = Math.sin(item.rot || 0)
+  return {
+    x: item.x + lx * cos + lz * sin,
+    z: item.z - lx * sin + lz * cos,
+  }
+}
+
+function solidDimensions(item) {
+  return {
+    width: item.w || item.interior?.width || item.footprint?.width || 0,
+    depth: item.d || item.interior?.depth || item.footprint?.depth || 0,
+  }
+}
+
+function entryFaceForItem(item) {
+  return item.interior?.entryPortal?.face || item.interior?.entryFace || item.facadePlan?.entryFace || item.entryFace || 'south'
+}
+
+function insideLocal(local, hw, hd) {
+  return Math.abs(local.x) < hw && Math.abs(local.z) < hd
+}
+
+function atEntryDoor(item, local, radius = 0.72) {
+  const { width, depth } = solidDimensions(item)
+  if (!width || !depth) return false
+  const face = entryFaceForItem(item)
+  const doorWidth = item.interior?.entryPortal?.width || item.interior?.doorWidth || item.doorWidth || 2.4
+  const halfDoor = doorWidth / 2 + radius * 0.85
+  const threshold = 2.2 + radius
+  if (face === 'north') return Math.abs(local.x) <= halfDoor && local.z >= depth / 2 - threshold
+  if (face === 'south') return Math.abs(local.x) <= halfDoor && local.z <= -depth / 2 + threshold
+  if (face === 'east') return Math.abs(local.z) <= halfDoor && local.x >= width / 2 - threshold
+  return Math.abs(local.z) <= halfDoor && local.x <= -width / 2 + threshold
+}
+
+function pushOutOfSolid(item, local, hw, hd) {
+  const [lx, lz] = pushOutOfBox(local.x, local.z, 0, 0, hw, hd)
+  return worldPoint(item, lx, lz)
+}
+
+function clampToInterior(item, local, hw, hd) {
+  const lx = Math.max(-hw, Math.min(hw, local.x))
+  const lz = Math.max(-hd, Math.min(hd, local.z))
+  return worldPoint(item, lx, lz)
+}
+
+function resolveSolidInteriorCollision(item, previousX, previousZ, nextX, nextZ, radius = 0.72) {
+  const { width, depth } = solidDimensions(item)
+  if (!width || !depth) return [nextX, nextZ]
+
+  const prev = localPoint(item, previousX, previousZ)
+  const next = localPoint(item, nextX, nextZ)
+  const collisionHw = width / 2 + radius
+  const collisionHd = depth / 2 + radius
+  const interiorHw = Math.max(0.1, width / 2 - radius * 0.2)
+  const interiorHd = Math.max(0.1, depth / 2 - radius * 0.2)
+  const prevInsideInterior = insideLocal(prev, interiorHw, interiorHd)
+  const nextInsideEnvelope = insideLocal(next, collisionHw, collisionHd)
+
+  if (!prevInsideInterior && nextInsideEnvelope && !atEntryDoor(item, next, radius)) {
+    const pushed = pushOutOfSolid(item, next, collisionHw, collisionHd)
+    return [pushed.x, pushed.z]
+  }
+
+  if (prevInsideInterior && !nextInsideEnvelope) {
+    const exitsThroughDoor = atEntryDoor(item, prev, radius) || atEntryDoor(item, next, radius)
+    if (!exitsThroughDoor) {
+      const clamped = clampToInterior(item, next, interiorHw, interiorHd)
+      return [clamped.x, clamped.z]
+    }
+  }
+
+  return [nextX, nextZ]
+}
+
 export function resolveLandmarkCollision(city, previousX, previousZ, nextX, nextZ, radius = 0.72) {
   let px = nextX
   let pz = nextZ
@@ -16,30 +104,7 @@ export function resolveLandmarkCollision(city, previousX, previousZ, nextX, next
   for (const place of city.landmarks || []) {
     const interior = place.interior
     if (!interior?.solidWalls) continue
-
-    const hw = interior.width / 2 + radius
-    const hd = interior.depth / 2 + radius
-    const prev = { x: previousX - place.x, z: previousZ - place.z }
-    const next = { x: px - place.x, z: pz - place.z }
-    const prevInside = Math.abs(prev.x) < hw && Math.abs(prev.z) < hd
-    const nextInside = Math.abs(next.x) < hw && Math.abs(next.z) < hd
-    if (!prevInside && !nextInside) continue
-
-    const doorHalf = interior.doorWidth / 2
-    const atFrontDoor = Math.abs(next.x) < doorHalf && next.z <= -interior.depth / 2 + 2.4
-
-    if (!prevInside && nextInside && !atFrontDoor) {
-      ;[px, pz] = pushOutOfBox(px, pz, place.x, place.z, hw, hd)
-      continue
-    }
-
-    if (prevInside && !nextInside) {
-      const exitsThroughDoor = Math.abs(prev.x) < doorHalf && next.z < -interior.depth / 2 + 2.4
-      if (!exitsThroughDoor) {
-        px = Math.max(place.x - hw + radius, Math.min(place.x + hw - radius, px))
-        pz = Math.max(place.z - hd + radius, Math.min(place.z + hd - radius, pz))
-      }
-    }
+    ;[px, pz] = resolveSolidInteriorCollision(place, previousX, previousZ, px, pz, radius)
   }
 
   return [px, pz]
@@ -49,14 +114,34 @@ export function currentInterior(city, x, z) {
   for (const place of city.landmarks || []) {
     const interior = place.interior
     if (!interior) continue
-    const localX = x - place.x
-    const localZ = z - place.z
-    if (Math.abs(localX) < interior.width / 2 && Math.abs(localZ) < interior.depth / 2) {
+    const local = localPoint(place, x, z)
+    if (Math.abs(local.x) < interior.width / 2 && Math.abs(local.z) < interior.depth / 2) {
       return {
         id: place.id,
         name: place.name,
         kind: place.kind,
         verticalCore: interior.verticalCore,
+        floorCount: interior.floorCount || 1,
+        floorHeight: interior.floorHeight || 4.2,
+      }
+    }
+  }
+
+  const colliders = city.getNearbyBuildings?.(x, z) || city.buildings || []
+  for (const building of colliders) {
+    const interior = building.interior
+    if (!interior?.solidWalls || building.h < 3) continue
+    const local = localPoint(building, x, z)
+    if (Math.abs(local.x) < building.w / 2 && Math.abs(local.z) < building.d / 2) {
+      return {
+        id: building.id,
+        name: building.name || building.address || `${building.type || 'City'} building`,
+        kind: building.type,
+        address: building.address,
+        verticalCore: interior.verticalCore,
+        floorCount: interior.floors || 1,
+        floorHeight: interior.floorHeight || 3.6,
+        publicAccess: interior.publicAccess,
       }
     }
   }
@@ -70,13 +155,7 @@ export function resolveBuildingCollision(city, previousX, previousZ, x, z, radiu
 
   for (const building of colliders) {
     if (building.h < 3) continue
-    const hw = building.w / 2 + radius
-    const hd = building.d / 2 + radius
-    const dx = px - building.x
-    const dz = pz - building.z
-    if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
-      ;[px, pz] = pushOutOfBox(px, pz, building.x, building.z, hw, hd)
-    }
+    ;[px, pz] = resolveSolidInteriorCollision(building, previousX, previousZ, px, pz, radius)
   }
 
   ;[px, pz] = resolveLandmarkCollision(city, previousX, previousZ, px, pz, radius)
@@ -92,8 +171,8 @@ export function countSolidWallOverlaps(city, samples = [], radius = 0.72) {
     const buildings = city.getNearbyBuildings?.(sample.x, sample.z) || city.buildings || []
     const buildingHit = buildings.some(building => {
       if (building.h < 3) return false
-      return Math.abs(sample.x - building.x) < building.w / 2 + radius &&
-        Math.abs(sample.z - building.z) < building.d / 2 + radius
+      const local = localPoint(building, sample.x, sample.z)
+      return insideLocal(local, building.w / 2 + radius, building.d / 2 + radius) && !atEntryDoor(building, local, radius)
     })
     if (buildingHit) {
       overlaps += 1
@@ -103,8 +182,8 @@ export function countSolidWallOverlaps(city, samples = [], radius = 0.72) {
     const landmarkHit = (city.landmarks || []).some(place => {
       const interior = place.interior
       if (!interior?.solidWalls) return false
-      return Math.abs(sample.x - place.x) < interior.width / 2 + radius &&
-        Math.abs(sample.z - place.z) < interior.depth / 2 + radius
+      const local = localPoint(place, sample.x, sample.z)
+      return insideLocal(local, interior.width / 2 + radius, interior.depth / 2 + radius) && !atEntryDoor(place, local, radius)
     })
     if (landmarkHit) overlaps += 1
   }

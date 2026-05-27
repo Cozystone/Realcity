@@ -20,6 +20,7 @@ const FREE_LOOK_PITCH_UP = 0.72
 const FREE_LOOK_PITCH_DOWN = -0.22
 const FREE_LOOK_IN_SPEED = 8.5
 const FREE_LOOK_RETURN_SPEED = 16.5
+const FLOOR_CHANGE_COOLDOWN = 0.42
 
 function approach(current, target, speed, delta) {
   return current + (target - current) * (1 - Math.exp(-speed * delta))
@@ -40,7 +41,7 @@ function useKeys() {
     const down = (event) => {
       if (isTypingTarget(event.target)) return
       keys.current[event.code] = true
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(event.code)) event.preventDefault()
     }
     const up = (event) => {
       keys.current[event.code] = false
@@ -319,6 +320,8 @@ export default function PlayerRig({ city }) {
   const camTarget = useMemo(() => new THREE.Vector3(), [])
   const lookAt = useMemo(() => new THREE.Vector3(), [])
   const lastPlace = useRef(null)
+  const floorLevel = useRef(0)
+  const floorCooldown = useRef(0)
   const collisionCooldowns = useRef(new Map())
 
   useFrame((state, delta) => {
@@ -328,6 +331,7 @@ export default function PlayerRig({ city }) {
     const ride = store.ride
 
     if (ride) {
+      floorLevel.current = 0
       if (ride.path?.length >= 2) {
         const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
         const distance = (ride.routeMeters || 1) * t
@@ -396,7 +400,9 @@ export default function PlayerRig({ city }) {
       const nextZ = pos.current.z + move.z
       let [safeX, safeZ] = resolveBuildingCollision(city, pos.current.x, pos.current.z, nextX, nextZ)
       ;[safeX, safeZ] = resolveDynamicCollision(store, pos.current.x, pos.current.z, safeX, safeZ, running.current, collisionCooldowns.current)
-      const groundY = terrainHeight(safeX, safeZ) + 1.1
+      const placeAtNext = currentInterior(city, safeX, safeZ)
+      const floorOffset = placeAtNext ? floorLevel.current * (placeAtNext.floorHeight || 3.6) : 0
+      const groundY = terrainHeight(safeX, safeZ) + 1.1 + floorOffset
       let nextY = pos.current.y + velocityY.current * dt
       if (nextY <= groundY) {
         nextY = groundY
@@ -430,8 +436,27 @@ export default function PlayerRig({ city }) {
     const storeNow = useCityStore.getState()
     if ((place?.id || null) !== lastPlace.current) {
       lastPlace.current = place?.id || null
+      floorLevel.current = 0
       if (place) {
         storeNow.setPulse(`You entered ${place.name}. ${place.verticalCore === 'elevator' ? 'Elevators' : place.verticalCore === 'escalator' ? 'Escalators' : 'Stairs'} are visible from the lobby.`)
+      }
+    }
+    floorCooldown.current = Math.max(0, floorCooldown.current - dt)
+    if (!place) {
+      floorLevel.current = 0
+    } else if ((place.floorCount || 1) > 1 && floorCooldown.current <= 0) {
+      const floorDelta = (keys.current.PageUp || keys.current.KeyR ? 1 : 0) - (keys.current.PageDown || keys.current.KeyF ? 1 : 0)
+      if (floorDelta) {
+        const nextFloor = Math.max(0, Math.min((place.floorCount || 1) - 1, floorLevel.current + floorDelta))
+        if (nextFloor !== floorLevel.current) {
+          floorLevel.current = nextFloor
+          floorCooldown.current = FLOOR_CHANGE_COOLDOWN
+          velocityY.current = 0
+          grounded.current = true
+          pos.current.y = terrainHeight(pos.current.x, pos.current.z) + 1.1 + floorLevel.current * (place.floorHeight || 3.6)
+          const core = place.verticalCore === 'elevator' ? 'Elevator' : place.verticalCore === 'escalator' ? 'Escalator' : 'Stairs'
+          storeNow.setPulse(`${core} to floor ${floorLevel.current + 1} of ${place.floorCount} in ${place.name}.`)
+        }
       }
     }
     storeNow.setPlayer({
@@ -445,6 +470,9 @@ export default function PlayerRig({ city }) {
       placeId: place?.id || null,
       placeName: place?.name || null,
       indoors: !!place,
+      floor: place ? floorLevel.current + 1 : 0,
+      floorCount: place?.floorCount || 0,
+      verticalCore: place?.verticalCore || null,
     })
   })
 

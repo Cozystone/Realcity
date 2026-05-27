@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import * as THREE from 'three'
 import { createRealCity } from './engine/cityEngine'
+import { currentInterior, resolveBuildingCollision } from './engine/collision'
 import RealCityScene from './scene/RealCityScene'
 import HUD from './ui/HUD'
 
@@ -9,7 +10,10 @@ export default function App() {
   const city = useMemo(() => createRealCity(), [])
 
   useEffect(() => {
-    if (import.meta.env.DEV) window.__REALCITY_CITY__ = city
+    if (import.meta.env.DEV) {
+      window.__REALCITY_CITY__ = city
+      window.__REALCITY_COLLISION__ = { currentInterior, resolveBuildingCollision }
+    }
   }, [city])
 
   return (

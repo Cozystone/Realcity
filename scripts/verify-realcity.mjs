@@ -33,6 +33,67 @@ function positionDistance(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z)
 }
 
+async function inspectBuildingAccess(page) {
+  const result = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const collision = window.__REALCITY_COLLISION__
+    if (!city || !collision) return null
+    const faces = ['north', 'south', 'east', 'west']
+    const world = (item, lx, lz) => {
+      const cos = Math.cos(item.rot || 0)
+      const sin = Math.sin(item.rot || 0)
+      return {
+        x: item.x + lx * cos + lz * sin,
+        z: item.z - lx * sin + lz * cos,
+      }
+    }
+    const probe = (building, face, along, distanceFromFace) => {
+      if (face === 'north') return world(building, along, building.d / 2 + distanceFromFace)
+      if (face === 'south') return world(building, along, -building.d / 2 - distanceFromFace)
+      if (face === 'east') return world(building, building.w / 2 + distanceFromFace, along)
+      return world(building, -building.w / 2 - distanceFromFace, along)
+    }
+    const doorEntryTests = []
+    const blockedSideWallTests = []
+
+    for (const building of city.buildings) {
+      const face = building.interior?.entryPortal?.face || building.facadePlan?.entryFace || 'south'
+      const outside = probe(building, face, 0, 2.2)
+      const inside = probe(building, face, 0, -1.1)
+      const [x, z] = collision.resolveBuildingCollision(city, outside.x, outside.z, inside.x, inside.z)
+      const interior = collision.currentInterior(city, x, z)
+      if (interior?.id === building.id) doorEntryTests.push(building.id)
+
+      const blockedFace = faces.find(candidate => candidate !== face)
+      const faceLen = blockedFace === 'north' || blockedFace === 'south' ? building.w : building.d
+      const sideOutside = probe(building, blockedFace, faceLen * 0.28, 2.2)
+      const sideInside = probe(building, blockedFace, faceLen * 0.28, -1.1)
+      const [blockedX, blockedZ] = collision.resolveBuildingCollision(city, sideOutside.x, sideOutside.z, sideInside.x, sideInside.z)
+      const blockedInterior = collision.currentInterior(city, blockedX, blockedZ)
+      if (blockedInterior?.id !== building.id) blockedSideWallTests.push(building.id)
+    }
+
+    const floorReady = city.buildings.filter(building =>
+      building.interior?.entryPortal?.rule === 'pass-through-door-only' &&
+      building.interior?.floorNavigation?.reachableFloors === building.interior?.floors &&
+      building.interior?.floorNavigation?.floorHeight === building.interior?.floorHeight
+    )
+
+    return {
+      buildingCount: city.buildings.length,
+      doorEntryTests: doorEntryTests.length,
+      blockedSideWallTests: blockedSideWallTests.length,
+      floorNavigationReady: floorReady.length,
+    }
+  })
+
+  assert(result, 'Building access collision helpers were not exposed in the browser')
+  assert(result.doorEntryTests === result.buildingCount, `Not every procedural building can be entered through its door: ${result.doorEntryTests}/${result.buildingCount}`)
+  assert(result.blockedSideWallTests === result.buildingCount, `Some procedural side walls are passable away from doors: ${result.blockedSideWallTests}/${result.buildingCount}`)
+  assert(result.floorNavigationReady === result.buildingCount, `Procedural building floor navigation metadata is incomplete: ${result.floorNavigationReady}/${result.buildingCount}`)
+  return result
+}
+
 function keyForCode(code) {
   if (code.startsWith('Key')) return code.slice(3).toLowerCase()
   if (code.startsWith('Arrow')) return code
@@ -251,8 +312,19 @@ async function inspectCityNorms(page) {
     const buildingZoningReady = city.buildings.filter(building => building.zoning?.roadSetback >= 8 && insideZone(building))
     const landmarkZoningReady = city.landmarks.filter(place => place.zoning?.roadSetback >= 8 && insideZone(place))
     const fourSidedFacades = city.buildings.filter(building => ['north', 'south', 'east', 'west'].every(face => building.facadePlan?.faces?.[face]?.hasWindows))
+    const coherentFacades = city.buildings.filter(building =>
+      building.facadePlan?.coherence?.frontBackLinked &&
+      building.facadePlan?.coherence?.sideFacesBalanced &&
+      ['north', 'south', 'east', 'west'].every(face => building.facadePlan?.faces?.[face]?.role && building.facadePlan?.faces?.[face]?.pairedWith)
+    )
+    const stableBalconies = city.buildings.filter(building =>
+      building.type !== 'apartment' ||
+      ['stacked-centered', 'paired-balanced', 'corner-return'].includes(building.facadePlan?.balconyPattern)
+    )
     const entryFaces = new Set(city.buildings.map(building => building.facadePlan?.entryFace).filter(Boolean))
     const buildingInteriors = city.buildings.filter(building => building.interior?.solidWalls && building.interior?.floors >= 1 && building.interior?.lobbyDepth > 0 && building.interior?.verticalCore && Array.isArray(building.interior?.zones) && building.interior.zones.length >= 4)
+    const entryPortals = city.buildings.filter(building => building.interior?.entryPortal?.rule === 'pass-through-door-only' && building.interior?.entryPortal?.width > 0 && building.interior?.entryPortal?.face === building.facadePlan?.entryFace)
+    const floorNavigation = city.buildings.filter(building => building.interior?.floorNavigation?.method === building.interior?.verticalCore && building.interior?.floorNavigation?.reachableFloors === building.interior?.floors)
     const interiorCoreTypes = new Set(city.buildings.map(building => building.interior?.verticalCore).filter(Boolean))
     const corridorTypes = new Set(city.buildings.map(building => building.interior?.corridorType).filter(Boolean))
     const carBodyStyles = new Set(city.cars.map(car => car.bodyStyle).filter(Boolean))
@@ -288,8 +360,12 @@ async function inspectCityNorms(page) {
       buildingZoningReady: buildingZoningReady.length,
       landmarkZoningReady: landmarkZoningReady.length,
       fourSidedFacades: fourSidedFacades.length,
+      coherentFacades: coherentFacades.length,
+      stableBalconies: stableBalconies.length,
       entryFaceVariants: entryFaces.size,
       buildingInteriors: buildingInteriors.length,
+      entryPortals: entryPortals.length,
+      floorNavigation: floorNavigation.length,
       interiorCoreTypes: interiorCoreTypes.size,
       corridorTypes: corridorTypes.size,
       buildingProfiles: formKeys(city.buildings),
@@ -326,8 +402,12 @@ async function inspectCityNorms(page) {
   assert(norms.buildingZoningReady === norms.buildingCount, 'Building zoning metadata is incomplete or outside buildable envelopes')
   assert(norms.landmarkZoningReady === norms.landmarkCount, 'Landmark zoning metadata is incomplete or outside buildable envelopes')
   assert(norms.fourSidedFacades === norms.buildingCount, 'Not every building exposes four-sided facade/window metadata')
+  assert(norms.coherentFacades === norms.buildingCount, 'Building facade plans do not link front/rear/side faces coherently')
+  assert(norms.stableBalconies === norms.buildingCount, 'Apartment balcony patterns are not using stable facade rules')
   assert(norms.entryFaceVariants >= 4, `Building entry faces do not vary enough: ${norms.entryFaceVariants}`)
   assert(norms.buildingInteriors === norms.buildingCount, 'Procedural building interior plans are incomplete')
+  assert(norms.entryPortals === norms.buildingCount, 'Procedural building entry portals are incomplete')
+  assert(norms.floorNavigation === norms.buildingCount, 'Procedural floor navigation metadata is incomplete')
   assert(norms.interiorCoreTypes >= 3, `Building vertical core types are not diverse enough: ${norms.interiorCoreTypes}`)
   assert(norms.corridorTypes >= 4, `Building corridor/interior layouts are not diverse enough: ${norms.corridorTypes}`)
   assert(norms.buildingRoadConflicts === 0, `${norms.buildingRoadConflicts} buildings overlap road reserves`)
@@ -531,6 +611,7 @@ async function main() {
     await page.waitForTimeout(2500)
 
     const canvas = await inspectCanvas(page)
+    const buildingAccess = await inspectBuildingAccess(page)
     const interiors = await inspectLandmarkInteriors(page)
     const cityNorms = await inspectCityNorms(page)
     const supportUX = await inspectSupportUX(page)
@@ -659,6 +740,7 @@ async function main() {
       addressRoute,
       browser: executablePath,
       canvas,
+      buildingAccess,
       interiors,
       cityNorms,
       supportUX,
@@ -686,7 +768,7 @@ async function main() {
       screenshotPath,
     }
     writeFileSync(path.join(artifactsDir, 'realcity-last-run.json'), JSON.stringify(report, null, 2))
-    console.log(JSON.stringify({ ok: true, task, finalDistrict: finalPlayer.district, screenshotPath }, null, 2))
+    console.log(JSON.stringify({ ok: true, task, finalDistrict: finalPlayer.district, buildingAccess, screenshotPath }, null, 2))
   } finally {
     if (browser) await browser.close()
     stopDevServer(server.child)

@@ -302,24 +302,62 @@ function entryFaceForPoint(x, z, roadId, roads) {
   return road.x >= x ? 'east' : 'west'
 }
 
+function oppositeFace(face) {
+  return {
+    north: 'south',
+    south: 'north',
+    east: 'west',
+    west: 'east',
+  }[face] || 'north'
+}
+
 function createFacadePlan(type, form, entryFace, rng) {
   const faces = ['north', 'south', 'east', 'west']
   const baseDensity = type === 'skyscraper' ? 0.95 : type === 'office' ? 0.78 : type === 'apartment' ? 0.64 : 0.42
+  const rearFace = oppositeFace(entryFace)
+  const primaryRhythm = pick(rng, ['regular-grid', 'offset-grid', 'vertical-bands', 'punched-openings'])
+  const sideRhythm = pick(rng, ['regular-grid', 'offset-grid', 'vertical-bands', 'punched-openings'])
+  const balconyPattern = type === 'apartment'
+    ? form.profile === 'balcony_stack'
+      ? 'stacked-centered'
+      : pick(rng, ['stacked-centered', 'paired-balanced', 'corner-return'])
+    : 'none'
   return {
     entryFace,
+    rearFace,
+    balconyPattern,
     glazingWrap: type === 'skyscraper' ? 'curtain-wall-all-sides' : type === 'office' ? 'mixed-all-sides' : 'residential-all-sides',
     faces: Object.fromEntries(faces.map((face, index) => {
-      const primary = face === entryFace
-      const density = clamp(baseDensity * (primary ? 1.08 : 0.68 + rng() * 0.28), 0.28, 1)
+      const role = face === entryFace ? 'front' : face === rearFace ? 'rear' : 'side'
+      const roleFactor = role === 'front' ? 1.04 : role === 'rear' ? 0.92 : 0.86
+      const density = clamp(baseDensity * roleFactor + (rng() - 0.5) * 0.045, type === 'house' ? 0.24 : 0.34, 1)
+      const rhythm = role === 'side' ? sideRhythm : primaryRhythm
+      const supportsBalcony = type === 'apartment' && (role === 'front' || (role === 'rear' && balconyPattern !== 'corner-return'))
       return [face, {
+        role,
         glazingDensity: density,
         hasWindows: true,
-        hasEntry: primary,
-        rhythm: pick(rng, ['regular-grid', 'offset-grid', 'vertical-bands', 'punched-openings']),
+        hasEntry: role === 'front',
+        rhythm,
         trim: form.facade,
-        balconyBias: type === 'apartment' && (primary || index % 2 === 0),
+        balconyBias: supportsBalcony,
+        balconyPattern: supportsBalcony ? balconyPattern : 'none',
+        pairedWith: face === entryFace ? rearFace : face === rearFace ? entryFace : oppositeFace(face),
+        articulation: role === 'front'
+          ? 'primary-entry'
+          : role === 'rear'
+            ? 'service-rear'
+            : index % 2 === 0
+              ? 'balanced-side-a'
+              : 'balanced-side-b',
       }]
     })),
+    coherence: {
+      frontBackLinked: true,
+      sideFacesBalanced: true,
+      balconyRule: balconyPattern,
+      entryRule: 'street-facing-door',
+    },
   }
 }
 
@@ -338,6 +376,7 @@ function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
     : type === 'apartment'
       ? Math.max(2, Math.floor((w + d) / 8))
       : Math.max(3, Math.floor((w + d) / 7))
+  const doorWidth = clamp(type === 'house' ? w * 0.22 : w * 0.3, 1.5, Math.max(1.6, w * 0.58))
   return {
     entryFace,
     solidWalls: true,
@@ -346,10 +385,21 @@ function createBuildingInterior(type, form, w, d, h, entryFace, rng) {
     floorHeight,
     lobbyDepth,
     lobbyWidth,
-    doorWidth: clamp(type === 'house' ? w * 0.22 : w * 0.3, 1.5, Math.max(1.6, w * 0.58)),
+    doorWidth,
     corridorType: type === 'house' ? 'room-to-room' : form.profile === 'atrium' ? 'atrium-loop' : form.profile === 'bar' ? 'linear-spine' : 'central-core',
     verticalCore,
     publicAccess: type === 'office' || type === 'skyscraper' ? 'lobby-public' : type === 'apartment' ? 'residents-and-guests' : 'private-home',
+    entryPortal: {
+      face: entryFace,
+      width: doorWidth,
+      rule: 'pass-through-door-only',
+    },
+    floorNavigation: {
+      method: verticalCore,
+      reachableFloors: floors,
+      floorHeight,
+      canChangeFloors: floors > 1,
+    },
     zones: type === 'house'
       ? ['entry', 'living', 'kitchen', 'bedroom']
       : type === 'apartment'

@@ -580,6 +580,27 @@ function roofPartFromBuilding(building, { lx = 0, lz = 0, baseY = building.h, sx
   }
 }
 
+function entryFaceForBuilding(building) {
+  return building.facadePlan?.entryFace || building.entryFace || building.interior?.entryFace || 'south'
+}
+
+function faceLengthForBuilding(building, face) {
+  return face === 'north' || face === 'south' ? building.w : building.d
+}
+
+function faceAttachedPart(building, face, { along = 0, outward = 0, yOffset = 0, width = faceLengthForBuilding(building, face), height = 1, depth = 1, color = bodyColor(building.type), textureType = building.type }) {
+  if (face === 'north') {
+    return partFromBuilding(building, { lx: along, lz: building.d / 2 + depth / 2 + outward, yOffset, sx: width, sy: height, sz: depth, color, textureType })
+  }
+  if (face === 'south') {
+    return partFromBuilding(building, { lx: along, lz: -building.d / 2 - depth / 2 - outward, yOffset, sx: width, sy: height, sz: depth, color, textureType })
+  }
+  if (face === 'east') {
+    return partFromBuilding(building, { lx: building.w / 2 + depth / 2 + outward, lz: along, yOffset, sx: depth, sy: height, sz: width, color, textureType })
+  }
+  return partFromBuilding(building, { lx: -building.w / 2 - depth / 2 - outward, lz: along, yOffset, sx: depth, sy: height, sz: width, color, textureType })
+}
+
 function mainMassFor(building) {
   const form = building.form || {}
   const profile = form.profile || 'slab'
@@ -696,22 +717,23 @@ function createBuildingRenderData(buildings) {
       }
 
       if (form.porch) {
-        porches.push(partFromBuilding(building, {
-          lz: -body.sz * 0.58,
-          sx: Math.min(5.2, body.sx * 0.54),
-          sy: 0.18,
-          sz: 2.4,
+        const face = entryFaceForBuilding(building)
+        porches.push(faceAttachedPart(building, face, {
+          width: Math.min(5.2, faceLengthForBuilding(building, face) * 0.48),
+          height: 0.18,
+          depth: 2.4,
           yOffset: 2.25,
           color: '#5d4a3a',
         }))
       }
       if (form.garage) {
-        garages.push(partFromBuilding(building, {
-          lx: (building.tint > 0.5 ? 1 : -1) * body.sx * 0.42,
-          lz: -body.sz * 0.2,
-          sx: body.sx * 0.36,
-          sy: Math.min(2.5, body.sy * 0.62),
-          sz: body.sz * 0.46,
+        const face = entryFaceForBuilding(building)
+        const faceLen = faceLengthForBuilding(building, face)
+        garages.push(faceAttachedPart(building, face, {
+          along: (building.tint > 0.5 ? 1 : -1) * faceLen * 0.26,
+          width: Math.min(faceLen * 0.34, 4.4),
+          height: Math.min(2.5, body.sy * 0.62),
+          depth: Math.min(4.8, Math.max(2.8, body.sz * 0.42)),
           color: '#8c8175',
         }))
       }
@@ -763,14 +785,15 @@ function createBuildingRenderData(buildings) {
         }))
       }
       if (building.type === 'apartment' && form.balconies) {
+        const face = entryFaceForBuilding(building)
+        const width = Math.min(faceLengthForBuilding(building, face) * 0.62, 9.2)
         const floors = Math.min(8, Math.max(3, Math.floor(building.h / 4.2)))
         for (let floor = 1; floor <= floors; floor += 1) {
-          balconies.push(partFromBuilding(building, {
-            lz: -body.sz * 0.53,
+          balconies.push(faceAttachedPart(building, face, {
             yOffset: Math.min(building.h - 1.2, floor * (building.h / (floors + 1))),
-            sx: body.sx * 0.72,
-            sy: 0.14,
-            sz: 0.72,
+            width,
+            height: 0.14,
+            depth: 0.72,
             color: '#d7d0c4',
           }))
         }

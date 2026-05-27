@@ -15,6 +15,9 @@ export const useCityStore = create((set, get) => ({
     placeId: null,
     placeName: null,
     indoors: false,
+    floor: 0,
+    floorCount: 0,
+    verticalCore: null,
   },
   weather: {
     label: 'Clear',
@@ -66,12 +69,15 @@ export const useCityStore = create((set, get) => ({
     const current = get().player
     if (
       Math.abs(player.x - current.x) < 0.12 &&
+      Math.abs(player.y - current.y) < 0.12 &&
       Math.abs(player.z - current.z) < 0.12 &&
       Math.abs(player.heading - current.heading) < 0.008 &&
       Math.abs((player.viewHeading ?? player.heading) - (current.viewHeading ?? current.heading)) < 0.008 &&
       Math.abs(player.speed - current.speed) < 0.2 &&
       (player.placeId || null) === (current.placeId || null) &&
-      !!player.indoors === !!current.indoors
+      !!player.indoors === !!current.indoors &&
+      (player.floor || 0) === (current.floor || 0) &&
+      (player.floorCount || 0) === (current.floorCount || 0)
     ) return
 
     set({ player })

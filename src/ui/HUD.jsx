@@ -298,7 +298,7 @@ function KeyPrompt({ keyName, label, detail, primary = false, onClick }) {
   )
 }
 
-function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
+function ContextPrompts({ nearbyAgent, mission, ride, player, onOpenMap }) {
   const actions = []
 
   if (mission) {
@@ -356,8 +356,9 @@ function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
       <div className="control-ribbon" aria-label="Movement controls">
         <span><kbd>W/S</kbd> Move</span>
         <span><kbd>A/D</kbd> Turn</span>
-        <span><kbd>←/→</kbd> Look</span>
+        <span><kbd>Arrows</kbd> Look</span>
         <span><kbd>Space</kbd> Jump</span>
+        {player?.indoors ? <span><kbd>PgUp/Dn</kbd> Floor</span> : null}
       </div>
     </div>
   )
@@ -527,7 +528,7 @@ export default function HUD({ city }) {
       <section className="time-card">
         <h1>{clockLabel(timeMinutes)}</h1>
         <p>Day {day} / {weather.label} / {weather.tempC}C</p>
-        <span>{player.indoors ? `${player.placeName} interior` : player.district}</span>
+        <span>{player.indoors ? `${player.placeName} / Floor ${player.floor || 1}${player.floorCount ? ` of ${player.floorCount}` : ''}` : player.district}</span>
       </section>
 
       <Compass heading={viewHeading} />
@@ -540,6 +541,7 @@ export default function HUD({ city }) {
           nearbyAgent={nearbyAgent}
           mission={mission}
           ride={ride}
+          player={player}
           onOpenMap={() => setMapOpen(true)}
         />
       ) : null}

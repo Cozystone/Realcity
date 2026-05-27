@@ -58,6 +58,23 @@ function facePart(building, face, along, y, width, height, outward = 0.16, thick
   }
 }
 
+function balconyModules(length, pattern, role) {
+  if (pattern === 'paired-balanced' && length > 11.5) {
+    const width = Math.min(3.2, length * 0.22)
+    return [
+      { along: -length * 0.18, width },
+      { along: length * 0.18, width },
+    ]
+  }
+  if (pattern === 'corner-return' && role === 'front' && length > 10.5) {
+    return [
+      { along: -length * 0.24, width: Math.min(3.4, length * 0.22) },
+      { along: length * 0.24, width: Math.min(3.4, length * 0.22) },
+    ]
+  }
+  return [{ along: 0, width: Math.min(5.4, length * 0.34) }]
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
@@ -706,14 +723,16 @@ function FacadeDetails({ buildings }) {
             trims.push(facePart(building, face, 0, 1.32, length * 0.58, 0.08, 0.2, 0.1))
           }
           if (building.type === 'apartment' && facePlan.balconyBias) {
-            const floors = Math.min(4, Math.max(2, Math.floor(building.h / 7)))
+            const maxFloors = facePlan.role === 'rear' ? 3 : 5
+            const floors = Math.min(maxFloors, Math.max(2, Math.floor(building.h / 6.2)))
+            const modules = balconyModules(length, facePlan.balconyPattern, facePlan.role)
+            const floorStep = clamp((building.h - 4.5) / Math.max(2, floors), 3.4, 4.45)
             for (let floor = 1; floor <= floors; floor += 1) {
-              const y = Math.min(building.h - 1.6, floor * 4.3 + 1.2)
-              const side = floor % 2 ? -1 : 1
-              const width = Math.min(4.8, length * 0.28)
-              const along = side * length * 0.22
-              balconies.push(facePart(building, face, along, y, width, 0.12, 0.46, 0.72))
-              rails.push(facePart(building, face, along, y + 0.28, width, 0.42, 0.88, 0.05))
+              const y = Math.min(building.h - 1.6, 3.05 + floor * floorStep)
+              modules.forEach(module => {
+                balconies.push(facePart(building, face, module.along, y, module.width, 0.12, 0.48, 0.74))
+                rails.push(facePart(building, face, module.along, y + 0.3, module.width, 0.42, 0.9, 0.05))
+              })
             }
           }
         }
@@ -790,7 +809,6 @@ function BuildingInteriorHints({ buildings }) {
     ;[...buildings]
       .filter(building => building.interior && Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.9)
       .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
-      .slice(0, 260)
       .forEach((building) => {
         const interior = building.interior
         const face = entryFaceForBuilding(building)
@@ -812,6 +830,18 @@ function BuildingInteriorHints({ buildings }) {
       })
     return { doors, lobbies, cores, canopies }
   }, [buildings])
+
+  useEffect(() => {
+    exposeRenderingMetadata({
+      buildingAccess: {
+        visibleDoors: details.doors.length,
+        visibleLobbies: details.lobbies.length,
+        visibleVerticalCores: details.cores.length,
+        doorRule: 'procedural buildings expose one street-facing solid entry portal',
+        verticalTravel: 'PageUp/PageDown changes floors while indoors',
+      },
+    })
+  }, [details])
 
   useLayoutEffect(() => {
     if (!doorRef.current || !lobbyRef.current || !coreRef.current || !canopyRef.current) return
