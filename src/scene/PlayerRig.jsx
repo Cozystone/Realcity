@@ -4,7 +4,7 @@ import * as THREE from 'three'
 import { terrainHeight } from '../engine/cityEngine'
 import { currentInterior, resolveBuildingCollision } from '../engine/collision'
 import { useCityStore } from '../engine/cityStore'
-import { sampleRoute } from '../engine/taxiRouting'
+import { sampleRoute, taxiPassengerDoorPoint } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
 const WALK_SPEED = 6.2
@@ -384,7 +384,12 @@ export default function PlayerRig({ city }) {
         running.current = false
         grounded.current = true
         velocityY.current = 0
-        if (t >= 1) store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+        if (t >= 1) {
+          if (ride.exitPoint) {
+            pos.current.set(ride.exitPoint.x, terrainHeight(ride.exitPoint.x, ride.exitPoint.z) + 1.1, ride.exitPoint.z)
+          }
+          store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+        }
       } else {
       const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
       const eased = smoothstep(t)
@@ -396,8 +401,28 @@ export default function PlayerRig({ city }) {
       running.current = false
       grounded.current = true
       velocityY.current = 0
-      if (t >= 1) store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+      if (t >= 1) {
+        if (ride.exitPoint) {
+          pos.current.set(ride.exitPoint.x, terrainHeight(ride.exitPoint.x, ride.exitPoint.z) + 1.1, ride.exitPoint.z)
+        }
+        store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
       }
+      }
+    } else if (store.mission?.mode === 'taxi' && store.mission.phase === 'taxi_boarding' && store.mission.taxi?.pose) {
+      const mission = store.mission
+      const taxi = mission.taxi
+      const startedAt = mission.boardingStartedAt || performance.now()
+      const t = smoothstep(Math.min(1, Math.max(0, (performance.now() - startedAt) / 1450)))
+      const start = mission.boardingPlayerStart || { x: pos.current.x, z: pos.current.z }
+      const door = taxiPassengerDoorPoint(taxi, 'player')
+      const x = start.x + (door.x - start.x) * t
+      const z = start.z + (door.z - start.z) * t
+      heading.current = taxi.pose.heading ?? door.heading ?? heading.current
+      pos.current.set(x, terrainHeight(x, z) + 1.1, z)
+      moving.current = t < 0.98
+      running.current = false
+      grounded.current = true
+      velocityY.current = 0
     } else {
       if (keys.current.KeyA) heading.current += TURN_SPEED * dt
       if (keys.current.KeyD) heading.current -= TURN_SPEED * dt

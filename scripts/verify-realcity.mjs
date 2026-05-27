@@ -188,8 +188,10 @@ async function getPlayer(page) {
 async function getTaxiRouteState(page) {
   return page.evaluate(() => {
     const state = window.__REALCITY_STORE__?.getState()
+    const city = window.__REALCITY_CITY__
     const mission = state?.mission
     const ride = state?.ride
+    const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b))
     const pathTurns = (points = []) => {
       let turns = 0
       let previousAxis = null
@@ -202,6 +204,88 @@ async function getTaxiRouteState(page) {
       }
       return turns
     }
+    const maxHeadingDelta = (points = []) => {
+      const routeMeters = (points = []) => {
+        let meters = 0
+        for (let i = 1; i < points.length; i += 1) {
+          meters += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z)
+        }
+        return meters
+      }
+      const positionAt = (meters) => {
+        const total = Math.max(0.001, routeMeters(points))
+        let remaining = Math.max(0, Math.min(total, meters))
+        for (let i = 1; i < points.length; i += 1) {
+          const a = points[i - 1]
+          const b = points[i]
+          const segment = Math.hypot(b.x - a.x, b.z - a.z)
+          if (segment <= 0.001) continue
+          if (remaining <= segment || i === points.length - 1) {
+            const t = Math.max(0, Math.min(1, remaining / segment))
+            return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }
+          }
+          remaining -= segment
+        }
+        return points[points.length - 1] || { x: 0, z: 0 }
+      }
+      if (points.length < 2) return 0
+      const total = routeMeters(points)
+      const lookDistance = Math.min(6, Math.max(2.4, total * 0.012))
+      let previous = null
+      let max = 0
+      for (let distance = 0; distance <= total; distance += 2) {
+        const behind = positionAt(Math.max(0, distance - lookDistance))
+        const ahead = positionAt(Math.min(total, distance + lookDistance))
+        const heading = Math.atan2(ahead.x - behind.x, ahead.z - behind.z)
+        if (previous !== null) max = Math.max(max, Math.abs(angleDiff(heading, previous)))
+        previous = heading
+      }
+      return max
+    }
+    const nearestRoad = (point) => {
+      if (!point || !city?.roads?.length) return null
+      const linked = point.roadId ? city.roads.find(road => road.id === point.roadId) : null
+      if (linked) return linked
+      return city.roads
+        .map(road => ({
+          road,
+          distance: road.axis === 'x'
+            ? Math.abs(point.z - road.z)
+            : Math.abs(point.x - road.x),
+        }))
+        .sort((a, b) => a.distance - b.distance)[0]?.road || null
+    }
+    const roadStatus = (point) => {
+      const road = nearestRoad(point)
+      if (!point || !road) return null
+      const offset = road.axis === 'x' ? Math.abs(point.z - road.z) : Math.abs(point.x - road.x)
+      return {
+        roadName: road.name,
+        offset,
+        halfWidth: road.width / 2,
+        insideRoad: offset <= road.width / 2 - 0.35,
+        outsideRoad: offset >= road.width / 2 + 0.35,
+        laneLike: offset > road.width * 0.14 && offset < road.width * 0.42,
+      }
+    }
+    const laneStats = (points = []) => {
+      const samples = []
+      for (let i = 1; i < points.length; i += 1) {
+        const a = points[i - 1]
+        const b = points[i]
+        const length = Math.hypot(a.x - b.x, a.z - b.z)
+        if (length < 6) continue
+        samples.push(roadStatus({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, roadId: a.roadId === b.roadId ? a.roadId : null }))
+      }
+      const filtered = samples
+        .filter(Boolean)
+      return {
+        samples: filtered.length,
+        laneLike: filtered.filter(sample => sample.laneLike).length,
+        centerline: filtered.filter(sample => sample.offset < 1.2).length,
+      }
+    }
+    const activeRoute = ride?.path || mission?.taxi?.destinationPath || mission?.route || mission?.taxi?.path || []
     return {
       missionPhase: mission?.phase || null,
       dispatchPathPoints: mission?.taxi?.path?.length || 0,
@@ -213,6 +297,10 @@ async function getTaxiRouteState(page) {
       directMeters: mission?.taxi?.directMeters || 0,
       dispatchTurns: pathTurns(mission?.taxi?.path),
       destinationTurns: pathTurns(ride?.path || mission?.taxi?.destinationPath || mission?.route),
+      dispatchMaxHeadingDelta: maxHeadingDelta(mission?.taxi?.path),
+      destinationMaxHeadingDelta: maxHeadingDelta(activeRoute),
+      dispatchLaneStats: laneStats(mission?.taxi?.path),
+      destinationLaneStats: laneStats(activeRoute),
       taxiPose: ride?.taxiPose || mission?.taxi?.pose || null,
       taxiSpeed: mission?.taxi?.speed || null,
       taxiSource: mission?.taxi?.source || ride?.taxiSource || null,
@@ -220,6 +308,13 @@ async function getTaxiRouteState(page) {
       driverName: mission?.taxi?.driverName || null,
       dispatchDistanceFromCruise: mission?.taxi?.dispatchDistanceFromCruise || 0,
       boardingRequested: !!mission?.boardingRequested,
+      boardingStartedAt: mission?.boardingStartedAt || 0,
+      pickupStop: mission?.taxi?.pickupStop || null,
+      passengerPickup: mission?.taxi?.passengerPickup || mission?.pickup || null,
+      pickupStopRoadStatus: roadStatus(mission?.taxi?.pickupStop),
+      passengerPickupRoadStatus: roadStatus(mission?.taxi?.passengerPickup || mission?.pickup),
+      dropoffStop: mission?.taxi?.dropoffStop || null,
+      rideExitPoint: ride?.exitPoint || null,
       assignedVehicleSamples: (state?.vehicleSamples || []).filter(sample => sample.assignment).length,
       taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop').length,
       taxiRoutePointSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.cruiseRoutePoints >= 8).length,
@@ -963,6 +1058,10 @@ async function main() {
     assert(taxiDispatch.taxiSource === 'fleet' && taxiDispatch.fleetCarId, `Taxi request did not select an existing cruising fleet taxi: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.dispatchDistanceFromCruise > 0, `Taxi dispatch did not record distance from the cruising taxi pose: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.taxiLoopSamples >= 8 || taxiDispatch.assignedVehicleSamples >= 1, `Taxi fleet loop samples were not present during dispatch: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.pickupStopRoadStatus?.insideRoad, `Taxi pickup stop is not inside the vehicle lane: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.passengerPickupRoadStatus?.outsideRoad, `Passenger pickup point should stay on the curb/sidewalk, not the vehicle lane: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.dispatchLaneStats.samples > 0 && taxiDispatch.dispatchLaneStats.laneLike > taxiDispatch.dispatchLaneStats.centerline, `Taxi dispatch route still looks centerline-based instead of lane-based: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.dispatchMaxHeadingDelta < 1.2, `Taxi dispatch path still has a hard 90-degree corner: ${JSON.stringify(taxiDispatch)}`)
 
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
@@ -986,9 +1085,19 @@ async function main() {
     }
     const beforeBoard = await getTaxiRouteState(page)
     assert(beforeBoard.missionPhase === 'taxi_waiting' && !beforeBoard.boardingRequested, `Taxi should wait for manual boarding: ${JSON.stringify(beforeBoard)}`)
+    assert(beforeBoard.pickupStopRoadStatus?.insideRoad && beforeBoard.passengerPickupRoadStatus?.outsideRoad, `Taxi did not wait in-lane while passengers stayed curbside: ${JSON.stringify(beforeBoard)}`)
+    if (beforeBoard.taxiPose && beforeBoard.pickupStop) {
+      const stopDistance = Math.hypot(beforeBoard.taxiPose.x - beforeBoard.pickupStop.x, beforeBoard.taxiPose.z - beforeBoard.pickupStop.z)
+      assert(stopDistance < 3.2, `Taxi stopped away from the curb-lane pickup point: ${stopDistance.toFixed(2)}m ${JSON.stringify(beforeBoard)}`)
+    }
     await dispatchKey(page, 'KeyF', 'keydown')
     await dispatchKey(page, 'KeyF', 'keyup')
-    await page.waitForFunction(() => !!window.__REALCITY_STORE__?.getState()?.mission?.boardingRequested, null, { timeout: 10000 })
+    await page.waitForFunction(() => {
+      const mission = window.__REALCITY_STORE__?.getState()?.mission
+      return !!mission?.boardingRequested && ['taxi_boarding', 'taxi_ride'].includes(mission.phase)
+    }, null, { timeout: 10000 })
+    const boardingTaxi = await getTaxiRouteState(page)
+    assert(boardingTaxi.boardingRequested && boardingTaxi.boardingStartedAt > 0, `Taxi boarding did not expose a timed boarding phase: ${JSON.stringify(boardingTaxi)}`)
 
     try {
       await page.waitForFunction(() => {
@@ -1004,6 +1113,9 @@ async function main() {
     assert(taxiRide.routeMeters >= Math.max(1, taxiRide.directMeters * 0.9), `Taxi ride route distance was implausible: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.rideDuration >= taxiRide.routeMeters / 25 - 0.5, `Taxi ride duration is too short for the road distance: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.taxiPose && Number.isFinite(taxiRide.taxiPose.x) && Number.isFinite(taxiRide.taxiPose.z), `Taxi vehicle pose was not updated during ride: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.destinationLaneStats.samples > 0 && taxiRide.destinationLaneStats.laneLike > taxiRide.destinationLaneStats.centerline, `Taxi ride route still follows road centerlines instead of traffic lanes: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.destinationMaxHeadingDelta < 1.2, `Taxi ride still turns with a hard 90-degree corner: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.rideExitPoint, `Taxi ride did not preserve a curbside passenger exit point: ${JSON.stringify(taxiRide)}`)
 
     await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 120000 })
     await page.waitForTimeout(700)

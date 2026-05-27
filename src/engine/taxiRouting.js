@@ -17,6 +17,17 @@ function pointOnRoadCenter(road, along) {
   return { x: road.x, z: clamp(along, road.from, road.to) }
 }
 
+export function roadLaneOffset(road, direction = 1) {
+  const laneOffset = road.width * (road.main ? 0.27 : 0.22)
+  return road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
+}
+
+export function pointOnRoadLane(road, along, direction = 1) {
+  const lane = roadLaneOffset(road, direction)
+  if (road.axis === 'x') return { x: clamp(along, road.from, road.to), z: road.z + lane, roadId: road.id, roadName: road.name, roadAxis: road.axis, laneDirection: direction }
+  return { x: road.x + lane, z: clamp(along, road.from, road.to), roadId: road.id, roadName: road.name, roadAxis: road.axis, laneDirection: direction }
+}
+
 function roadContainsIntersection(road, cross) {
   if (road.axis === 'x') return cross.x >= road.from && cross.x <= road.to
   return cross.z >= road.from && cross.z <= road.to
@@ -38,7 +49,7 @@ function cleanRoute(points) {
   const cleaned = []
   for (const point of points) {
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.z)) continue
-    const next = { x: Number(point.x.toFixed(3)), z: Number(point.z.toFixed(3)) }
+    const next = { ...point, x: Number(point.x.toFixed(3)), z: Number(point.z.toFixed(3)) }
     if (cleaned.length && samePoint(cleaned[cleaned.length - 1], next)) continue
     cleaned.push(next)
   }
@@ -58,7 +69,108 @@ function cleanRoute(points) {
   return simplified
 }
 
+function roadForSegment(a, b, roads = []) {
+  const dx = Math.abs(b.x - a.x)
+  const dz = Math.abs(b.z - a.z)
+  const axis = dx >= dz ? 'x' : 'z'
+  const midpoint = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }
+  let best = null
+  let bestScore = Infinity
+  for (const road of roads) {
+    if (road.axis !== axis) continue
+    const along = axis === 'x' ? midpoint.x : midpoint.z
+    if (along < road.from - 2 || along > road.to + 2) continue
+    const score = axis === 'x' ? Math.abs(midpoint.z - road.z) : Math.abs(midpoint.x - road.x)
+    if (score < bestScore) {
+      best = road
+      bestScore = score
+    }
+  }
+  return best
+}
+
+function directionForSegment(road, a, b) {
+  const delta = road.axis === 'x' ? b.x - a.x : b.z - a.z
+  return delta >= 0 ? 1 : -1
+}
+
+function lanePointForSegment(point, road, direction) {
+  const along = road.axis === 'x' ? point.x : point.z
+  return pointOnRoadLane(road, along, direction)
+}
+
+function laneRouteFromCenterRoute(points, roads = [], from, to) {
+  if (points.length < 2) return cleanRoute(points)
+  const lanePoints = []
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]
+    const b = points[i]
+    const road = roadForSegment(a, b, roads)
+    const direction = road ? directionForSegment(road, a, b) : 1
+    const start = road ? lanePointForSegment(a, road, direction) : a
+    const end = road ? lanePointForSegment(b, road, direction) : b
+    if (!lanePoints.length || !samePoint(lanePoints[lanePoints.length - 1], start)) lanePoints.push(start)
+    lanePoints.push(end)
+  }
+
+  if (from?.roadId && Number.isFinite(from.x) && Number.isFinite(from.z)) lanePoints[0] = { ...lanePoints[0], ...from }
+  if (to?.roadId && Number.isFinite(to.x) && Number.isFinite(to.z)) lanePoints[lanePoints.length - 1] = { ...lanePoints[lanePoints.length - 1], ...to }
+  return cleanRoute(lanePoints)
+}
+
+function smoothRouteCorners(points = [], radius = 12) {
+  if (points.length < 3) return points
+  const smoothed = [points[0]]
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const prev = points[i - 1]
+    const current = points[i]
+    const next = points[i + 1]
+    const inLen = pointDistance(prev, current)
+    const outLen = pointDistance(current, next)
+    if (inLen < 4 && outLen >= 4) {
+      continue
+    }
+    if (inLen < 4 || outLen < 4) {
+      smoothed.push(current)
+      continue
+    }
+
+    const inDir = { x: (prev.x - current.x) / inLen, z: (prev.z - current.z) / inLen }
+    const outDir = { x: (next.x - current.x) / outLen, z: (next.z - current.z) / outLen }
+    const dot = clamp(inDir.x * outDir.x + inDir.z * outDir.z, -1, 1)
+    const angle = Math.acos(dot)
+    if (angle < 0.18 || Math.abs(Math.PI - angle) < 0.12) {
+      smoothed.push(current)
+      continue
+    }
+
+    const turnRadius = Math.min(radius, inLen * 0.42, outLen * 0.42)
+    const start = { x: current.x + inDir.x * turnRadius, z: current.z + inDir.z * turnRadius }
+    const end = { x: current.x + outDir.x * turnRadius, z: current.z + outDir.z * turnRadius }
+    if (!samePoint(smoothed[smoothed.length - 1], start)) smoothed.push(start)
+    for (let step = 1; step <= 4; step += 1) {
+      const t = step / 5
+      const inv = 1 - t
+      smoothed.push({
+        x: inv * inv * start.x + 2 * inv * t * current.x + t * t * end.x,
+        z: inv * inv * start.z + 2 * inv * t * current.z + t * t * end.z,
+      })
+    }
+    smoothed.push(end)
+  }
+  smoothed.push(points[points.length - 1])
+  return cleanRoute(smoothed)
+}
+
 export function nearestRoadProjection(pos, roads = []) {
+  const hintedRoad = pos?.road || (pos?.roadId ? roads.find(road => road.id === pos.roadId) : null)
+  if (hintedRoad) {
+    const point = hintedRoad.axis === 'x'
+      ? { x: clamp(pos.x, hintedRoad.from, hintedRoad.to), z: hintedRoad.z }
+      : { x: hintedRoad.x, z: clamp(pos.z, hintedRoad.from, hintedRoad.to) }
+    return { ...point, road: hintedRoad, distance: pointDistance(pos, point) }
+  }
+
   let best = null
   let bestDistance = Infinity
 
@@ -123,7 +235,7 @@ export function buildTaxiRoute(from, to, roads = []) {
     }
   }
 
-  const points = [{ x: from.x, z: from.z }, { x: start.x, z: start.z }]
+  const points = [{ x: start.x, z: start.z }]
   const roadNames = new Set([start.road.name, end.road.name].filter(Boolean))
   let turns = 0
 
@@ -149,8 +261,9 @@ export function buildTaxiRoute(from, to, roads = []) {
     }
   }
 
-  points.push({ x: end.x, z: end.z }, { x: to.x, z: to.z })
-  const cleaned = cleanRoute(points)
+  points.push({ x: end.x, z: end.z })
+  const laneRoute = laneRouteFromCenterRoute(points, roads, from, to)
+  const cleaned = smoothRouteCorners(laneRoute)
   return {
     points: cleaned,
     routeMeters: routeDistance(cleaned),
@@ -164,21 +277,24 @@ export function taxiSpawnForPickup(pickup, roads = [], distance = 230) {
   const start = nearestRoadProjection(pickup, roads)
   if (!start) return { x: pickup.x - distance, z: pickup.z }
   const road = start.road
+  const laneDirection = pickup.laneDirection || (road.axis === 'x'
+    ? (pickup.z >= road.z ? 1 : -1)
+    : (pickup.x >= road.x ? -1 : 1))
 
   if (road.axis === 'x') {
     const leftSpace = start.x - road.from
     const rightSpace = road.to - start.x
     const offset = leftSpace > rightSpace ? -distance : distance
-    return pointOnRoadCenter(road, start.x + offset)
+    return pointOnRoadLane(road, start.x + offset, laneDirection)
   }
 
   const backSpace = start.z - road.from
   const forwardSpace = road.to - start.z
   const offset = backSpace > forwardSpace ? -distance : distance
-  return pointOnRoadCenter(road, start.z + offset)
+  return pointOnRoadLane(road, start.z + offset, laneDirection)
 }
 
-export function sampleRoute(points = [], distance = 0) {
+function positionAtRouteDistance(points = [], distance = 0) {
   if (!points.length) return { x: 0, z: 0, heading: 0, t: 1 }
   if (points.length === 1) return { ...points[0], heading: 0, t: 1 }
 
@@ -197,9 +313,9 @@ export function sampleRoute(points = [], distance = 0) {
       return {
         x,
         z,
-        heading: Math.atan2(b.x - a.x, b.z - a.z),
         t: distance / total,
         segmentIndex: i - 1,
+        segmentHeading: Math.atan2(b.x - a.x, b.z - a.z),
       }
     }
     remaining -= segment
@@ -209,9 +325,52 @@ export function sampleRoute(points = [], distance = 0) {
   const b = points[points.length - 1]
   return {
     ...b,
-    heading: Math.atan2(b.x - a.x, b.z - a.z),
     t: 1,
     segmentIndex: points.length - 2,
+    segmentHeading: Math.atan2(b.x - a.x, b.z - a.z),
+  }
+}
+
+export function sampleRoute(points = [], distance = 0) {
+  const position = positionAtRouteDistance(points, distance)
+  if (!points.length || points.length === 1) return position
+
+  const total = Math.max(0.001, routeDistance(points))
+  const lookDistance = Math.min(6, Math.max(2.4, total * 0.012))
+  const behind = positionAtRouteDistance(points, Math.max(0, distance - lookDistance))
+  const ahead = positionAtRouteDistance(points, Math.min(total, distance + lookDistance))
+  const dx = ahead.x - behind.x
+  const dz = ahead.z - behind.z
+  const heading = Math.hypot(dx, dz) > 0.001
+    ? Math.atan2(dx, dz)
+    : position.segmentHeading || 0
+  return { ...position, heading }
+}
+
+export function taxiPassengerDoorPoint(taxi, role = 'player') {
+  const pose = taxi?.pose || taxi?.pickupStop || taxi?.dropoffStop
+  const curb = taxi?.passengerPickup || taxi?.pickup || taxi?.dropoff || pose
+  if (!pose) return { x: 0, z: 0 }
+
+  const heading = pose.heading ?? pose.yaw ?? 0
+  let sideX = (curb?.x || pose.x) - pose.x
+  let sideZ = (curb?.z || pose.z) - pose.z
+  const sideLength = Math.hypot(sideX, sideZ)
+  if (sideLength > 0.001) {
+    sideX /= sideLength
+    sideZ /= sideLength
+  } else {
+    sideX = Math.cos(heading)
+    sideZ = -Math.sin(heading)
+  }
+  const forwardX = Math.sin(heading)
+  const forwardZ = Math.cos(heading)
+  const foreAft = role === 'agent' ? -0.95 : 0.35
+  const side = role === 'inside' ? 0.28 : 1.82
+  return {
+    x: pose.x + sideX * side + forwardX * foreAft,
+    z: pose.z + sideZ * side + forwardZ * foreAft,
+    heading,
   }
 }
 
