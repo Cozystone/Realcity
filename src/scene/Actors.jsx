@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { terrainHeight, trafficSignalForAxis } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
 import { fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
+import { buildTaxiRoute, sampleRoute, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
 const forward = new THREE.Vector3(0, 0, 1)
@@ -147,6 +148,57 @@ function moveAgentToward(agent, target, delta, speed, roads) {
   return distance
 }
 
+function advanceTaxi(taxi, delta) {
+  taxi.progress = Math.min(taxi.routeMeters, (taxi.progress || 0) + taxi.speed * delta)
+  const pose = sampleRoute(taxi.path, taxi.progress)
+  taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+  return pose
+}
+
+function beginTaxiDispatch(agent, mission, store, roads) {
+  const pickup = mission.pickup
+  const dropoff = nearestRoadPickup(mission.destination, roads)
+  const spawn = taxiSpawnForPickup(pickup, roads)
+  const routeToPickup = buildTaxiRoute(spawn, pickup, roads)
+  const routeToDestination = buildTaxiRoute(pickup, dropoff, roads)
+  const firstPose = sampleRoute(routeToPickup.points, 0)
+  const taxi = {
+    id: `taxi_${mission.id}`,
+    phase: 'driving_to_pickup',
+    path: routeToPickup.points,
+    destinationPath: routeToDestination.points,
+    routeMeters: routeToPickup.routeMeters,
+    destinationMeters: routeToDestination.routeMeters,
+    directMeters: routeToDestination.directMeters,
+    progress: 0,
+    speed: 64,
+    pickup,
+    dropoff,
+    routeNames: routeToDestination.roadNames,
+    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading },
+    requestedAt: performance.now(),
+  }
+
+  mission.phase = 'taxi_dispatch'
+  mission.taxi = taxi
+  mission.dropoff = dropoff
+  mission.route = routeToDestination.points
+  store.updateMission({
+    phase: 'taxi_dispatch',
+    pickup,
+    dropoff,
+    route: routeToDestination.points,
+    taxi,
+    summary: `${agent.name} called a taxi. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`,
+  })
+  store.showDialogue({
+    speaker: agent.name,
+    role: agent.job,
+    text: styleNpcSpeech(agent, `I called a taxi. We wait at the curb first, then ride by road to ${mission.destination.name}.`),
+    agent: agent.snapshot(),
+  })
+}
+
 class Agent {
   constructor(data) {
     Object.assign(this, data)
@@ -214,6 +266,8 @@ class Agent {
         this.activity = 'walking to taxi pickup'
         const distance = moveAgentToward(this, mission.pickup, delta, 1.9 * this.pace, roads)
         if (distance < 2.6) {
+          beginTaxiDispatch(this, mission, store, roads)
+          return 'talking'
           mission.phase = 'taxi_boarding'
           mission.boardingAt = performance.now()
           store.updateMission({ phase: 'taxi_boarding', summary: `${this.name} is hailing a taxi at the curb.` })
@@ -227,18 +281,74 @@ class Agent {
         return 'walking'
       }
 
-      if (mission.phase === 'taxi_boarding') {
-        this.activity = 'boarding a taxi'
-        if (performance.now() - mission.boardingAt > 1300) {
-          const player = store.player
+      if (mission.phase === 'taxi_dispatch') {
+        this.activity = 'waiting for taxi'
+        const curbDistance = Math.hypot(this.pos.x - mission.pickup.x, this.pos.z - mission.pickup.z)
+        if (curbDistance > 2.2) moveAgentToward(this, mission.pickup, delta, 1.6 * this.pace, roads)
+
+        const taxi = mission.taxi
+        if (taxi) {
+          advanceTaxi(taxi, delta)
+          if (taxi.progress >= taxi.routeMeters - 0.2) {
+            taxi.phase = 'waiting_at_pickup'
+            taxi.progress = taxi.routeMeters
+            mission.phase = 'taxi_waiting'
+            mission.boardingAt = performance.now()
+            store.updateMission({
+              phase: 'taxi_waiting',
+              taxi,
+              summary: `Taxi arrived at ${mission.pickup.roadName || mission.pickup.name || 'the curb'}. Boarding now.`,
+            })
+            store.showDialogue({
+              speaker: this.name,
+              role: this.job,
+              text: styleNpcSpeech(this, 'The taxi is here. Let us get in and follow the road route.'),
+              agent: this.snapshot(),
+            })
+          }
+        }
+        return 'talking'
+      }
+
+      if (mission.phase === 'taxi_waiting') {
+        this.activity = 'boarding taxi'
+        const taxi = mission.taxi
+        if (taxi?.pose) {
+          this.pos.x = taxi.pickup.x + Math.cos(taxi.pose.heading) * 1.1
+          this.pos.z = taxi.pickup.z - Math.sin(taxi.pose.heading) * 1.1
+          this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+          this.heading = taxi.pose.heading
+        }
+
+        if (taxi && performance.now() - mission.boardingAt > 1500) {
+          const fallbackDropoff = mission.dropoff || nearestRoadPickup(destination, roads)
+          const route = taxi.destinationPath?.length >= 2
+            ? { points: taxi.destinationPath, routeMeters: taxi.destinationMeters, roadNames: taxi.routeNames }
+            : buildTaxiRoute(mission.pickup, fallbackDropoff, roads)
+          const routeMeters = Math.max(1, route.routeMeters || 0)
+          const rideSpeed = 76
           mission.phase = 'taxi_ride'
-          store.updateMission({ phase: 'taxi_ride', summary: `Taxi to ${destination.name}` })
+          taxi.phase = 'ride'
+          taxi.path = route.points
+          taxi.routeMeters = routeMeters
+          taxi.progress = 0
+          taxi.routeNames = route.roadNames || taxi.routeNames || []
+          store.updateMission({
+            phase: 'taxi_ride',
+            route: route.points,
+            taxi,
+            summary: `Taxi to ${destination.name} via ${taxi.routeNames?.slice(0, 2).join(' / ') || 'city streets'}.`,
+          })
           store.startRide({
-            from: { x: player.x, z: player.z },
-            to: { x: destination.x, z: destination.z },
-            duration: Math.min(15, Math.max(7, Math.hypot(destination.x - player.x, destination.z - player.z) / 58)),
+            from: { x: mission.pickup.x, z: mission.pickup.z },
+            to: { x: fallbackDropoff.x, z: fallbackDropoff.z },
+            path: route.points,
+            routeMeters,
+            routeNames: taxi.routeNames || [],
+            duration: Math.min(34, Math.max(8, routeMeters / rideSpeed)),
             label: `${this.name} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`,
             destinationName: destination.name,
+            taxiId: taxi.id,
           })
         }
         return 'talking'
@@ -248,6 +358,18 @@ class Agent {
         this.activity = 'riding with player'
         const ride = store.ride
         if (ride) {
+          if (ride.path?.length >= 2) {
+            const progress = Math.min(
+              ride.routeMeters || 1,
+              ((performance.now() - ride.startedAt) / (ride.duration * 1000)) * (ride.routeMeters || 1),
+            )
+            const pose = sampleRoute(ride.path, progress)
+            this.pos.x = pose.x + Math.cos(pose.heading) * 1.05
+            this.pos.z = pose.z - Math.sin(pose.heading) * 1.05
+            this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+            this.heading = pose.heading
+            return 'riding'
+          }
           const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
           const eased = smoothstep(t)
           this.pos.x = ride.from.x + (ride.to.x - ride.from.x) * eased + 1.2
@@ -256,7 +378,8 @@ class Agent {
           this.heading = Math.atan2(ride.to.x - ride.from.x, ride.to.z - ride.from.z)
           return 'riding'
         }
-        this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
+        const dropoff = mission.dropoff || nearestRoadPickup(destination, roads)
+        this.pos.set(dropoff.x + 1.4, terrainHeight(dropoff.x, dropoff.z) + 0.95, dropoff.z + 1.4)
         store.finishMission(`${this.name} brought you to ${destination.name}.`)
         store.showDialogue({
           speaker: this.name,
@@ -782,6 +905,115 @@ function Traffic({ cars, roads }) {
   )
 }
 
+function activeTaxiRoute(mission, ride) {
+  if (ride?.path?.length >= 2) return ride.path
+  if (mission?.route?.length >= 2) return mission.route
+  if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
+  if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
+  return []
+}
+
+function TaxiRouteRibbon() {
+  const mission = useCityStore(state => state.mission)
+  const ride = useCityStore(state => state.ride)
+  const route = activeTaxiRoute(mission, ride)
+  const geometry = useMemo(() => {
+    if (!route.length) return null
+    const points = route.map(point => new THREE.Vector3(point.x, terrainHeight(point.x, point.z) + 0.16, point.z))
+    return new THREE.BufferGeometry().setFromPoints(points)
+  }, [route, mission?.updatedAt, ride?.updatedAt])
+
+  if (!geometry) return null
+  return (
+    <line geometry={geometry} renderOrder={6}>
+      <lineBasicMaterial color="#ffd447" transparent opacity={0.94} depthWrite={false} />
+    </line>
+  )
+}
+
+function MissionTaxi() {
+  const group = useRef()
+  const textures = useMemo(() => ({
+    paint: makeProceduralTexture('vehicle-paint', { size: 128, seed: 731, repeatX: 1.6, repeatY: 1.2 }),
+    glass: makeProceduralTexture('glass-smudge', { size: 128, seed: 732, repeatX: 1.2, repeatY: 1.2 }),
+    rubber: makeProceduralTexture('rubber-tread', { size: 128, seed: 733, repeatX: 1.8, repeatY: 1.8 }),
+    metal: makeProceduralTexture('brushed-metal', { size: 128, seed: 734, repeatX: 2.2, repeatY: 0.8 }),
+    skin: makeProceduralTexture('skin-pores', { size: 128, seed: 735, repeatX: 1.2, repeatY: 1.2 }),
+  }), [])
+
+  useFrame(() => {
+    if (!group.current) return
+    const store = useCityStore.getState()
+    const pose = store.ride?.taxiPose || store.mission?.taxi?.pose
+    if (!pose) {
+      group.current.visible = false
+      return
+    }
+    group.current.visible = true
+    group.current.position.set(pose.x, terrainHeight(pose.x, pose.z) + 0.58, pose.z)
+    group.current.rotation.y = pose.heading ?? pose.yaw ?? 0
+  })
+
+  return (
+    <group ref={group} visible={false}>
+      <mesh castShadow receiveShadow position={[0, 0, 0]}>
+        <boxGeometry args={[2.22, 0.72, 4.75]} />
+        <meshPhysicalMaterial map={textures.paint} color="#f6c445" roughness={0.22} metalness={0.42} clearcoat={0.75} clearcoatRoughness={0.15} />
+      </mesh>
+      <mesh castShadow position={[0, 0.66, -0.18]}>
+        <boxGeometry args={[1.55, 0.62, 1.92]} />
+        <meshPhysicalMaterial map={textures.glass} color="#17202a" roughness={0.06} metalness={0.24} clearcoat={1} transparent opacity={0.92} />
+      </mesh>
+      <mesh position={[0, 0.86, 0.86]}>
+        <boxGeometry args={[1.18, 0.34, 0.045]} />
+        <meshPhysicalMaterial map={textures.glass} color="#9edcff" roughness={0.035} metalness={0.1} transparent opacity={0.72} clearcoat={1} />
+      </mesh>
+      <mesh position={[0, 0.82, -1.2]}>
+        <boxGeometry args={[1.08, 0.3, 0.045]} />
+        <meshPhysicalMaterial map={textures.glass} color="#83c7e7" roughness={0.04} metalness={0.16} transparent opacity={0.68} clearcoat={1} />
+      </mesh>
+      <mesh castShadow position={[-0.36, 1.04, 0.16]}>
+        <sphereGeometry args={[0.2, 14, 10]} />
+        <meshStandardMaterial map={textures.skin} color="#d4a17d" roughness={0.7} />
+      </mesh>
+      <mesh castShadow position={[0, 1.22, -0.2]}>
+        <boxGeometry args={[0.92, 0.18, 0.44]} />
+        <meshStandardMaterial color="#fff7b0" emissive="#ffd34d" emissiveIntensity={1.2} roughness={0.22} />
+      </mesh>
+      <mesh position={[0, 0.16, 2.44]}>
+        <boxGeometry args={[0.78, 0.18, 0.08]} />
+        <meshStandardMaterial color="#fff8df" emissive="#ffe08a" emissiveIntensity={1.3} roughness={0.18} />
+      </mesh>
+      <mesh position={[0, 0.12, -2.44]}>
+        <boxGeometry args={[0.86, 0.14, 0.08]} />
+        <meshStandardMaterial color="#ff2b2b" emissive="#ff1d18" emissiveIntensity={1.1} roughness={0.24} />
+      </mesh>
+      {[
+        [-1.18, -0.38, 1.48],
+        [1.18, -0.38, 1.48],
+        [-1.18, -0.38, -1.42],
+        [1.18, -0.38, -1.42],
+      ].map(([x, y, z]) => (
+        <mesh key={`${x}-${z}`} castShadow position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.34, 0.34, 0.24, 20]} />
+          <meshStandardMaterial map={textures.rubber} color="#08090b" roughness={0.56} metalness={0.18} />
+        </mesh>
+      ))}
+      {[
+        [-1.31, -0.38, 1.48],
+        [1.31, -0.38, 1.48],
+        [-1.31, -0.38, -1.42],
+        [1.31, -0.38, -1.42],
+      ].map(([x, y, z]) => (
+        <mesh key={`hub-${x}-${z}`} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.18, 0.18, 0.035, 16]} />
+          <meshStandardMaterial map={textures.metal} color="#c8cdd0" roughness={0.24} metalness={0.72} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 function NPCs({ city }) {
   const places = useMemo(() => new Map(city.landmarks.map(place => [place.id, place])), [city.landmarks])
   const destinations = useMemo(() => new Map([...city.landmarks, ...(city.addressBook || [])].map(place => [place.id, place])), [city.landmarks, city.addressBook])
@@ -1255,6 +1487,8 @@ export default function Actors({ city }) {
   return (
     <>
       <Traffic cars={city.cars} roads={city.roads} />
+      <TaxiRouteRibbon />
+      <MissionTaxi />
       <NPCs city={city} />
     </>
   )

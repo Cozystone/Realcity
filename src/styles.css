@@ -1179,6 +1179,15 @@ button.key-prompt {
   stroke: rgba(226, 222, 204, 0.82);
 }
 
+.full-map-route {
+  fill: none;
+  stroke: #ffd447;
+  stroke-width: 13;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 9px rgba(255, 212, 71, 0.8));
+}
+
 .full-map-landmarks circle {
   stroke: rgba(255, 255, 255, 0.85);
   stroke-width: 3;
@@ -1211,6 +1220,19 @@ button.key-prompt {
   stroke: #eef8ff;
   stroke-width: 4;
   filter: drop-shadow(0 0 10px rgba(74, 173, 255, 0.95));
+}
+
+.full-map-taxi rect:first-child {
+  fill: #f6c445;
+  stroke: #fff7b0;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 9px rgba(246, 196, 69, 0.78));
+}
+
+.full-map-taxi rect:last-child {
+  fill: rgba(15, 23, 32, 0.82);
+  stroke: rgba(255, 255, 255, 0.78);
+  stroke-width: 2;
 }
 
 .vitals {

@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { CITY_HALF, terrainHeight } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
+import { sampleRoute } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
 const WALK_SPEED = 6.2
@@ -242,7 +243,19 @@ function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, c
     })
   }
 
-  for (const vehicle of store.vehicleSamples || []) {
+  const missionTaxi = store.mission?.taxi?.pose && !store.ride
+    ? [{
+        id: store.mission.taxi.id || 'mission-taxi',
+        kind: 'taxi',
+        x: store.mission.taxi.pose.x,
+        z: store.mission.taxi.pose.z,
+        yaw: store.mission.taxi.pose.heading ?? store.mission.taxi.pose.yaw ?? 0,
+        width: 2.22,
+        length: 4.75,
+      }]
+    : []
+
+  for (const vehicle of [...(store.vehicleSamples || []), ...missionTaxi]) {
     if (!vehicle?.id) continue
     const result = resolveVehicleCollision(px, pz, vehicle, playerRadius, vehiclePadding)
     if (!result) continue
@@ -402,6 +415,20 @@ export default function PlayerRig({ city }) {
     const ride = store.ride
 
     if (ride) {
+      if (ride.path?.length >= 2) {
+        const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
+        const distance = (ride.routeMeters || 1) * t
+        const pose = sampleRoute(ride.path, distance)
+        heading.current = pose.heading
+        pos.current.set(pose.x, terrainHeight(pose.x, pose.z) + 1.1, pose.z)
+        ride.taxiPose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+        ride.progress = t
+        moving.current = true
+        running.current = false
+        grounded.current = true
+        velocityY.current = 0
+        if (t >= 1) store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+      } else {
       const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
       const eased = smoothstep(t)
       const x = ride.from.x + (ride.to.x - ride.from.x) * eased
@@ -413,6 +440,7 @@ export default function PlayerRig({ city }) {
       grounded.current = true
       velocityY.current = 0
       if (t >= 1) store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+      }
     } else {
       if (keys.current.KeyA) heading.current += TURN_SPEED * dt
       if (keys.current.KeyD) heading.current -= TURN_SPEED * dt

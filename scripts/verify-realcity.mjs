@@ -124,6 +124,38 @@ async function getPlayer(page) {
   return player
 }
 
+async function getTaxiRouteState(page) {
+  return page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const mission = state?.mission
+    const ride = state?.ride
+    const pathTurns = (points = []) => {
+      let turns = 0
+      let previousAxis = null
+      for (let i = 1; i < points.length; i += 1) {
+        const a = points[i - 1]
+        const b = points[i]
+        const axis = Math.abs(a.x - b.x) >= Math.abs(a.z - b.z) ? 'x' : 'z'
+        if (previousAxis && axis !== previousAxis) turns += 1
+        previousAxis = axis
+      }
+      return turns
+    }
+    return {
+      missionPhase: mission?.phase || null,
+      dispatchPathPoints: mission?.taxi?.path?.length || 0,
+      destinationPathPoints: mission?.taxi?.destinationPath?.length || mission?.route?.length || 0,
+      ridePathPoints: ride?.path?.length || 0,
+      routeMeters: ride?.routeMeters || mission?.taxi?.destinationMeters || mission?.taxi?.routeMeters || 0,
+      directMeters: mission?.taxi?.directMeters || 0,
+      dispatchTurns: pathTurns(mission?.taxi?.path),
+      destinationTurns: pathTurns(ride?.path || mission?.taxi?.destinationPath || mission?.route),
+      taxiPose: ride?.taxiPose || mission?.taxi?.pose || null,
+      rideProgress: ride?.progress || 0,
+    }
+  })
+}
+
 async function inspectCanvas(page) {
   const canvases = await page.evaluate(() => Array.from(document.querySelectorAll('canvas')).map((canvas, index) => {
     const rect = canvas.getBoundingClientRect()
@@ -486,9 +518,14 @@ async function main() {
     addressRoute = await page.evaluate(() => {
       const city = window.__REALCITY_CITY__
       const player = window.__REALCITY_STORE__?.getState().player || { x: 0, z: 40 }
-      const target = [...(city?.addressBook || [])]
+      const addresses = [...(city?.addressBook || [])]
+      const target = addresses
         .filter(place => place.address && Math.hypot(place.x - player.x, place.z - player.z) > 520)
+        .filter(place => Math.abs(place.x - player.x) > 220 && Math.abs(place.z - player.z) > 220)
         .sort((a, b) => Math.hypot(b.x - player.x, b.z - player.z) - Math.hypot(a.x - player.x, a.z - player.z))[0]
+        || addresses
+          .filter(place => place.address && Math.hypot(place.x - player.x, place.z - player.z) > 520)
+          .sort((a, b) => Math.hypot(b.x - player.x, b.z - player.z) - Math.hypot(a.x - player.x, a.z - player.z))[0]
       return target
         ? { id: target.id, name: target.name, address: target.address, roadName: target.roadName }
         : null
@@ -536,6 +573,30 @@ async function main() {
     assert(/escort/i.test(missionText), `Mission panel did not describe an escort: ${missionText}`)
     if (addressRoute?.address) assert(missionText.includes(addressRoute.address), `Mission panel did not resolve the requested address ${addressRoute.address}: ${missionText}`)
 
+    await page.waitForFunction(() => {
+      const state = window.__REALCITY_STORE__?.getState()
+      return state?.mission?.taxi?.path?.length >= 2 && (state.mission.taxi.destinationPath?.length >= 2 || state.mission.route?.length >= 2)
+    }, null, { timeout: 35000 })
+    const taxiDispatch = await getTaxiRouteState(page)
+    assert(['taxi_dispatch', 'taxi_waiting', 'taxi_ride'].includes(taxiDispatch.missionPhase), `Taxi did not enter a dispatch/wait/ride phase: ${taxiDispatch.missionPhase}`)
+    assert(taxiDispatch.dispatchPathPoints >= 2, `Taxi dispatch path was not created: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.destinationPathPoints >= 2, `Taxi destination road path was not plotted: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.routeMeters >= Math.max(1, taxiDispatch.directMeters * 0.9), `Taxi route distance was implausible: ${JSON.stringify(taxiDispatch)}`)
+
+    await page.locator('.map-shell').click()
+    await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
+    assert(await page.locator('.full-map-route').count() === 1, 'Full map did not render the taxi route polyline')
+    await page.locator('.full-map-header button').click()
+    await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
+
+    await page.waitForFunction(() => {
+      const state = window.__REALCITY_STORE__?.getState()
+      return state?.ride?.path?.length >= 2 && state.ride.routeMeters > 0
+    }, null, { timeout: 45000 })
+    const taxiRide = await getTaxiRouteState(page)
+    assert(taxiRide.ridePathPoints >= 2, `Taxi ride did not use a road path: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.taxiPose && Number.isFinite(taxiRide.taxiPose.x) && Number.isFinite(taxiRide.taxiPose.z), `Taxi vehicle pose was not updated during ride: ${JSON.stringify(taxiRide)}`)
+
     await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 70000 })
     await page.waitForTimeout(700)
     const finalState = await page.evaluate(() => {
@@ -579,6 +640,8 @@ async function main() {
         forwardDistance,
       },
       missionText,
+      taxiDispatch,
+      taxiRide,
       finalState,
       finalDistrict: finalPlayer.district,
       travelDistance: positionDistance(finalPlayer, afterMove),

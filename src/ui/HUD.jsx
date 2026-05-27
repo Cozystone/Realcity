@@ -5,10 +5,39 @@ import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
 import VirtualPhone from './VirtualPhone'
 
-function Minimap({ city, player }) {
+function activeTaxiRoute(mission, ride) {
+  if (ride?.path?.length >= 2) return ride.path
+  if (mission?.route?.length >= 2) return mission.route
+  if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
+  if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
+  return []
+}
+
+function activeTaxiPose(mission, ride) {
+  return ride?.taxiPose || mission?.taxi?.pose || null
+}
+
+function routeGeoJSON(city, route) {
+  return {
+    type: 'FeatureCollection',
+    features: route?.length >= 2
+      ? [{
+          type: 'Feature',
+          properties: { layer: 'taxi-route' },
+          geometry: {
+            type: 'LineString',
+            coordinates: route.map(point => city.worldToLngLat(point.x, point.z)),
+          },
+        }]
+      : [],
+  }
+}
+
+function Minimap({ city, player, mission, ride }) {
   const container = useRef(null)
   const map = useRef(null)
   const viewHeading = player.viewHeading ?? player.heading
+  const route = activeTaxiRoute(mission, ride)
 
   useEffect(() => {
     if (!container.current || map.current) return
@@ -25,6 +54,7 @@ function Minimap({ city, player }) {
         version: 8,
         sources: {
           realcity: { type: 'geojson', data: city.geojson },
+          taxiRoute: { type: 'geojson', data: routeGeoJSON(city, []) },
         },
         layers: [
           { id: 'background', type: 'background', paint: { 'background-color': '#0b1320' } },
@@ -34,6 +64,16 @@ function Minimap({ city, player }) {
             source: 'realcity',
             filter: ['==', ['get', 'layer'], 'road'],
             paint: { 'line-color': '#9fb0bd', 'line-width': 1.2, 'line-opacity': 0.74 },
+          },
+          {
+            id: 'taxi-route',
+            type: 'line',
+            source: 'taxiRoute',
+            paint: {
+              'line-color': '#ffd447',
+              'line-width': 4.6,
+              'line-opacity': 0.94,
+            },
           },
           {
             id: 'places',
@@ -79,6 +119,12 @@ function Minimap({ city, player }) {
       zoom: 13.6,
     })
   }, [city, player.x, player.z, viewHeading])
+
+  useEffect(() => {
+    const source = map.current?.getSource('taxiRoute')
+    if (!source) return
+    source.setData(routeGeoJSON(city, route))
+  }, [city, route, mission?.updatedAt, ride?.updatedAt])
 
   return (
     <div className="minimap">
@@ -258,6 +304,10 @@ function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
       ? 'In taxi'
       : mission.phase === 'to_pickup'
         ? 'Go to curb'
+        : mission.phase === 'taxi_dispatch'
+          ? 'Taxi en route'
+          : mission.phase === 'taxi_waiting'
+            ? 'Board taxi'
         : mission.phase === 'taxi_boarding'
           ? 'Boarding taxi'
           : mission.phase === 'leading'
@@ -313,7 +363,15 @@ function ContextPrompts({ nearbyAgent, mission, ride, onOpenMap }) {
 
 function MissionPanel({ mission, ride }) {
   if (!mission) return null
-  const phase = ride ? `Taxi ${(Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000)) * 100).toFixed(0)}%` : mission.phase
+  const taxiRoute = activeTaxiRoute(mission, ride)
+  const routeMeters = ride?.routeMeters || mission.taxi?.destinationMeters || mission.taxi?.routeMeters || 0
+  const phase = ride
+    ? `Taxi ${(Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000)) * 100).toFixed(0)}%`
+    : mission.phase === 'taxi_dispatch'
+      ? 'Taxi en route'
+      : mission.phase === 'taxi_waiting'
+        ? 'Taxi arrived'
+        : mission.phase
 
   return (
     <aside className="mission-panel">
@@ -322,6 +380,7 @@ function MissionPanel({ mission, ride }) {
       <p>{mission.mode === 'taxi' ? 'Taxi escort' : 'Walking escort'} to {mission.destination?.name}</p>
       {mission.destination?.address ? <small>{mission.destination.address}</small> : null}
       <small>{phase}</small>
+      {taxiRoute.length >= 2 ? <small>{Math.round(routeMeters)}m road route plotted</small> : null}
       <ol>
         {(mission.steps || []).slice(0, 4).map(step => <li key={step}>{step}</li>)}
       </ol>
@@ -344,8 +403,11 @@ function placeColor(kind) {
   }[kind] || '#f2c14e'
 }
 
-function FullCityMap({ city, player, onClose }) {
+function FullCityMap({ city, player, mission, ride, onClose }) {
   const heading = ((player.viewHeading ?? player.heading) * 180) / Math.PI
+  const route = activeTaxiRoute(mission, ride)
+  const taxi = activeTaxiPose(mission, ride)
+  const taxiHeading = taxi ? ((taxi.heading ?? taxi.yaw ?? 0) * 180) / Math.PI : 0
 
   return (
     <div className="full-map-overlay" onClick={onClose}>
@@ -388,6 +450,12 @@ function FullCityMap({ city, player, onClose }) {
               />
             ))}
           </g>
+          {route.length >= 2 ? (
+            <polyline
+              className="full-map-route"
+              points={route.map(point => `${point.x},${point.z}`).join(' ')}
+            />
+          ) : null}
           <g className="full-map-landmarks">
             {city.landmarks.map(place => (
               <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
@@ -397,6 +465,12 @@ function FullCityMap({ city, player, onClose }) {
               </g>
             ))}
           </g>
+          {taxi ? (
+            <g className="full-map-taxi" transform={`translate(${taxi.x} ${taxi.z}) rotate(${taxiHeading})`}>
+              <rect x="-15" y="-24" width="30" height="48" rx="5" />
+              <rect x="-10" y="-7" width="20" height="16" rx="3" />
+            </g>
+          ) : null}
           <g className="full-map-player" transform={`translate(${player.x} ${player.z}) rotate(${heading})`}>
             <circle r="22" />
             <path d="M 0 -38 L 16 18 L 0 8 L -16 18 Z" />
@@ -469,9 +543,9 @@ export default function HUD({ city }) {
       ) : null}
 
       <button type="button" className="map-shell" onClick={() => setMapOpen(true)} aria-label="Open full city map">
-        <Minimap city={city} player={player} />
+        <Minimap city={city} player={player} mission={mission} ride={ride} />
       </button>
-      {mapOpen ? <FullCityMap city={city} player={player} onClose={() => setMapOpen(false)} /> : null}
+      {mapOpen ? <FullCityMap city={city} player={player} mission={mission} ride={ride} onClose={() => setMapOpen(false)} /> : null}
       <VirtualPhone city={city} player={player} focusedAgent={focusedAgent} timeMinutes={timeMinutes} />
 
       <div className="vitals">
