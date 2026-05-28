@@ -134,12 +134,46 @@ function cleanCallText(contact) {
   return styleNpcSpeech(phoneAgent(contact), `전화 받았어요. 지금은 ${contact.placeName} 근처에서 ${contact.activity} 중입니다.`)
 }
 
+function safeSeedThread(contact) {
+  return [
+    {
+      from: 'them',
+      text: styleNpcSpeech(phoneAgent(contact), `I am near ${contact.placeName}${contact.workAddress ? ` at ${contact.workAddress}` : ''}. Message me if you need something specific.`),
+    },
+  ]
+}
+
+function safeReplyFor(contact, text, player, timeMinutes) {
+  const messageText = text.toLowerCase()
+  const npc = phoneAgent(contact)
+  if (/taxi|cab|ride|drive/.test(messageText)) {
+    return styleNpcSpeech(npc, 'Use the RealPhone Taxi app for a direct cab dispatch. It sends the nearest cruising taxi to your curb without asking any contact to call one for you.')
+  }
+  if (/escort|guide|take|bring|walk|workplace|office|meet/.test(messageText)) {
+    return styleNpcSpeech(npc, `I can plan from ${contact.placeName}. I will check the distance and decide whether walking or a taxi makes sense.`)
+  }
+  if (/where|location|busy|doing|now/.test(messageText)) {
+    return styleNpcSpeech(npc, `I am near ${contact.placeName}, currently ${contact.activity}. The city clock says ${clockLabel(timeMinutes)}.`)
+  }
+  if (/music|song|radio/.test(messageText)) {
+    return styleNpcSpeech(npc, 'Night Market Lo-Fi fits the evening streets. It feels relaxed without getting sleepy.')
+  }
+  if (player.indoors) {
+    return styleNpcSpeech(npc, `You are inside ${player.placeName}. If needed, I can meet you near the entrance.`)
+  }
+  return styleNpcSpeech(npc, `I saw your message. Since we are ${contact.relation.toLowerCase()}, I will keep an eye on where I am and what is happening nearby.`)
+}
+
+function safeCallText(contact) {
+  return styleNpcSpeech(phoneAgent(contact), `I picked up. I am near ${contact.placeName}, currently ${contact.activity}.`)
+}
+
 function seedThread(contact) {
-  return cleanSeedThread(contact)
+  return safeSeedThread(contact)
 }
 
 function replyFor(contact, text, player, timeMinutes) {
-  return cleanReplyFor(contact, text, player, timeMinutes)
+  return safeReplyFor(contact, text, player, timeMinutes)
 }
 
 function phoneAgent(contact) {
@@ -168,8 +202,42 @@ function phoneAgent(contact) {
   }
 }
 
+function normalizeText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function isDirectTaxiIntent(text) {
+  return /\b(taxi|cab|hail|ride|rideshare)\b|call.*\bcab\b|call.*\btaxi\b/i.test(text)
+}
+
+function isContactActionRequest(text) {
+  return /escort|guide|take|bring|walk|workplace|office|meet|come with|lead me|show me/i.test(text)
+}
+
 function isActionRequest(text) {
-  return /taxi|ride|drive|escort|guide|take|bring|walk|workplace|office|meet|station|hospital|school|depot|park|cafe|market|square/i.test(text)
+  return isContactActionRequest(text)
+}
+
+function targetAliases(target) {
+  return [target.name, target.address, target.roadName]
+    .filter(Boolean)
+    .map(normalizeText)
+    .filter(value => value.length >= 4)
+}
+
+function findRouteTargetFromText(text, routeTargets) {
+  const normalized = normalizeText(text)
+  const scored = routeTargets
+    .map(target => ({
+      target,
+      score: targetAliases(target).reduce((best, alias) => {
+        if (!normalized.includes(alias)) return best
+        return Math.max(best, alias.length)
+      }, 0),
+    }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+  return scored[0]?.target || null
 }
 
 function stopAudio(audio) {
@@ -232,6 +300,38 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     event.preventDefault()
     if (!selected || !draft.trim()) return
     const text = draft.trim()
+    const directTaxiIntent = isDirectTaxiIntent(text) && !isContactActionRequest(text)
+
+    if (directTaxiIntent) {
+      const taxiTarget = findRouteTargetFromText(text, routeTargets)
+      const label = taxiTarget?.address || taxiTarget?.name || 'a destination'
+      appendThread(selected, [
+        { from: 'me', text },
+        {
+          from: 'system',
+          text: taxiTarget
+            ? `RealPhone Taxi is dispatching a cab directly to ${label}. No contact or NPC relay is involved.`
+            : 'Taxi calls are handled directly by RealPhone Taxi. Choose a destination in the Taxi tab; no contact was asked to call one.',
+        },
+      ])
+      setDraft('')
+
+      const store = useCityStore.getState()
+      if (taxiTarget) {
+        store.addCityEvent({
+          id: `phone_direct_taxi_${Date.now()}`,
+          kind: 'mobility',
+          topic: 'phone taxi',
+          text: `RealPhone Taxi directly dispatched a cruising cab to ${label}; no NPC relay was involved.`,
+        })
+        requestDirectTaxiToTarget(taxiTarget)
+      } else {
+        setTab('taxi')
+        store.setPulse('Taxi calls are direct. Choose a destination in RealPhone Taxi; no contact was asked.')
+      }
+      return
+    }
+
     const reply = replyFor(selected, text, player, timeMinutes)
     const actionRequested = isActionRequest(text)
     const items = [
@@ -272,15 +372,15 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
   const requestDirectTaxiToTarget = (target) => {
     if (!target) return
     const label = target.address || target.name
-    useCityStore.getState().setPulse(`RealPhone Taxi requested the nearest passing cab to ${label}.`)
+    useCityStore.getState().setPulse(`RealPhone Taxi directly requested the nearest cruising cab to ${label}.`)
     window.dispatchEvent(new CustomEvent('realcity:player-taxi-request', {
-      detail: { target },
+      detail: { target, source: 'realphone_taxi', direct: true },
     }))
   }
 
   const callContact = (contact = selected) => {
     if (!contact) return
-    const directText = cleanCallText(contact)
+    const directText = safeCallText(contact)
     appendThread(contact, [{ from: 'system', text: `Call connected with ${contact.name}.` }])
     const store = useCityStore.getState()
     store.showDialogue({ speaker: contact.name, role: contact.job, text: directText, agent: phoneAgent(contact) })
@@ -471,7 +571,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
             <div className="phone-app phone-taxi">
               <div className="phone-taxi-summary">
                 <strong>RealCity Taxi</strong>
-                <small>Dispatches a cruising cab directly to your curb / no NPC relay</small>
+                <small>Dispatches a cruising cab directly to your curb / no NPC relay / no contact relay</small>
               </div>
               <div className="phone-route-list">
                 {routeTargets.map(target => (
@@ -481,7 +581,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     onClick={() => requestDirectTaxiToTarget(target)}
                   >
                     <strong>{target.address || target.name}</strong>
-                    <span>Direct cab dispatch / {Math.round(target.distance)}m / press F to board</span>
+                    <span>Direct cab dispatch / {Math.round(target.distance)}m / no person asked / press F to board</span>
                   </button>
                 ))}
               </div>

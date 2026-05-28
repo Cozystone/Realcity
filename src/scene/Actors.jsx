@@ -953,6 +953,10 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
   mission.dropoff = dropoff
   mission.route = routeToDestination.points
   mission.awaitingBoardKey = true
+  const directPlayerTaxi = mission.source === 'player_taxi' && !agent
+  const dispatchSummary = directPlayerTaxi
+    ? `RealPhone Taxi dispatched ${taxi.driverName}'s cruising cab directly. It is driving to your curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`
+    : `${agent?.name || 'You'} ${fleetTaxi ? `hailed ${taxi.driverName}'s passing taxi` : 'called a taxi'}. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`
   store.updateMission({
     phase: 'taxi_dispatch',
     pickup,
@@ -960,7 +964,7 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
     route: routeToDestination.points,
     taxi,
     awaitingBoardKey: true,
-    summary: `${agent?.name || 'You'} ${fleetTaxi ? `hailed ${taxi.driverName}'s passing taxi` : 'called a taxi'}. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`,
+    summary: dispatchSummary,
   })
   if (agent) {
     store.showDialogue({
@@ -2484,14 +2488,14 @@ function PlayerTaxiController({ city }) {
         destination,
         pickup,
         steps: destination
-          ? ['Nearest cruising taxi accepts the call', 'Taxi drives to your curb', 'Press F to board', `Ride to ${destination.name}`]
+          ? ['RealPhone dispatches the nearest cruising taxi', 'Taxi drives to your curb without NPC relay', 'Press F to board', `Ride to ${destination.name}`]
           : ['Raise your hand at the curb', 'Nearest passing taxi pulls over', 'Choose a destination in RealPhone', 'Press F to board'],
-        request: destination ? `Taxi to ${destination.name}` : 'Street hail passing taxi',
+        request: destination ? `Direct RealPhone taxi to ${destination.name}` : 'Street hail passing taxi',
       }
       store.startMission({
         ...mission,
         summary: destination
-          ? `Calling the nearest passing taxi to ${destination.name}.`
+          ? `RealPhone Taxi is dispatching the nearest cruising cab directly to ${destination.name}.`
           : 'Hailing the nearest passing taxi.',
       })
       const started = beginTaxiDispatch(null, mission, store, {

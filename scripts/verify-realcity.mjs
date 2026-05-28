@@ -842,6 +842,36 @@ async function inspectPhoneSocialActions(page) {
   const messageThread = await page.locator('.phone-bubbles').innerText({ timeout: 5000 })
   assert(messageThread.includes('Where are you now?'), `Phone message bubble was not rendered: ${messageThread}`)
 
+  await page.locator('.phone-message-form input').fill('Call me a taxi to Central Station.')
+  await page.locator('.phone-message-form button').click()
+  await page.waitForFunction(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.mission?.source === 'player_taxi' &&
+      state.mission.mode === 'taxi' &&
+      !state.mission.agentId &&
+      !state.mission.agentName &&
+      /central station/i.test(state.mission.destination?.name || '')
+  }, null, { timeout: 15000 })
+  const directMessageTaxiState = await page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const event = (state?.cityEvents || []).find(item => item.kind === 'mobility' && item.topic === 'phone taxi')
+    return {
+      source: state?.mission?.source || null,
+      mode: state?.mission?.mode || null,
+      agentId: state?.mission?.agentId || null,
+      agentName: state?.mission?.agentName || null,
+      destination: state?.mission?.destination?.name || null,
+      eventText: event?.text || null,
+    }
+  })
+  const directMessageThread = await page.locator('.phone-bubbles').innerText({ timeout: 5000 })
+  assert(directMessageThread.includes('No contact or NPC relay'), `Phone message taxi intent did not stay direct: ${directMessageThread}`)
+  assert(directMessageTaxiState.source === 'player_taxi' && !directMessageTaxiState.agentId && !directMessageTaxiState.agentName, `Phone message taxi intent used an NPC relay: ${JSON.stringify(directMessageTaxiState)}`)
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    if (store?.mission?.source === 'player_taxi') store.finishMission('Phone message taxi verification reset.')
+  })
+
   await page.locator('.phone-tabs button[data-tab="contacts"]').click()
   await page.locator('.phone-list article').first().locator('.phone-call-button').click()
   await page.waitForFunction(name => {
@@ -892,6 +922,7 @@ async function inspectPhoneSocialActions(page) {
   return {
     selectedName,
     messageThread: messageThread.split(/\r?\n/).slice(-5),
+    directMessageTaxiState,
     callState,
     routeState,
   }

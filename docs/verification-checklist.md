@@ -20,6 +20,8 @@ audit has a clear finish line.
   label, currently `ollama:dolphin3:latest`.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
   apps, shows callable NPC contacts, and has a music app entry point.
+- RealPhone Taxi: the Taxi app and plain phone-message taxi intent both dispatch
+  a cab directly as a `player_taxi` mission with no NPC/contact relay.
 - Phone social layer: the harness sends a message, places a call, and sends a
   route-like request through a contact; the request must open an NPC interaction
   and produce a mission owned by that contacted NPC.
