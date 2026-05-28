@@ -7,9 +7,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const artifactsDir = path.join(root, '.verification')
 const productionUrl = process.env.REALCITY_PRODUCTION_URL || 'https://realcity.vercel.app'
+const BROKEN_TEXT_PATTERN = /[�源뚯앹몃곕뺥吏紐媛醫蹂諛濡湲鍮]|[?]{2,}/u
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
+}
+
+function assertReadableText(label, text) {
+  assert(!BROKEN_TEXT_PATTERN.test(String(text || '')), `${label} contains mojibake text: ${text}`)
 }
 
 function findBrowserExecutable() {
@@ -85,6 +90,7 @@ async function maybeTriggerNpcRequest(page) {
   await page.locator('.interaction-panel button[type="submit"]').click()
   await page.waitForTimeout(2500)
   const panelText = await page.locator('.interaction-panel').innerText({ timeout: 5000 }).catch(() => '')
+  assertReadableText('Production NPC interaction panel', panelText)
   return {
     opened: true,
     submitted: true,
@@ -138,12 +144,14 @@ async function main() {
     const canvas = await inspectCanvas(page)
     const promptText = await page.locator('.prompt-stack').innerText({ timeout: 5000 })
     assert(promptText.includes('Taxi') && promptText.includes('Map') && promptText.includes('Phone'), `Production context prompt is incomplete: ${promptText}`)
+    assertReadableText('Production context prompt', promptText)
     assert(await page.locator('.minimap-gps').count() === 1, 'Production minimap GPS overlay is missing')
 
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 15000 })
     const mapText = await page.locator('.full-map-panel').innerText({ timeout: 5000 })
     assert(/live gps fix/i.test(mapText), `Production full map did not show a live GPS fix: ${mapText}`)
+    assertReadableText('Production full map', mapText)
     assert(await page.locator('.full-map-player').count() === 1, 'Production full map did not render the player marker')
     assert(await page.locator('.full-map-controls').count() === 1, 'Production full map controls are missing')
     const fullMapStats = {
@@ -163,10 +171,13 @@ async function main() {
     const phoneTaxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
     assert(phoneTaxiText.includes('RealCity Taxi') && phoneTaxiText.includes('Direct cab dispatch'), `Production phone taxi UI is incomplete: ${phoneTaxiText}`)
     assert(phoneTaxiText.includes('no NPC relay') && phoneTaxiText.includes('no contact relay'), `Production phone taxi UI does not promise direct dispatch: ${phoneTaxiText}`)
+    assertReadableText('Production phone taxi UI', phoneTaxiText)
     await page.locator('.phone-close').click()
     await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
 
     const npcRequest = await maybeTriggerNpcRequest(page)
+    const visibleText = await page.locator('body').innerText({ timeout: 5000 })
+    assertReadableText('Production visible UI', visibleText)
 
     assert(localOnlyRequests.length === 0, `Production attempted local-only requests: ${localOnlyRequests.join(' | ')}`)
     assert(consoleErrors.length === 0, `Production console errors were reported: ${consoleErrors.join(' | ')}`)

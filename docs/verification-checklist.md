@@ -20,7 +20,8 @@ audit has a clear finish line.
 - Local LLM route: NPC request planning uses the configured local provider
   label, currently `ollama:dolphin3:latest`.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
-  apps, shows callable NPC contacts, and has a music app entry point.
+  apps, shows callable NPC contacts, has a music app entry point, and rejects
+  mojibake/broken visible text in those phone surfaces.
 - RealPhone Taxi: the Taxi app and plain phone-message taxi intent both dispatch
   a cab directly as a `player_taxi` mission with no NPC/contact relay.
 - Phone social layer: the harness sends a message, places a call, and sends a
@@ -61,8 +62,8 @@ audit has a clear finish line.
   and confirms key UI text does not overflow or overlap.
 - Production deployment: `npm run verify:production` opens
   `https://realcity.vercel.app`, checks the WebGL canvas, minimap GPS, full map,
-  direct RealPhone Taxi UI, and confirms production makes no `/ollama`,
-  `localhost`, `127.0.0.1`, or `0.0.0.0` requests.
+  direct RealPhone Taxi UI, visible UI text readability, and confirms production
+  makes no `/ollama`, `localhost`, `127.0.0.1`, or `0.0.0.0` requests.
 - Artifacts: `.verification/realcity-last-run.json` and
   `.verification/realcity-last-run.png` record the last local verification run;
   `.verification/realcity-production-last-run.json` and

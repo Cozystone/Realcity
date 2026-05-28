@@ -23,6 +23,10 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+function assertReadableText(label, text) {
+  assert(!BROKEN_TEXT_PATTERN.test(String(text || '')), `${label} contains mojibake text: ${text}`)
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -592,12 +596,14 @@ async function inspectSupportUX(page) {
   const promptText = await page.locator('.prompt-stack').innerText({ timeout: 5000 })
   assert(promptText.includes('Taxi') && promptText.includes('Map') && promptText.includes('Phone'), `Context prompt actions are incomplete: ${promptText}`)
   assert(promptText.includes('Hail') && promptText.includes('W/S') && promptText.includes('A/D') && promptText.includes('Space') && promptText.includes('H/F'), `Movement guide is incomplete: ${promptText}`)
+  assertReadableText('Context prompt', promptText)
 
   await dispatchKey(page, 'KeyT', 'keydown')
   await dispatchKey(page, 'KeyT', 'keyup')
   await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
   const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(taxiText.includes('Taxi') && await page.locator('.phone-route-list button').count() > 0, `T key did not open the phone taxi app: ${taxiText}`)
+  assertReadableText('Phone taxi shortcut', taxiText)
   await page.locator('.phone-close').click()
   await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
 
@@ -749,18 +755,22 @@ async function inspectPhone(page) {
   assert(homeText.includes('RealPhone'), 'Phone shell did not open')
   assert(homeText.includes('Msg') && homeText.includes('People') && homeText.includes('Feed') && homeText.includes('Taxi') && homeText.includes('Music'), 'Phone app tabs were missing')
   assert(await page.locator('.phone-message-form input').count() === 1, 'Phone message composer was missing')
+  assertReadableText('Phone message app', homeText)
 
   await page.locator('.phone-tabs button[data-tab="contacts"]').click()
   const contactsText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(contactsText.includes('Call'), 'Phone contacts did not expose calling')
+  assertReadableText('Phone contacts app', contactsText)
 
   await page.locator('.phone-tabs button[data-tab="social"]').click()
   const socialText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk|mobility|taxi/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
+  assertReadableText('Phone social app', socialText)
 
   await page.locator('.phone-tabs button[data-tab="music"]').click()
   const musicText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(musicText.includes('Han River FM') && musicText.includes('Play'), 'Phone music app was incomplete')
+  assertReadableText('Phone music app', musicText)
 
   await page.locator('.phone-tabs button[data-tab="taxi"]').click()
   const taxiText = await page.locator('.phone-device').innerText({ timeout: 5000 })
@@ -769,6 +779,7 @@ async function inspectPhone(page) {
   assert(taxiText.includes('no NPC relay') && taxiText.includes('Direct cab dispatch'), `Phone taxi app did not make direct taxi dispatch explicit: ${taxiText}`)
   assert(!taxiText.includes('Contact dispatch'), `Phone taxi app still exposes contact-mediated taxi dispatch: ${taxiText}`)
   assert(await page.locator('.phone-taxi .phone-route-list').count() === 1, 'Phone taxi app should expose only one direct dispatch route list')
+  assertReadableText('Phone taxi app', taxiText)
 
   await page.locator('.phone-close').click()
   await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
