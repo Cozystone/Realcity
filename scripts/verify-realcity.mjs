@@ -659,6 +659,35 @@ async function inspectMapCoordinateResilience(page) {
   assert(result.badLngLat.every(Number.isFinite), `worldToLngLat did not sanitize NaN input: ${JSON.stringify(result)}`)
   assert(Object.values(result.afterBadSet).every(value => Number.isFinite(Number(value))), `Player state accepted NaN coordinates: ${JSON.stringify(result)}`)
 
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const city = window.__REALCITY_CITY__
+    window.__REALCITY_MAP_RESILIENCE_PLAYER__ = { ...store.player }
+    window.__REALCITY_MAP_RESILIENCE_WORLD_TO_LNGLAT__ = city.worldToLngLat
+    city.worldToLngLat = () => [Number.NaN, Number.NaN]
+    store.setPlayer({
+      ...store.player,
+      x: store.player.x + 2.5,
+      z: store.player.z + 2.5,
+      heading: store.player.heading + 0.02,
+      viewHeading: store.player.viewHeading + 0.02,
+    })
+  })
+  try {
+    await page.waitForTimeout(350)
+    const fallbackGps = await page.locator('.minimap-gps').innerText({ timeout: 5000 })
+    assert(/GPS/.test(fallbackGps), `Minimap did not survive a NaN GPS fix: ${fallbackGps}`)
+  } finally {
+    await page.evaluate(() => {
+      const store = window.__REALCITY_STORE__?.getState()
+      const city = window.__REALCITY_CITY__
+      if (window.__REALCITY_MAP_RESILIENCE_WORLD_TO_LNGLAT__) city.worldToLngLat = window.__REALCITY_MAP_RESILIENCE_WORLD_TO_LNGLAT__
+      if (window.__REALCITY_MAP_RESILIENCE_PLAYER__) store.setPlayer(window.__REALCITY_MAP_RESILIENCE_PLAYER__)
+      delete window.__REALCITY_MAP_RESILIENCE_WORLD_TO_LNGLAT__
+      delete window.__REALCITY_MAP_RESILIENCE_PLAYER__
+    }).catch(() => {})
+  }
+
   await page.locator('.map-shell').click()
   await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
   await page.locator('.full-map-header button').click()

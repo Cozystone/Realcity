@@ -5,6 +5,9 @@ import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
 import VirtualPhone from './VirtualPhone'
 
+const DEFAULT_WORLD_POINT = { x: 0, z: 40 }
+const DEFAULT_LNGLAT = [0, 0]
+
 function activeTaxiRoute(mission, ride) {
   if (mission?.phase === 'taxi_dispatch' && mission?.taxi?.path?.length >= 2) return mission.taxi.path
   if (ride?.path?.length >= 2) return ride.path
@@ -24,10 +27,14 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback
 }
 
-function finitePoint(point, fallback = { x: 0, z: 40 }) {
+function finitePoint(point, fallback = DEFAULT_WORLD_POINT) {
+  const safeFallback = {
+    x: finiteNumber(fallback?.x, DEFAULT_WORLD_POINT.x),
+    z: finiteNumber(fallback?.z, DEFAULT_WORLD_POINT.z),
+  }
   return {
-    x: finiteNumber(point?.x, fallback.x),
-    z: finiteNumber(point?.z, fallback.z),
+    x: finiteNumber(point?.x, safeFallback.x),
+    z: finiteNumber(point?.z, safeFallback.z),
   }
 }
 
@@ -35,11 +42,29 @@ function hasFinitePoint(point) {
   return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z))
 }
 
-function safeLngLat(city, x, z, fallback = { x: 0, z: 40 }) {
+function normalizeLngLat(coords, fallback = null) {
+  const lng = Number(coords?.[0])
+  const lat = Number(coords?.[1])
+  if (Number.isFinite(lng) && Number.isFinite(lat)) return [lng, lat]
+  if (fallback) return normalizeLngLat(fallback, DEFAULT_LNGLAT)
+  return DEFAULT_LNGLAT
+}
+
+function worldToLngLatSafe(city, point) {
+  if (typeof city?.worldToLngLat !== 'function') return null
+  try {
+    return city.worldToLngLat(point.x, point.z)
+  } catch {
+    return null
+  }
+}
+
+function safeLngLat(city, x, z, fallback = DEFAULT_WORLD_POINT) {
   const point = finitePoint({ x, z }, fallback)
-  const coords = city.worldToLngLat(point.x, point.z)
-  if (Number.isFinite(coords?.[0]) && Number.isFinite(coords?.[1])) return coords
-  return city.worldToLngLat(fallback.x, fallback.z)
+  const coords = normalizeLngLat(worldToLngLatSafe(city, point), null)
+  if (coords !== DEFAULT_LNGLAT) return coords
+  const fallbackPoint = finitePoint(fallback, DEFAULT_WORLD_POINT)
+  return normalizeLngLat(worldToLngLatSafe(city, fallbackPoint), DEFAULT_LNGLAT)
 }
 
 function routeGeoJSON(city, route) {
@@ -169,10 +194,12 @@ function placeAccessSummary(place) {
 }
 
 function cityMapGeoJSON(city) {
+  const roads = Array.isArray(city?.roads) ? city.roads : []
+  const landmarks = Array.isArray(city?.landmarks) ? city.landmarks : []
   return {
     type: 'FeatureCollection',
     features: [
-      ...city.roads.map(road => ({
+      ...roads.map(road => ({
         type: 'Feature',
         properties: {
           layer: 'road',
@@ -184,23 +211,28 @@ function cityMapGeoJSON(city) {
         geometry: {
           type: 'LineString',
           coordinates: road.axis === 'x'
-            ? [city.worldToLngLat(road.from, road.z), city.worldToLngLat(road.to, road.z)]
-            : [city.worldToLngLat(road.x, road.from), city.worldToLngLat(road.x, road.to)],
+            ? [safeLngLat(city, road.from, road.z), safeLngLat(city, road.to, road.z)]
+            : [safeLngLat(city, road.x, road.from), safeLngLat(city, road.x, road.to)],
         },
       })),
-      ...city.landmarks.map(place => ({
+      ...landmarks.filter(hasFinitePoint).map(place => ({
         type: 'Feature',
         properties: { layer: 'place', id: place.id, name: place.name, kind: place.kind },
-        geometry: { type: 'Point', coordinates: city.worldToLngLat(place.x, place.z) },
+        geometry: { type: 'Point', coordinates: safeLngLat(city, place.x, place.z) },
       })),
     ],
   }
 }
 
 function buildingGeoJSON(city) {
+  const buildings = Array.isArray(city?.buildings) ? city.buildings : []
   return {
     type: 'FeatureCollection',
-    features: city.buildings.map(building => {
+    features: buildings.filter(building =>
+      hasFinitePoint(building) &&
+      Number.isFinite(Number(building.w)) &&
+      Number.isFinite(Number(building.d)),
+    ).map(building => {
       const x1 = building.x - building.w / 2
       const x2 = building.x + building.w / 2
       const z1 = building.z - building.d / 2
@@ -211,11 +243,11 @@ function buildingGeoJSON(city) {
         geometry: {
           type: 'Polygon',
           coordinates: [[
-            city.worldToLngLat(x1, z1),
-            city.worldToLngLat(x2, z1),
-            city.worldToLngLat(x2, z2),
-            city.worldToLngLat(x1, z2),
-            city.worldToLngLat(x1, z1),
+            safeLngLat(city, x1, z1),
+            safeLngLat(city, x2, z1),
+            safeLngLat(city, x2, z2),
+            safeLngLat(city, x1, z2),
+            safeLngLat(city, x1, z1),
           ]],
         },
       }
@@ -437,11 +469,15 @@ function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSample
 
   useEffect(() => {
     if (!map.current) return
-    map.current.jumpTo({
-      center: safeLngLat(city, safePlayer.x, safePlayer.z),
-      bearing: (viewHeading * 180) / Math.PI,
-      zoom: 13.6,
-    })
+    try {
+      map.current.jumpTo({
+        center: safeLngLat(city, safePlayer.x, safePlayer.z),
+        bearing: finiteNumber((viewHeading * 180) / Math.PI, 0),
+        zoom: 13.6,
+      })
+    } catch (error) {
+      console.warn('Skipped minimap camera update because MapLibre rejected the GPS fix.', error)
+    }
   }, [city, safePlayer.x, safePlayer.z, viewHeading])
 
   useEffect(() => {
