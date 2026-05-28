@@ -497,6 +497,8 @@ async function inspectCityNorms(page) {
       landmarkCount: city.landmarks.length,
       namedRoads: city.roads.filter(road => road.name).length,
       landmarkAddresses: city.landmarks.filter(place => place.address && place.roadName).length,
+      landmarkGameplayRoles: city.landmarks.filter(place => place.gameplayRole && place.kind && place.address).length,
+      landmarkAccessPlans: city.landmarks.filter(place => place.interior?.solidWalls && place.interior?.entryRule && place.interior?.floorDirectory?.length >= 1).length,
       buildingAddresses: city.buildings.filter(building => building.address && building.roadName).length,
       addressBookEntries: (city.addressBook || []).filter(place => place.address && place.roadName && typeof place.x === 'number' && typeof place.z === 'number').length,
       buildingRoadConflicts: buildingRoadConflicts.length,
@@ -546,6 +548,8 @@ async function inspectCityNorms(page) {
   assert(norms, 'City metadata was not exposed for norm verification')
   assert(norms.namedRoads === norms.roads, 'Not every road has a street name')
   assert(norms.landmarkAddresses >= 9, 'Landmarks did not receive road-name addresses')
+  assert(norms.landmarkGameplayRoles === norms.landmarkCount, `Landmark place-meaning metadata is incomplete: ${norms.landmarkGameplayRoles}/${norms.landmarkCount}`)
+  assert(norms.landmarkAccessPlans >= 9, `Landmark access/interior meaning is incomplete: ${norms.landmarkAccessPlans}/${norms.landmarkCount}`)
   assert(norms.buildingAddresses > 100, 'Buildings did not receive road-name addresses')
   assert(norms.addressBookEntries > 100, 'Address book did not expose routable street addresses')
   assert(norms.buildingZoningReady === norms.buildingCount, 'Building zoning metadata is incomplete or outside buildable envelopes')
@@ -2304,6 +2308,16 @@ async function main() {
     assert(await page.locator('.full-map-navigation-card').count() === 1, 'Full map did not render the live navigation card')
     const idleNavigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
     assert(/live navigation/i.test(idleNavigationText), `Full map navigation card is incomplete: ${idleNavigationText}`)
+    assert(await page.locator('.full-map-place-card').count() === 1, 'Full map did not render the place intel card')
+    const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
+    assert(/place intel|access|distance|live/i.test(placeText), `Full map place intel card is incomplete: ${placeText}`)
+    assert(await page.locator('.full-map-place-button').count() >= 6, 'Full map did not render a nearby place directory')
+    const placeBefore = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
+    await page.locator('.full-map-place-button').nth(1).click()
+    const placeAfter = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
+    assert(placeBefore !== placeAfter, `Full map place directory did not change selected place: ${placeBefore}`)
+    await page.locator('.full-map-controls button', { hasText: 'GPS' }).click()
+    await page.waitForFunction(() => document.querySelector('.full-city-map')?.getAttribute('data-follow') === 'true', null, { timeout: 5000 })
     const zoomBefore = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
     await page.locator('.full-map-controls button[aria-label="Zoom in"]').click()
     await page.waitForFunction(previous => {

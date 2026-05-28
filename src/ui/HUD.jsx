@@ -138,6 +138,36 @@ function routeDestinationLabel(mission, ride) {
   return 'No active destination'
 }
 
+function distance2d(a, b) {
+  return Math.hypot(finiteNumber(a?.x) - finiteNumber(b?.x), finiteNumber(a?.z) - finiteNumber(b?.z))
+}
+
+function nearestLandmark(city, point) {
+  return [...(city.landmarks || [])]
+    .filter(hasFinitePoint)
+    .sort((a, b) => distance2d(a, point) - distance2d(b, point))[0] || null
+}
+
+function placeActivitySummary(place, pedestrianSamples = [], vehicleSamples = []) {
+  if (!place) return { npcs: 0, vehicles: 0, taxis: 0, radius: 120 }
+  const radius = Math.max(85, Math.min(170, (place.radius || 20) * 3.2))
+  const near = item => hasFinitePoint(item) && distance2d(item, place) <= radius
+  return {
+    radius,
+    npcs: pedestrianSamples.filter(near).length,
+    vehicles: vehicleSamples.filter(near).length,
+    taxis: vehicleSamples.filter(item => near(item) && item.kind === 'taxi').length,
+  }
+}
+
+function placeAccessSummary(place) {
+  if (!place) return 'Unknown access'
+  const floors = place.interior?.floorCount || place.interior?.floors || 1
+  const core = place.interior?.verticalCore || 'front door'
+  const entry = place.interior?.entryRule || place.entryRule || 'front-door'
+  return `${entry.replaceAll('-', ' ')} / ${floors}F / ${core}`
+}
+
 function cityMapGeoJSON(city) {
   return {
     type: 'FeatureCollection',
@@ -891,6 +921,8 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
   const taxiPose = activeTaxiPose(mission, ride)
   const taxi = hasFinitePoint(taxiPose) ? taxiPose : null
   const taxiHeading = taxi ? (finiteNumber(taxi.heading ?? taxi.yaw, 0) * 180) / Math.PI : 0
+  const nearestPlace = useMemo(() => nearestLandmark(city, safePlayer), [city, safePlayer.x, safePlayer.z])
+  const [selectedPlaceId, setSelectedPlaceId] = useState(() => nearestPlace?.id || city.landmarks?.[0]?.id || null)
   const [zoom, setZoom] = useState(1)
   const [center, setCenter] = useState(() => clampMapCenter(safePlayer, 1))
   const [followGps, setFollowGps] = useState(true)
@@ -922,11 +954,28 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
   const routeDestination = routeDestinationLabel(mission, ride)
   const routeStart = routePoints[0]
   const routeEnd = routePoints[routePoints.length - 1]
+  const selectedPlace = useMemo(
+    () => city.landmarks.find(place => place.id === selectedPlaceId) || nearestPlace || city.landmarks[0] || null,
+    [city.landmarks, selectedPlaceId, nearestPlace],
+  )
+  const placeDirectory = useMemo(() => [...city.landmarks]
+    .filter(hasFinitePoint)
+    .sort((a, b) => distance2d(a, safePlayer) - distance2d(b, safePlayer))
+    .slice(0, 10), [city.landmarks, safePlayer.x, safePlayer.z])
+  const selectedPlaceActivity = useMemo(
+    () => placeActivitySummary(selectedPlace, pedestrianSamples, vehicleSamples),
+    [selectedPlace, pedestrianSamples, vehicleSamples],
+  )
+  const selectedPlaceDistance = selectedPlace ? distance2d(selectedPlace, safePlayer) : 0
 
   useEffect(() => {
     if (!followGps) return
     setCenter(clampMapCenter(safePlayer, zoom))
   }, [followGps, safePlayer.x, safePlayer.z, zoom])
+
+  useEffect(() => {
+    if (!selectedPlaceId && nearestPlace?.id) setSelectedPlaceId(nearestPlace.id)
+  }, [nearestPlace?.id, selectedPlaceId])
 
   const changeZoom = useCallback((factor) => {
     const nextZoom = clamp(zoom * factor, 0.82, 5.2)
@@ -1086,7 +1135,18 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
             ) : null}
             <g className="full-map-landmarks">
               {city.landmarks.map(place => (
-                <g key={place.id} transform={`translate(${place.x} ${place.z})`}>
+                <g
+                  key={place.id}
+                  className={place.id === selectedPlace?.id ? 'selected' : ''}
+                  transform={`translate(${place.x} ${place.z})`}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation()
+                    setSelectedPlaceId(place.id)
+                    setFollowGps(false)
+                    setCenter(clampMapCenter(place, zoom))
+                  }}
+                >
                   <circle r={place.kind === 'park' ? 25 : 17} fill={placeColor(place.kind)} />
                   <text x="24" y="7">{place.name}</text>
                   {place.address ? <text className="address" x="24" y="29">{place.address}</text> : null}
@@ -1131,6 +1191,37 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
             <small>{gps.address}</small>
             <small>{formatCoordinate(gps.lat)}N / {formatCoordinate(gps.lng)}E</small>
           </aside>
+          {selectedPlace ? (
+            <aside className="full-map-place-card" data-place-id={selectedPlace.id}>
+              <span>Place intel</span>
+              <strong>{selectedPlace.name}</strong>
+              <small>{selectedPlace.address || selectedPlace.roadName} / {selectedPlace.district || 'RealCity'}</small>
+              <p>{selectedPlace.gameplayRole || `${selectedPlace.kind} destination`}</p>
+              <dl>
+                <div><dt>Access</dt><dd>{placeAccessSummary(selectedPlace)}</dd></div>
+                <div><dt>Distance</dt><dd>{formatMeters(selectedPlaceDistance)}</dd></div>
+                <div><dt>Live</dt><dd>{selectedPlaceActivity.npcs} NPC / {selectedPlaceActivity.vehicles} cars / {selectedPlaceActivity.taxis} taxis</dd></div>
+              </dl>
+              <div className="full-map-place-list" aria-label="Nearby places">
+                {placeDirectory.slice(0, 6).map(place => (
+                  <button
+                    type="button"
+                    key={place.id}
+                    className="full-map-place-button"
+                    data-active={place.id === selectedPlace.id ? 'true' : 'false'}
+                    onClick={() => {
+                      setSelectedPlaceId(place.id)
+                      setFollowGps(false)
+                      setCenter(clampMapCenter(place, zoom))
+                    }}
+                  >
+                    <i style={{ background: placeColor(place.kind) }} />
+                    <span>{place.name}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+          ) : null}
           <aside className="full-map-navigation-card" data-has-route={routeHasNavigation ? 'true' : 'false'}>
             <span>Live navigation</span>
             <strong>{routeHasNavigation ? routePhase : 'No active route'}</strong>

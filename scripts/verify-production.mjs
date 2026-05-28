@@ -157,6 +157,10 @@ async function main() {
     assert(await page.locator('.full-map-navigation-card').count() === 1, 'Production full map navigation card is missing')
     const navigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
     assert(/live navigation/i.test(navigationText), `Production full map navigation card is incomplete: ${navigationText}`)
+    assert(await page.locator('.full-map-place-card').count() === 1, 'Production full map place intel card is missing')
+    const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
+    assert(/place intel|access|distance|live/i.test(placeText), `Production full map place intel card is incomplete: ${placeText}`)
+    assert(await page.locator('.full-map-place-button').count() >= 6, 'Production full map nearby place directory is missing')
     const fullMapStats = {
       buildingFootprints: await page.locator('.full-map-buildings rect').count(),
       liveVehicles: await page.locator('.full-map-live-vehicles rect').count(),

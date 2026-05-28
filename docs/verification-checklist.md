@@ -43,6 +43,9 @@ audit has a clear finish line.
   following another car.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
+- Place meaning: every landmark exposes a gameplay role, address, access plan,
+  and full-map place intel card with nearby activity counts and selectable
+  place directory entries.
 - NPC identity and autonomy metadata: all NPCs must expose unique names,
   persona signatures, appearance signatures, jobs, speech styles, home/work/
   third-place schedule data, needs, memories, and relationship state.
