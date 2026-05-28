@@ -343,7 +343,10 @@ async function getTaxiRouteState(page) {
   })
 }
 
-async function inspectCanvas(page) {
+async function inspectCanvas(page, options = {}) {
+  const minWidth = options.minWidth ?? 600
+  const minHeight = options.minHeight ?? 400
+  const minDataUrlLength = options.minDataUrlLength ?? 20000
   const canvases = await page.evaluate(() => Array.from(document.querySelectorAll('canvas')).map((canvas, index) => {
     const rect = canvas.getBoundingClientRect()
     let dataUrlLength = 0
@@ -366,9 +369,9 @@ async function inspectCanvas(page) {
 
   const largest = [...canvases].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0]
   assert(largest, 'No canvas was rendered')
-  assert(largest.width >= 600 && largest.height >= 400, `Main canvas is too small: ${largest.width}x${largest.height}`)
+  assert(largest.width >= minWidth && largest.height >= minHeight, `Main canvas is too small: ${largest.width}x${largest.height}`)
   assert(!largest.sampleError, `Canvas pixel sample failed: ${largest.sampleError}`)
-  assert(largest.dataUrlLength > 20000, `Canvas appears blank or too small: data URL length ${largest.dataUrlLength}`)
+  assert(largest.dataUrlLength > minDataUrlLength, `Canvas appears blank or too small: data URL length ${largest.dataUrlLength}`)
   return { canvases, largest }
 }
 
@@ -1864,6 +1867,108 @@ async function inspectPlayerPhysicsAndCollision(page) {
   }
 }
 
+async function inspectResponsivePerformance(browser) {
+  const mobileErrors = []
+  const mobilePageErrors = []
+  const mobile = await browser.newPage({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 1,
+    isMobile: true,
+  })
+  mobile.on('console', message => {
+    if (message.type() === 'error') mobileErrors.push(message.text())
+  })
+  mobile.on('pageerror', error => mobilePageErrors.push(error.message))
+
+  try {
+    await mobile.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45000 })
+    await mobile.locator('canvas').first().waitFor({ state: 'visible', timeout: 30000 })
+    await mobile.locator('.prompt-stack').waitFor({ state: 'visible', timeout: 12000 })
+    await mobile.waitForTimeout(2200)
+
+    const canvas = await inspectCanvas(mobile, {
+      minWidth: 320,
+      minHeight: 640,
+      minDataUrlLength: 12000,
+    })
+    const layout = await mobile.evaluate(() => {
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      const selectors = ['.time-card', '.compass', '.prompt-stack', '.map-shell', '.phone-toggle', '.agent-card']
+      const rectFor = selector => {
+        const node = document.querySelector(selector)
+        if (!node) return null
+        const style = window.getComputedStyle(node)
+        const rect = node.getBoundingClientRect()
+        return {
+          selector,
+          visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+          withinViewport: rect.left >= -1 && rect.top >= -1 && rect.right <= viewport.width + 1 && rect.bottom <= viewport.height + 1,
+        }
+      }
+      const rects = selectors.map(rectFor).filter(Boolean)
+      const bySelector = Object.fromEntries(rects.map(rect => [rect.selector, rect]))
+      const overlapRatio = (a, b) => {
+        if (!a || !b) return 0
+        const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
+        const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
+        const area = width * height
+        const smallest = Math.max(1, Math.min(a.width * a.height, b.width * b.height))
+        return area / smallest
+      }
+      const pairs = [
+        ['.time-card', '.compass'],
+        ['.prompt-stack', '.phone-toggle'],
+        ['.prompt-stack', '.agent-card'],
+        ['.map-shell', '.phone-toggle'],
+      ].map(([a, b]) => ({ a, b, ratio: overlapRatio(bySelector[a], bySelector[b]) }))
+      const overflowingText = Array.from(document.querySelectorAll('.prompt-stack button, .time-card, .agent-card'))
+        .filter(node => node.scrollWidth > node.clientWidth + 3 || node.scrollHeight > node.clientHeight + 8)
+        .map(node => ({
+          className: node.className,
+          text: node.textContent?.trim().slice(0, 80),
+          scrollWidth: node.scrollWidth,
+          clientWidth: node.clientWidth,
+          scrollHeight: node.scrollHeight,
+          clientHeight: node.clientHeight,
+        }))
+      const canvasRect = document.querySelector('canvas')?.getBoundingClientRect()
+      return { viewport, rects, pairs, overflowingText, canvasRect }
+    })
+
+    assert(layout.viewport.width === 390 && layout.viewport.height === 844, `Mobile viewport was not applied: ${JSON.stringify(layout.viewport)}`)
+    assert(layout.canvasRect?.width >= 380 && layout.canvasRect?.height >= 820, `Mobile canvas does not fill the viewport: ${JSON.stringify(layout.canvasRect)}`)
+    const offscreen = layout.rects.filter(rect => rect.visible && !rect.withinViewport)
+    assert(offscreen.length === 0, `Mobile HUD elements overflow the viewport: ${JSON.stringify(offscreen)}`)
+    const badOverlaps = layout.pairs.filter(pair => pair.ratio > 0.08)
+    assert(badOverlaps.length === 0, `Mobile HUD elements overlap too much: ${JSON.stringify(badOverlaps)}`)
+    assert(layout.overflowingText.length === 0, `Mobile HUD text overflows its containers: ${JSON.stringify(layout.overflowingText)}`)
+    assert(mobileErrors.length === 0, `Mobile console errors were reported: ${mobileErrors.join(' | ')}`)
+    assert(mobilePageErrors.length === 0, `Mobile page errors were reported: ${mobilePageErrors.join(' | ')}`)
+
+    return {
+      viewport: layout.viewport,
+      canvas: canvas.largest,
+      hudRects: layout.rects.map(rect => ({
+        selector: rect.selector,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+      })),
+      maxOverlapRatio: Number(Math.max(0, ...layout.pairs.map(pair => pair.ratio)).toFixed(3)),
+      textOverflowCount: layout.overflowingText.length,
+    }
+  } finally {
+    await mobile.close()
+  }
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -2158,6 +2263,7 @@ async function main() {
     await page.screenshot({ path: screenshotPath, fullPage: false })
     const phoneDirectTaxi = await inspectPhoneDirectTaxiDispatch(page)
     const phoneSocialActions = await inspectPhoneSocialActions(page)
+    const responsivePerformance = await inspectResponsivePerformance(browser)
     assert(consoleErrors.length === 0, `Console errors were reported: ${consoleErrors.join(' | ')}`)
     assert(pageErrors.length === 0, `Page errors were reported: ${pageErrors.join(' | ')}`)
 
@@ -2186,6 +2292,7 @@ async function main() {
       phoneDirectTaxi,
       phoneSocialActions,
       walkingEscort,
+      responsivePerformance,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),

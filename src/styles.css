@@ -1831,9 +1831,9 @@ button.key-prompt {
   }
 
   .agent-card {
-    top: auto;
+    top: 174px;
     right: 14px;
-    bottom: 18px;
+    bottom: auto;
     width: 172px;
     padding: 13px;
   }

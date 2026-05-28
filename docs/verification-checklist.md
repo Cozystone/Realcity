@@ -53,6 +53,9 @@ audit has a clear finish line.
 - Player physics: the harness jumps with Space and confirms an arc plus gravity
   return, then drives the avatar into a blocked building side wall and confirms
   the player cannot clip into the solid footprint.
+- Responsive performance: the harness opens a mobile-like viewport, checks the
+  WebGL canvas pixel sample, verifies core HUD controls stay inside the viewport,
+  and confirms key UI text does not overflow or overlap.
 - Artifacts: `.verification/realcity-last-run.json` and
   `.verification/realcity-last-run.png` record the last local verification run.
 
@@ -97,8 +100,8 @@ audit has a clear finish line.
   and confirm the visible route feels natural around crossings and entrances.
 - Physics feel visual pass: manually sample jump timing, slopes, collisions with
   vehicles/NPCs, and wall contact so the verified physics also feels natural.
-- Performance: test desktop and mobile-like viewports for stable frame pacing,
-  readable HUD, and no overlapping UI.
+- Performance visual pass: sample desktop and small viewports interactively for
+  frame pacing, readable HUD, and no distracting overlap during active play.
 - Deployment: Vercel preview must be READY, load the city, show the minimap, and
   avoid local-only Ollama network calls on `*.vercel.app`.
 - Local resources: after verification, no leftover Vite dev server, browser, or
