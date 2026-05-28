@@ -28,6 +28,12 @@ audit has a clear finish line.
   for pedestrian/traffic/address rules.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
+- NPC identity and autonomy metadata: all NPCs must expose unique names,
+  persona signatures, appearance signatures, jobs, speech styles, home/work/
+  third-place schedule data, needs, memories, and relationship state.
+- Daily routine: the harness jumps city time through morning commute, workday,
+  evening third-place time, and night; tracked NPCs must change scheduled target
+  and activity across the day.
 - Building variety: the city data must expose many massing profiles, multiple
   house profiles, multiple house roof types, and visible house accessories such
   as porches, garages, chimneys, and wings.
@@ -46,9 +52,8 @@ audit has a clear finish line.
 
 ## Manual Or Final-Audit Items
 
-- NPC identity: sample at least 10 agents and confirm each has a distinct name,
-  gender, age, job, personality, current activity, home/work/third-place loop,
-  and visible movement state.
+- NPC identity visual pass: sample at least 10 agents in the rendered city and
+  confirm each distinct data profile is readable at normal street distance.
 - Human model readability: confirm player and NPCs have visible front-facing
   face cues, hair/back cues, clothing detail, hands/feet, and readable walking
   direction at street-camera distance.
@@ -78,8 +83,8 @@ audit has a clear finish line.
 - Entrance routing: request taxi or walking escorts to solid landmarks and
   confirm arrival happens at the entrance apron, not through the side wall or
   building center.
-- Daily routine: accelerate or observe city time across morning, work, third
-  place, and night slots; agents should change destinations by schedule.
+- Daily routine visual pass: observe several named agents over time and confirm
+  the visible walking routes match their schedule changes.
 - Taxi route: request taxi escorts to at least three distant landmarks and
   confirm boarding, ride, arrival, and mission completion.
 - Walking route: request a nearby walking escort and confirm the NPC leads while

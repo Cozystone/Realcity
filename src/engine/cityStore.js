@@ -161,6 +161,15 @@ export const useCityStore = create((set, get) => ({
     })
   },
 
+  setClock(timeMinutes, day) {
+    const minutes = Number.isFinite(Number(timeMinutes)) ? Number(timeMinutes) : get().timeMinutes
+    const normalized = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
+    set({
+      timeMinutes: normalized,
+      day: Number.isFinite(Number(day)) ? Math.max(1, Math.floor(Number(day))) : get().day,
+    })
+  },
+
   setPlayer(player) {
     const current = get().player
     if (

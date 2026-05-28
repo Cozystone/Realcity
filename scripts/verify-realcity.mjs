@@ -1096,6 +1096,101 @@ async function inspectAgentAutonomy(page) {
   return result
 }
 
+async function inspectDailyRoutineTimeShift(page) {
+  const original = await page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state ? { timeMinutes: state.timeMinutes, day: state.day } : null
+  })
+  assert(original, 'City clock store was not exposed for routine verification')
+
+  const checkpoints = [
+    { label: 'morning-commute', minutes: 6.8 * 60 },
+    { label: 'workday', minutes: 10.4 * 60 },
+    { label: 'evening-third-place', minutes: 19.2 * 60 },
+    { label: 'night-home', minutes: 22.7 * 60 },
+  ]
+
+  const phases = []
+  try {
+    for (const checkpoint of checkpoints) {
+      await page.evaluate(({ minutes, day }) => {
+        const store = window.__REALCITY_STORE__?.getState()
+        store?.setClock?.(minutes, day)
+      }, { minutes: checkpoint.minutes, day: original.day })
+      await page.waitForFunction(({ minutes }) => {
+        const state = window.__REALCITY_STORE__?.getState()
+        const samples = state?.pedestrianSamples || []
+        return Math.abs((state?.timeMinutes || 0) - minutes) < 5 &&
+          samples.length > 100 &&
+          samples.filter(sample =>
+            sample.scheduleTarget &&
+            sample.scheduleActivity &&
+            Math.abs((sample.sampleTimeMinutes || 0) - minutes) < 5
+          ).length > 100
+      }, checkpoint, { timeout: 10000 })
+      await page.waitForTimeout(650)
+      phases.push(await page.evaluate(label => {
+        const state = window.__REALCITY_STORE__?.getState()
+        const samples = state?.pedestrianSamples || []
+        const counts = values => values.reduce((acc, value) => {
+          const key = value || 'unknown'
+          acc[key] = (acc[key] || 0) + 1
+          return acc
+        }, {})
+        return {
+          label,
+          timeMinutes: Number((state.timeMinutes || 0).toFixed(1)),
+          sampleTimeMinutes: samples[0]?.sampleTimeMinutes ?? null,
+          samples: samples.length,
+          scheduleTargets: counts(samples.map(sample => sample.scheduleTarget)),
+          scheduleActivities: counts(samples.map(sample => sample.scheduleActivity)),
+          tracked: samples.slice(0, 80).map(sample => ({
+            id: sample.id,
+            target: sample.scheduleTarget,
+            activity: sample.scheduleActivity,
+            placeName: sample.targetName || sample.placeName,
+            currentIntent: sample.currentIntent,
+          })),
+        }
+      }, checkpoint.label))
+    }
+  } finally {
+    await page.evaluate(originalClock => {
+      const store = window.__REALCITY_STORE__?.getState()
+      store?.setClock?.(originalClock.timeMinutes, originalClock.day)
+    }, original)
+  }
+
+  const targetTotal = (phase, target) => phase.scheduleTargets[target] || 0
+  const activityText = phase => Object.keys(phase.scheduleActivities).join(' | ')
+  assert(targetTotal(phases[1], 'work') > 45, `Workday schedule did not route enough NPCs to work: ${JSON.stringify(phases[1].scheduleTargets)}`)
+  assert(targetTotal(phases[2], 'third') > 35, `Evening schedule did not route enough NPCs to third places: ${JSON.stringify(phases[2].scheduleTargets)}`)
+  assert(targetTotal(phases[3], 'home') > 45, `Night schedule did not route enough NPCs home: ${JSON.stringify(phases[3].scheduleTargets)}`)
+  assert(/commuting|on shift|class|working|customers|social time|errands|home life/.test(phases.map(activityText).join(' | ')), `Schedule activities are too generic: ${JSON.stringify(phases.map(phase => phase.scheduleActivities))}`)
+
+  const byAgent = new Map()
+  for (const phase of phases) {
+    for (const sample of phase.tracked) {
+      if (!byAgent.has(sample.id)) byAgent.set(sample.id, [])
+      byAgent.get(sample.id).push(`${sample.target}:${sample.activity}`)
+    }
+  }
+  const changingAgents = [...byAgent.values()].filter(values => new Set(values).size >= 3).length
+  assert(changingAgents >= 48, `Too few tracked NPCs change schedule states across the day: ${changingAgents}`)
+
+  return {
+    checkpoints: phases.map(phase => ({
+      label: phase.label,
+      timeMinutes: phase.timeMinutes,
+      sampleTimeMinutes: phase.sampleTimeMinutes,
+      scheduleTargets: phase.scheduleTargets,
+      scheduleActivities: phase.scheduleActivities,
+    })),
+    changingAgents,
+    original,
+  }
+}
+
 async function inspectStreetRendering(page) {
   await page.waitForFunction(() => {
     const rendering = window.__REALCITY_RENDERING__
@@ -1410,6 +1505,7 @@ async function main() {
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
+    const dailyRoutine = await inspectDailyRoutineTimeShift(page)
     const streetRendering = await inspectStreetRendering(page)
     const automaticDoors = await inspectAutomaticDoors(page)
     const interiorState = await inspectInteriorStateAndFloors(page)
@@ -1662,6 +1758,7 @@ async function main() {
       skyState,
       collisionAndMaterials,
       agentAutonomy,
+      dailyRoutine,
       streetRendering,
       automaticDoors,
       interiorState,
