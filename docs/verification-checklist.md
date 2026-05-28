@@ -40,6 +40,9 @@ audit has a clear finish line.
 - Random avatar task: the harness chooses a random destination task, asks a
   nearby NPC to take the player there, waits for an escort mission, and verifies
   meaningful player travel plus arrival/completion text.
+- Walking route: the harness asks a nearby NPC to walk to a close address,
+  verifies the mission stays in walking mode, tracks stable sidewalk route
+  samples, keeps the avatar close enough to follow, and confirms clean arrival.
 - Runtime cleanliness: browser console errors and page errors must be empty.
 - Automatic doors: landmark/procedural building entries expose two sliding
   glass panels; the harness moves the avatar near an entrance, confirms the
@@ -87,8 +90,8 @@ audit has a clear finish line.
   the visible walking routes match their schedule changes.
 - Taxi route: request taxi escorts to at least three distant landmarks and
   confirm boarding, ride, arrival, and mission completion.
-- Walking route: request a nearby walking escort and confirm the NPC leads while
-  the player can follow.
+- Walking route visual pass: request several different nearby walking escorts
+  and confirm the visible route feels natural around crossings and entrances.
 - Physics feel: verify jumping, gravity, terrain height, and building collision
   stay stable without clipping through major buildings.
 - Performance: test desktop and mobile-like viewports for stable frame pacing,

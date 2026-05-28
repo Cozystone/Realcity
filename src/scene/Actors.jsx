@@ -107,6 +107,16 @@ function sidewalkAccessForPlace(place, offset = { x: 0, z: 0 }, roads = []) {
 function entranceTargetFor(destination, roads = [], offset = { x: 0, z: 0 }) {
   const interior = destination?.interior
   if (!interior) {
+    const sidewalkAccess = roads?.length ? sidewalkAccessForPlace(destination, offset, roads) : null
+    if (sidewalkAccess) {
+      return {
+        ...sidewalkAccess,
+        placeName: destination.name,
+        address: destination.address,
+        roadName: destination.roadName || sidewalkAccess.roadName,
+        entryRule: 'road-sidewalk-access',
+      }
+    }
     const x = destination.x
     const z = destination.z
     return {
@@ -1411,13 +1421,15 @@ class Agent {
           agent: this.snapshot(),
         })
         this.mission = null
+        this.debugSpeedScale = 1
         return 'dwelling'
       }
     }
 
     this.activity = 'guiding player'
-    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace, city)
-    if (distance < 3.2) {
+    const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace * (this.debugSpeedScale || 1), city)
+    const arrivalRadius = destination.entryRule === 'road-sidewalk-access' ? 24 : 4.2
+    if (distance < arrivalRadius) {
       this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
       store.finishMission(`${this.name} guided you to ${destination.name}.`)
       store.showDialogue({
@@ -1427,6 +1439,7 @@ class Agent {
         agent: this.snapshot(),
       })
       this.mission = null
+      this.debugSpeedScale = 1
       return 'dwelling'
     }
     return 'walking'
@@ -3167,7 +3180,7 @@ function NPCs({ city }) {
       }
 
       const destination = destinationFromPlan(plan, best, places, request, destinations)
-      const destinationTarget = entranceTargetFor(destination)
+      const destinationTarget = entranceTargetFor(destination, city.roads, best.offset)
       const distance = Math.hypot(destinationTarget.x - store.player.x, destinationTarget.z - store.player.z)
       const mode = plan.mode === 'taxi' || distance > 420 ? 'taxi' : 'walk'
       const mission = {
@@ -3242,11 +3255,46 @@ function NPCs({ city }) {
       }
     }
 
+    const debugPlaceNpc = (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const agent = agents.find(item => item.id === detail.id)
+      const x = Number(detail.x)
+      const z = Number(detail.z)
+      if (!agent || !Number.isFinite(x) || !Number.isFinite(z)) return false
+      agent.pos.set(x, terrainHeight(x, z) + 0.95, z)
+      agent.heading = Number.isFinite(Number(detail.heading)) ? Number(detail.heading) : agent.heading
+      agent.walkRoute = null
+      agent.walkPlan = null
+      agent.mission = null
+      agent.selfTaxi = null
+      agent.boardingTaxi = null
+      agent.stuckTimer = 0
+      agent.blockedContacts = 0
+      agent.bumpTimer = 0
+      agent.fallTimer = 0
+      agent.bumpVelocity.set(0, 0)
+      agent.activity = detail.activity || 'available for directions'
+      agent.placeName = detail.placeName || 'verification sidewalk'
+      agent.currentIntent = 'ready to guide the player on foot'
+      agent.talkTimer = 0
+      agent.debugSpeedScale = Number.isFinite(Number(detail.speedScale)) ? Math.max(1, Number(detail.speedScale)) : 1
+      return true
+    }
+    const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
+
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc }
+      window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
+    }
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
     window.addEventListener('realcity:player-hit-npc', onNpcHit)
     window.addEventListener('realcity:taxi-board-requested', onTaxiBoardRequested)
     return () => {
+      if (import.meta.env.DEV && typeof window !== 'undefined') {
+        window.removeEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
+        if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
+      }
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('realcity:npc-request', onNpcRequest)
       window.removeEventListener('realcity:player-hit-npc', onNpcHit)

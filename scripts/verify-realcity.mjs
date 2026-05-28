@@ -894,6 +894,262 @@ async function inspectPhoneSocialActions(page) {
   }
 }
 
+async function inspectWalkingEscort(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_CITY__ &&
+    !!window.__REALCITY_STORE__ &&
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace &&
+    !!window.__REALCITY_NPC_DEBUG__?.placeNpc &&
+    (window.__REALCITY_STORE__?.getState()?.pedestrianSamples || []).length > 80
+  , null, { timeout: 10000 })
+
+  const setup = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const store = window.__REALCITY_STORE__?.getState()
+    if (!city || !store) return null
+    if (store.mission) store.finishMission('Walking escort verification reset.')
+    if (store.ride) store.finishRide('Walking escort verification reset.')
+    store.closeInteraction?.()
+
+    const player = store.player || { x: 0, z: 40, heading: Math.PI }
+    const samples = [...(store.pedestrianSamples || [])]
+      .filter(sample => sample.id && !/taxi|riding|fallen|stumbling|boarding/i.test(sample.state || ''))
+    const agent = samples.find(sample => sample.routeMode !== 'crosswalk-crossing') || samples[0]
+    if (!agent) return { error: 'no-walk-agent', player, sampleCount: samples.length }
+    const npc = (city.npcs || []).find(item => item.id === agent.id)
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
+    const walkPlaces = [...(city.addressBook || []), ...(city.landmarks || [])]
+      .filter(place => place?.id && (place.address || place.name) && Number.isFinite(place.x) && Number.isFinite(place.z))
+      .map(place => {
+        const road = (city.roads || []).find(item => item.id === place.roadId || item.name === place.roadName)
+        if (!road) return null
+        const privatePlace = /residence|house|home/i.test(`${place.name || ''} ${place.kind || ''} ${place.buildingType || ''}`)
+        const side = road.axis === 'x'
+          ? (place.z >= road.z ? 1 : -1)
+          : (place.x >= road.x ? 1 : -1)
+        const startDistance = 54
+        let start
+        if (road.axis === 'x') {
+          let sx = clamp(place.x - startDistance, road.from + 14, road.to - 14)
+          if (Math.abs(sx - place.x) < 32) sx = clamp(place.x + startDistance, road.from + 14, road.to - 14)
+          start = { x: sx, z: road.z + side * (road.width / 2 + 5.2) }
+        } else {
+          let sz = clamp(place.z - startDistance, road.from + 14, road.to - 14)
+          if (Math.abs(sz - place.z) < 32) sz = clamp(place.z + startDistance, road.from + 14, road.to - 14)
+          start = { x: road.x + side * (road.width / 2 + 5.2), z: sz }
+        }
+        const agentDistance = Math.hypot(place.x - start.x, place.z - start.z)
+        return {
+          ...place,
+          road,
+          start,
+          side,
+          privatePlace,
+          distance: Math.hypot(place.x - player.x, place.z - player.z),
+          agentDistance,
+          score: Math.abs(agentDistance - 58) + (privatePlace ? 35 : 0),
+        }
+      })
+      .filter(Boolean)
+      .filter(place => place.agentDistance >= 36 && place.agentDistance <= 90)
+      .sort((a, b) => a.score - b.score)
+    const target = walkPlaces[0]
+    if (!target) return { error: 'no-nearby-walk-target', player, sampleCount: samples.length }
+
+    const label = target.address || target.name
+    const request = `Please walk with me to ${label}. Stay on sidewalks and stop at the entrance.`
+    const heading = Math.atan2(target.x - target.start.x, target.z - target.start.z)
+    window.__REALCITY_NPC_DEBUG__?.placeNpc?.({
+      id: agent.id,
+      x: target.start.x,
+      z: target.start.z,
+      heading,
+      activity: 'available for walking directions',
+      placeName: `${target.road.name} sidewalk`,
+      speedScale: 4.2,
+    })
+    window.__REALCITY_PLAYER_RIG__?.debugPlace?.({
+      x: target.start.x + Math.sin(heading + Math.PI / 2) * 6.2,
+      z: target.start.z + Math.cos(heading + Math.PI / 2) * 6.2,
+      heading,
+    })
+    return {
+      agentId: agent.id,
+      agentName: npc?.name || agent.id,
+      targetId: target.id,
+      targetLabel: label,
+      targetDistance: target.distance,
+      agentTargetDistance: target.agentDistance,
+      sameRoad: true,
+      roadName: target.road.name,
+      request,
+      originalPlayer: {
+        x: player.x,
+        z: player.z,
+        heading: player.heading || Math.PI,
+      },
+    }
+  })
+
+  assert(setup?.agentId && !setup.error, `Walking escort setup failed: ${JSON.stringify(setup)}`)
+  await page.waitForFunction(({ agentId }) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === agentId)
+    const player = state?.player
+    return sample && player && Math.hypot(player.x - sample.x, player.z - sample.z) < 12
+  }, setup, { timeout: 7000 })
+
+  await page.evaluate(({ agentId, request }) => {
+    window.dispatchEvent(new CustomEvent('realcity:npc-request', {
+      detail: { agentId, text: request, source: 'verify-walking-escort' },
+    }))
+  }, setup)
+
+  try {
+    await page.waitForFunction(({ agentId }) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const mission = state?.mission
+      return mission?.agentId === agentId && mission.destination && state.interaction?.status === 'active'
+    }, setup, { timeout: 35000 })
+  } catch (error) {
+    const debug = await page.evaluate(({ agentId }) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const sample = (state?.pedestrianSamples || []).find(item => item.id === agentId)
+      return {
+        mission: state?.mission || null,
+        interaction: state?.interaction
+          ? {
+              status: state.interaction.status,
+              agent: state.interaction.agent?.name || state.interaction.agent?.id || null,
+              request: state.interaction.request,
+              plan: state.interaction.plan,
+            }
+          : null,
+        dialogue: state?.dialogue || null,
+        pulse: state?.pulse || null,
+        sample,
+      }
+    }, setup)
+    throw new Error(`Walking escort mission was not created: ${JSON.stringify({ setup, debug })}`)
+  }
+
+  const initial = await page.evaluate(({ agentId }) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === agentId)
+    return {
+      mission: state?.mission
+        ? {
+            mode: state.mission.mode,
+            phase: state.mission.phase,
+            destinationName: state.mission.destination?.name || state.mission.destination?.address || null,
+            reasoning: state.mission.reasoning,
+            safety: state.mission.safety,
+            offer: state.mission.offer,
+          }
+        : null,
+      sample,
+      missionText: document.querySelector('.mission-panel')?.innerText || '',
+    }
+  }, setup)
+  assert(initial.mission?.mode === 'walk', `Walking escort selected the wrong mode: ${JSON.stringify(initial)}`)
+  assert(initial.mission?.phase === 'leading', `Walking escort did not enter leading phase: ${JSON.stringify(initial)}`)
+  assert(!BROKEN_TEXT_PATTERN.test(`${initial.missionText} ${initial.mission.reasoning || ''} ${initial.mission.offer || ''}`), `Walking escort text contains mojibake: ${JSON.stringify(initial)}`)
+  assert(/sidewalk|crosswalk|entrance|walk/i.test(`${initial.mission.safety || ''} ${initial.missionText}`), `Walking escort did not expose pedestrian safety norms: ${JSON.stringify(initial)}`)
+  assert(initial.sample?.stableRoute || initial.sample?.routeMode, `Walking escort sample did not expose a route plan: ${JSON.stringify(initial.sample)}`)
+
+  const progress = []
+  const started = Date.now()
+  while (Date.now() - started < 110000) {
+    const state = await page.evaluate(({ agentId }) => {
+      const store = window.__REALCITY_STORE__?.getState()
+      const mission = store?.mission || null
+      const sample = (store?.pedestrianSamples || []).find(item => item.id === agentId) || null
+      if (sample && window.__REALCITY_PLAYER_RIG__?.debugPlace) {
+        const destination = mission?.destination || null
+        const sideHeading = destination
+          ? Math.atan2(destination.x - sample.x, destination.z - sample.z) + Math.PI / 2
+          : (store.player?.heading || Math.PI) + Math.PI / 2
+        window.__REALCITY_PLAYER_RIG__.debugPlace({
+          x: sample.x + Math.sin(sideHeading) * 5.8,
+          z: sample.z + Math.cos(sideHeading) * 5.8,
+          heading: store.player?.heading || Math.PI,
+        })
+      }
+      const player = store?.player || null
+      return {
+        missionActive: !!mission,
+        interactionStatus: store?.interaction?.status || null,
+        pulse: store?.pulse || '',
+        sample: sample
+          ? {
+              id: sample.id,
+              state: sample.state,
+              routeMode: sample.routeMode,
+              stableRoute: sample.stableRoute,
+              routePoints: sample.routePoints || 0,
+              distanceToTarget: sample.distanceToTarget,
+              distanceToWaypoint: sample.distanceToWaypoint,
+              targetName: sample.targetName,
+              x: sample.x,
+              z: sample.z,
+            }
+          : null,
+        playerFollowDistance: sample && player ? Math.hypot(player.x - sample.x, player.z - sample.z) : null,
+      }
+    }, setup)
+    progress.push(state)
+    if (!state.missionActive && state.interactionStatus === 'done') break
+    await page.waitForTimeout(850)
+  }
+
+  const completed = progress.at(-1)
+  const routeSamples = progress.filter(item => item.sample?.stableRoute)
+  const guidingSamples = progress.filter(item => /guiding|walking/.test(item.sample?.state || ''))
+  const activeDistances = progress
+    .filter(item => item.missionActive)
+    .map(item => item.sample?.distanceToTarget)
+    .filter(value => typeof value === 'number' && value > 4)
+  const initialDistance = activeDistances.length ? Math.max(...activeDistances) : setup.agentTargetDistance
+  const finalDistance = completed?.missionActive ? activeDistances.at(-1) ?? initialDistance : 0
+  const followDistances = progress.map(item => item.playerFollowDistance).filter(value => typeof value === 'number')
+
+  assert(routeSamples.length >= 3, `Walking escort did not keep a stable pedestrian route: ${JSON.stringify(progress.slice(0, 6))}`)
+  assert(guidingSamples.length >= 3, `NPC did not visibly guide the player during walking escort: ${JSON.stringify(progress.slice(0, 6))}`)
+  assert(completed && !completed.missionActive && completed.interactionStatus === 'done', `Walking escort mission did not complete cleanly: ${JSON.stringify(completed)}`)
+  if (activeDistances.length >= 2) {
+    assert(finalDistance < Math.max(4, initialDistance * 0.55), `Walking escort did not approach the destination while active: ${initialDistance} -> ${finalDistance}`)
+  }
+  assert(followDistances.some(distance => distance < 8), `Player never stayed close enough to follow the walking escort: ${JSON.stringify(followDistances.slice(0, 10))}`)
+
+  await page.evaluate(({ originalPlayer }) => {
+    window.__REALCITY_STORE__?.getState()?.closeInteraction?.()
+    if (originalPlayer && window.__REALCITY_PLAYER_RIG__?.debugPlace) {
+      window.__REALCITY_PLAYER_RIG__.debugPlace({
+        x: originalPlayer.x,
+        z: originalPlayer.z,
+        heading: originalPlayer.heading,
+      })
+    }
+  }, setup)
+  await page.waitForFunction(({ x, z }) => {
+    const player = window.__REALCITY_STORE__?.getState()?.player
+    return player && Math.hypot(player.x - x, player.z - z) < 2.5
+  }, setup.originalPlayer, { timeout: 7000 }).catch(() => {})
+
+  return {
+    agentName: setup.agentName,
+    targetLabel: setup.targetLabel,
+    targetDistance: Number(setup.targetDistance.toFixed(1)),
+    initialDistance: Number(initialDistance.toFixed(1)),
+    finalDistance: Number(finalDistance.toFixed(1)),
+    samples: progress.length,
+    routeSamples: routeSamples.length,
+    guidingSamples: guidingSamples.length,
+    minFollowDistance: Number(Math.min(...followDistances).toFixed(1)),
+    lastPulse: completed?.pulse || '',
+  }
+}
+
 async function inspectCollisionAndMaterials(page) {
   await page.waitForFunction(() => {
     const state = window.__REALCITY_STORE__?.getState()
@@ -1613,6 +1869,7 @@ async function main() {
       return { player, nearbyPedestrians, nearbyVehicles }
     })
     assert(forwardDistance > 1.2, `W key did not move the avatar forward far enough: ${forwardDistance.toFixed(2)}m ${JSON.stringify({ beforeMove, afterMove, movementContext })}`)
+    const walkingEscort = await inspectWalkingEscort(page)
 
     await dispatchKey(page, 'KeyE', 'keydown')
     await dispatchKey(page, 'KeyE', 'keyup')
@@ -1765,6 +2022,7 @@ async function main() {
       phone,
       phoneDirectTaxi,
       phoneSocialActions,
+      walkingEscort,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),
