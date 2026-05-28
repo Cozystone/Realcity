@@ -757,6 +757,8 @@ async function inspectMultiplayer(page) {
   }, seeded.roomId)
 
   assert(state.peers.some(peer => peer.id === 'verify_peer_b' && Number.isFinite(peer.x) && Number.isFinite(peer.z)), `Multiplayer peer pose was not synchronized: ${JSON.stringify(state)}`)
+  assert(state.rendering?.remoteAvatarBase === 'player-avatar-shared-humanoid', `Remote multiplayer avatars are not using the shared humanoid base: ${JSON.stringify(state.rendering)}`)
+  assert(state.rendering?.renderMode === 'smoothed-nameplate-peer-avatar', `Remote multiplayer avatars are missing smoothing/nameplate metadata: ${JSON.stringify(state.rendering)}`)
 
   const inviteRoom = `invite-${Date.now()}`
   await page.goto(`${baseUrl}/?room=${inviteRoom}&mp=1&name=Invite%20Guest`, { waitUntil: 'domcontentloaded', timeout: 45000 })

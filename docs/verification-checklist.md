@@ -24,6 +24,9 @@ audit has a clear finish line.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
   apps, shows callable NPC contacts, has a music app entry point, and rejects
   mojibake/broken visible text in those phone surfaces.
+- Multiplayer: the join panel exposes a room/player identity and invite URL,
+  the server API synchronizes another player, invite links auto-join rooms, and
+  remote peers render as smoothed shared-humanoid avatars with nameplates.
 - RealPhone Taxi: the Taxi app and plain phone-message taxi intent both dispatch
   a cab directly as a `player_taxi` mission with no NPC/contact relay.
 - Phone social layer: the harness sends a message, places a call, and sends a
