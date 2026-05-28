@@ -1,7 +1,8 @@
 # RealCity Verification Checklist
 
-This checklist tracks the full playable-city target. The automated harness is
-`npm run verify:realcity`; manual items remain here so the final completion
+This checklist tracks the full playable-city target. The automated local
+harness is `npm run verify:realcity`, and production smoke coverage is
+`npm run verify:production`; manual items remain here so the final completion
 audit has a clear finish line.
 
 ## Automated Now
@@ -58,8 +59,15 @@ audit has a clear finish line.
 - Responsive performance: the harness opens a mobile-like viewport, checks the
   WebGL canvas pixel sample, verifies core HUD controls stay inside the viewport,
   and confirms key UI text does not overflow or overlap.
+- Production deployment: `npm run verify:production` opens
+  `https://realcity.vercel.app`, checks the WebGL canvas, minimap GPS, full map,
+  direct RealPhone Taxi UI, and confirms production makes no `/ollama`,
+  `localhost`, `127.0.0.1`, or `0.0.0.0` requests.
 - Artifacts: `.verification/realcity-last-run.json` and
-  `.verification/realcity-last-run.png` record the last local verification run.
+  `.verification/realcity-last-run.png` record the last local verification run;
+  `.verification/realcity-production-last-run.json` and
+  `.verification/realcity-production-last-run.png` record the last production
+  smoke run.
 
 ## Manual Or Final-Audit Items
 
@@ -104,8 +112,9 @@ audit has a clear finish line.
   vehicles/NPCs, and wall contact so the verified physics also feels natural.
 - Performance visual pass: sample desktop and small viewports interactively for
   frame pacing, readable HUD, and no distracting overlap during active play.
-- Deployment: Vercel preview must be READY, load the city, show the minimap, and
-  avoid local-only Ollama network calls on `*.vercel.app`.
+- Deployment visual pass: after major interaction changes, manually sample the
+  Vercel link for frame pacing and first-person feel beyond the automated
+  production smoke checks.
 - Local resources: after verification, no leftover Vite dev server, browser, or
   local LLM process should keep consuming noticeable resources.
 

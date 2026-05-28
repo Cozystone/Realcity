@@ -7,6 +7,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "verify:realcity": "node scripts/verify-realcity.mjs",
+    "verify:production": "node scripts/verify-production.mjs",
     "assets:sketchfab": "node scripts/fetch-sketchfab-assets.mjs"
   },
   "dependencies": {
