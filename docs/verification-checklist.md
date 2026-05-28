@@ -35,6 +35,9 @@ audit has a clear finish line.
 - Street norms: every road has a name, landmarks/buildings have road-name
   addresses, trees do not overlap road reserves, and social norm metadata exists
   for pedestrian/traffic/address rules.
+- Traffic visual reactions: vehicle samples expose brake-light intensity, amber
+  caution/turn signals, and driver reaction text when yielding, stopping, or
+  following another car.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - NPC identity and autonomy metadata: all NPCs must expose unique names,

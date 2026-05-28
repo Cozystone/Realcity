@@ -1332,6 +1332,9 @@ async function inspectCollisionAndMaterials(page) {
       vehicleDriverSamples: (state?.vehicleSamples || []).filter(sample => sample.driverName && sample.driverTemperament && sample.activeRoadName && sample.laneKey).length,
       vehicleFollowingSamples: (state?.vehicleSamples || []).filter(sample => sample.followingVehicleId && typeof sample.followDistance === 'number' && typeof sample.desiredGap === 'number').length,
       vehicleFollowingBrakes: (state?.vehicleSamples || []).filter(sample => sample.brakingReason === 'following-vehicle').length,
+      vehicleBrakeLightSamples: (state?.vehicleSamples || []).filter(sample => sample.brakingReason && sample.visualSafetyCue === 'brake-lights-and-driver-yield' && sample.brakeLightIntensity > 0).length,
+      vehicleSignalIntentSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.driverReaction).length,
+      vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
       clouds: window.__REALCITY_CLOUDS__ || null,
       textures: window.__REALCITY_TEXTURES__ || null,
     }
@@ -1354,6 +1357,9 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleDriverSamples === result.vehicleSamples, `Vehicle driver/lane metadata is incomplete: ${result.vehicleDriverSamples}/${result.vehicleSamples}`)
   assert(result.vehicleFollowingSamples >= 20, `Vehicles are not tracking same-lane following distance: ${result.vehicleFollowingSamples}`)
   assert(result.vehicleFollowingBrakes >= 1, `No vehicles are braking for the car ahead: ${result.vehicleFollowingBrakes}`)
+  assert(result.vehicleBrakeLightSamples >= 1, `No braking vehicles expose brake-light safety cues: ${result.vehicleBrakeLightSamples}`)
+  assert(result.vehicleSignalIntentSamples >= 1, `No vehicles expose turn/hazard signal intent: ${result.vehicleSignalIntentSamples}`)
+  assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')

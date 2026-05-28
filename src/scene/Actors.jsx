@@ -2065,6 +2065,15 @@ function pointInVehicleBody(pose, dim, point, padding = 0.72) {
   return Math.abs(localX) < dim.width / 2 + padding && Math.abs(localZ) < dim.length / 2 + padding
 }
 
+function vehicleSignalIntent(brakingReason, car, assignedPose) {
+  if (assignedPose && car.assignment) return 'service-pull-over'
+  if (brakingReason === 'player-yield' || brakingReason === 'pedestrian-yield') return 'yield-hazard'
+  if (brakingReason === 'player-contact') return 'collision-brake'
+  if (brakingReason?.includes('signal')) return 'red-light-stop'
+  if (brakingReason === 'following-vehicle') return 'following-gap'
+  return null
+}
+
 function Traffic({ cars, roads }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
@@ -2080,6 +2089,8 @@ function Traffic({ cars, roads }) {
   const licenseRef = useRef()
   const taxiSignRef = useRef()
   const driverRef = useRef()
+  const brakeGlowRef = useRef()
+  const signalRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
   const colorsReady = useRef(false)
@@ -2095,7 +2106,7 @@ function Traffic({ cars, roads }) {
   }), [])
 
   useFrame((state, delta) => {
-    if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current) return
+    if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current || !brakeGlowRef.current || !signalRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const pedestrians = [
@@ -2135,6 +2146,8 @@ function Traffic({ cars, roads }) {
               ? 'following-vehicle'
               : null
       const shouldBrake = !assignedPose && !!brakingReason
+      const signalIntent = vehicleSignalIntent(brakingReason, car, assignedPose)
+      const signalBlink = !!signalIntent && Math.sin(state.clock.elapsedTime * 8.4 + car.phase) > -0.25
       car.brake = shouldBrake
         ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
@@ -2183,6 +2196,15 @@ function Traffic({ cars, roads }) {
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
         brakingReason,
+        signalIntent,
+        signalBlink,
+        visualSafetyCue: brakingReason ? 'brake-lights-and-driver-yield' : signalIntent ? 'amber-caution-signal' : null,
+        brakeLightIntensity: Number(clampValue(car.brake || 0, 0, 1).toFixed(3)),
+        driverReaction: brakingReason
+          ? `${car.driverName} reacts to ${brakingReason.replaceAll('-', ' ')}`
+          : signalIntent
+            ? `${car.driverName} signals ${signalIntent.replaceAll('-', ' ')}`
+            : null,
         followingVehicleId: follow?.vehicleId || null,
         followDistance: follow?.distance ?? null,
         desiredGap: follow?.desiredGap ?? null,
@@ -2221,6 +2243,13 @@ function Traffic({ cars, roads }) {
       setLocalPart(headlightRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.27, 0.08, front + 0.035], [0.24, 0.14, 0.08])
       setLocalPart(tailLightRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.28, 0.05, rear - 0.035], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
       setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.28, 0.05, rear - 0.035], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
+      setLocalPart(brakeGlowRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.28, 0.08, rear - 0.08], car.brake > 0.04 ? [0.34 + car.brake * 0.34, 0.2 + car.brake * 0.24, 0.035] : [0.001, 0.001, 0.001])
+      setLocalPart(brakeGlowRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.28, 0.08, rear - 0.08], car.brake > 0.04 ? [0.34 + car.brake * 0.34, 0.2 + car.brake * 0.24, 0.035] : [0.001, 0.001, 0.001])
+      const signalScale = signalBlink ? [0.16, 0.11, 0.045] : [0.001, 0.001, 0.001]
+      setLocalPart(signalRef.current, i * 4, dummy, base, yaw, [-dim.width * 0.42, 0.1, front + 0.055], signalScale)
+      setLocalPart(signalRef.current, i * 4 + 1, dummy, base, yaw, [dim.width * 0.42, 0.1, front + 0.055], signalScale)
+      setLocalPart(signalRef.current, i * 4 + 2, dummy, base, yaw, [-dim.width * 0.43, 0.1, rear - 0.055], signalScale)
+      setLocalPart(signalRef.current, i * 4 + 3, dummy, base, yaw, [dim.width * 0.43, 0.1, rear - 0.055], signalScale)
       setLocalPart(bumperRef.current, i * 2, dummy, base, yaw, [0, -0.04, front + 0.08], [dim.width * 0.84, 0.16, 0.11])
       setLocalPart(bumperRef.current, i * 2 + 1, dummy, base, yaw, [0, -0.04, rear - 0.08], [dim.width * 0.84, 0.16, 0.11])
       setLocalPart(grilleRef.current, i, dummy, base, yaw, [0, 0.11, front + 0.1], [dim.width * 0.42, 0.16, 0.035])
@@ -2245,6 +2274,8 @@ function Traffic({ cars, roads }) {
     wheelHubRef.current.instanceMatrix.needsUpdate = true
     headlightRef.current.instanceMatrix.needsUpdate = true
     tailLightRef.current.instanceMatrix.needsUpdate = true
+    brakeGlowRef.current.instanceMatrix.needsUpdate = true
+    signalRef.current.instanceMatrix.needsUpdate = true
     bumperRef.current.instanceMatrix.needsUpdate = true
     grilleRef.current.instanceMatrix.needsUpdate = true
     mirrorRef.current.instanceMatrix.needsUpdate = true
@@ -2289,6 +2320,14 @@ function Traffic({ cars, roads }) {
       <instancedMesh ref={tailLightRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#ff2b2b" emissive="#ff1d18" emissiveIntensity={1.2} roughness={0.24} />
+      </instancedMesh>
+      <instancedMesh ref={brakeGlowRef} args={[undefined, undefined, cars.length * 2]} frustumCulled={false} renderOrder={7}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#ff1d18" transparent opacity={0.58} depthWrite={false} />
+      </instancedMesh>
+      <instancedMesh ref={signalRef} args={[undefined, undefined, cars.length * 4]} frustumCulled={false} renderOrder={7}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffbf3f" emissive="#ffad1f" emissiveIntensity={1.5} roughness={0.18} />
       </instancedMesh>
       <instancedMesh ref={bumperRef} args={[undefined, undefined, cars.length * 2]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
