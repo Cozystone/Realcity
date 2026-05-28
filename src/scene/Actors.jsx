@@ -1428,7 +1428,7 @@ class Agent {
 
     this.activity = 'guiding player'
     const distance = moveAgentToward(this, destination, delta, 1.72 * this.pace * (this.debugSpeedScale || 1), city)
-    const arrivalRadius = destination.entryRule === 'road-sidewalk-access' ? 24 : 4.2
+    const arrivalRadius = destination.entryRule === 'road-sidewalk-access' ? 32 : 4.2
     if (distance < arrivalRadius) {
       this.pos.set(destination.x + 2.2, terrainHeight(destination.x, destination.z) + 0.95, destination.z + 2.2)
       store.finishMission(`${this.name} guided you to ${destination.name}.`)

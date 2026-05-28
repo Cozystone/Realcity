@@ -1139,7 +1139,8 @@ async function inspectWalkingEscort(page) {
   return {
     agentName: setup.agentName,
     targetLabel: setup.targetLabel,
-    targetDistance: Number(setup.targetDistance.toFixed(1)),
+    playerTargetDistance: Number(setup.targetDistance.toFixed(1)),
+    agentTargetDistance: Number(setup.agentTargetDistance.toFixed(1)),
     initialDistance: Number(initialDistance.toFixed(1)),
     finalDistance: Number(finalDistance.toFixed(1)),
     samples: progress.length,
@@ -1703,6 +1704,166 @@ async function inspectInteriorStateAndFloors(page) {
   }
 }
 
+async function inspectPlayerPhysicsAndCollision(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_CITY__ &&
+    !!window.__REALCITY_STORE__ &&
+    !!window.__REALCITY_COLLISION__ &&
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace
+  , null, { timeout: 10000 })
+
+  const setup = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const store = window.__REALCITY_STORE__?.getState()
+    const rig = window.__REALCITY_PLAYER_RIG__
+    const collision = window.__REALCITY_COLLISION__
+    if (!city || !store || !rig?.debugPlace || !collision) return null
+
+    const faces = ['north', 'south', 'east', 'west']
+    const world = (item, lx, lz) => {
+      const cos = Math.cos(item.rot || 0)
+      const sin = Math.sin(item.rot || 0)
+      return {
+        x: item.x + lx * cos + lz * sin,
+        z: item.z - lx * sin + lz * cos,
+      }
+    }
+    const probe = (building, entryFace, along, distanceFromFace) => {
+      if (entryFace === 'north') return world(building, along, building.d / 2 + distanceFromFace)
+      if (entryFace === 'south') return world(building, along, -building.d / 2 - distanceFromFace)
+      if (entryFace === 'east') return world(building, building.w / 2 + distanceFromFace, along)
+      return world(building, -building.w / 2 - distanceFromFace, along)
+    }
+
+    const target = city.buildings
+      .filter(building => building.interior?.solidWalls && building.interior?.entryPortal && building.w > 18 && building.d > 18)
+      .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0]
+    if (!target) return null
+
+    const entryFace = target.interior?.entryPortal?.face || target.facadePlan?.entryFace || 'south'
+    const blockedFace = faces.find(face => face !== entryFace) || 'north'
+    const faceLength = blockedFace === 'north' || blockedFace === 'south' ? target.w : target.d
+    const along = Math.max(-faceLength * 0.32, Math.min(faceLength * 0.32, faceLength * 0.24))
+    const outside = probe(target, blockedFace, along, 4.5)
+    const inside = probe(target, blockedFace, along, -5.5)
+    const heading = Math.atan2(inside.x - outside.x, inside.z - outside.z)
+    const original = {
+      x: store.player?.x || 0,
+      z: store.player?.z || 40,
+      heading: store.player?.heading || Math.PI,
+    }
+
+    rig.debugPlace({
+      x: outside.x,
+      z: outside.z,
+      heading,
+      floor: 0,
+      pulse: `Physics verification against ${target.address || target.id}.`,
+    })
+
+    return {
+      id: target.id,
+      address: target.address || target.name || target.id,
+      x: target.x,
+      z: target.z,
+      w: target.w,
+      d: target.d,
+      rot: target.rot || 0,
+      entryFace,
+      blockedFace,
+      outside,
+      inside,
+      heading,
+      original,
+    }
+  })
+
+  assert(setup?.id, 'No solid building was available for player collision verification')
+  await page.waitForFunction(({ outside }) => {
+    const player = window.__REALCITY_STORE__?.getState()?.player
+    return player && Math.hypot(player.x - outside.x, player.z - outside.z) < 1.8
+  }, setup, { timeout: 5000 })
+
+  const beforeWall = await getPlayer(page)
+  await holdKey(page, 'KeyW', 1600)
+  await page.waitForTimeout(250)
+  const wallCollision = await page.evaluate(({ id, x, z, w, d, rot, inside }) => {
+    const player = window.__REALCITY_STORE__?.getState()?.player
+    const interior = window.__REALCITY_COLLISION__?.currentInterior(window.__REALCITY_CITY__, player.x, player.z)
+    const dx = player.x - x
+    const dz = player.z - z
+    const cos = Math.cos(-(rot || 0))
+    const sin = Math.sin(-(rot || 0))
+    const local = {
+      x: dx * cos - dz * sin,
+      z: dx * sin + dz * cos,
+    }
+    return {
+      player,
+      interiorId: interior?.id || null,
+      insideFootprint: Math.abs(local.x) < w / 2 - 0.72 && Math.abs(local.z) < d / 2 - 0.72,
+      local,
+      distanceToBlockedInside: Math.hypot(player.x - inside.x, player.z - inside.z),
+      targetId: id,
+    }
+  }, setup)
+
+  assert(wallCollision.interiorId !== setup.id, `Player clipped into a blocked building interior: ${JSON.stringify(wallCollision)}`)
+  assert(!wallCollision.insideFootprint, `Player crossed a solid side/back wall footprint: ${JSON.stringify(wallCollision)}`)
+  assert(wallCollision.distanceToBlockedInside > 1.8, `Player ended too close to the blocked inside probe: ${JSON.stringify(wallCollision)}`)
+
+  await page.evaluate(original => {
+    window.__REALCITY_PLAYER_RIG__?.debugPlace?.({
+      x: original.x,
+      z: original.z,
+      heading: original.heading,
+      floor: 0,
+    })
+  }, setup.original)
+  await page.waitForFunction(original => {
+    const player = window.__REALCITY_STORE__?.getState()?.player
+    return player && Math.hypot(player.x - original.x, player.z - original.z) < 2.5
+  }, setup.original, { timeout: 5000 })
+
+  await page.waitForTimeout(250)
+  const beforeJump = await getPlayer(page)
+  await holdKey(page, 'Space', 110)
+  const jumpSamples = []
+  for (let i = 0; i < 22; i += 1) {
+    await page.waitForTimeout(120)
+    jumpSamples.push(await getPlayer(page))
+  }
+  const maxY = Math.max(...jumpSamples.map(sample => sample.y))
+  const minY = Math.min(...jumpSamples.map(sample => sample.y))
+  const finalY = jumpSamples.at(-1)?.y ?? beforeJump.y
+  assert(maxY - beforeJump.y > 0.85, `Space did not produce a measurable jump arc: ${JSON.stringify({ beforeJump, maxY, samples: jumpSamples.slice(0, 6) })}`)
+  assert(finalY <= beforeJump.y + 0.45, `Gravity did not bring the player back to the ground: ${JSON.stringify({ beforeJumpY: beforeJump.y, finalY, maxY })}`)
+  assert(minY >= beforeJump.y - 0.2, `Player fell below terrain baseline during jump: ${JSON.stringify({ beforeJumpY: beforeJump.y, minY, maxY })}`)
+
+  return {
+    wallTarget: setup.id,
+    wallAddress: setup.address,
+    blockedFace: setup.blockedFace,
+    beforeWall: {
+      x: Number(beforeWall.x.toFixed(2)),
+      z: Number(beforeWall.z.toFixed(2)),
+    },
+    afterWall: {
+      x: Number(wallCollision.player.x.toFixed(2)),
+      z: Number(wallCollision.player.z.toFixed(2)),
+      interiorId: wallCollision.interiorId,
+      insideFootprint: wallCollision.insideFootprint,
+    },
+    jump: {
+      baselineY: Number(beforeJump.y.toFixed(2)),
+      maxY: Number(maxY.toFixed(2)),
+      finalY: Number(finalY.toFixed(2)),
+      arcMeters: Number((maxY - beforeJump.y).toFixed(2)),
+      samples: jumpSamples.length,
+    },
+  }
+}
+
 function collectOllamaStatus() {
   try {
     const result = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 10000 })
@@ -1765,6 +1926,7 @@ async function main() {
     const streetRendering = await inspectStreetRendering(page)
     const automaticDoors = await inspectAutomaticDoors(page)
     const interiorState = await inspectInteriorStateAndFloors(page)
+    const playerPhysics = await inspectPlayerPhysicsAndCollision(page)
     const initialScreenshotPath = path.join(artifactsDir, 'realcity-initial-core.png')
     await page.screenshot({ path: initialScreenshotPath, fullPage: false })
     addressRoute = await page.evaluate(() => {
@@ -2019,6 +2181,7 @@ async function main() {
       streetRendering,
       automaticDoors,
       interiorState,
+      playerPhysics,
       phone,
       phoneDirectTaxi,
       phoneSocialActions,

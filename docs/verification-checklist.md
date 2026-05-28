@@ -50,6 +50,9 @@ audit has a clear finish line.
 - Interior state and floors: the harness places the actual avatar rig inside a
   multi-floor building, confirms the HUD switches to that building interior,
   tests PageUp/PageDown floor movement, then restores the avatar.
+- Player physics: the harness jumps with Space and confirms an arc plus gravity
+  return, then drives the avatar into a blocked building side wall and confirms
+  the player cannot clip into the solid footprint.
 - Artifacts: `.verification/realcity-last-run.json` and
   `.verification/realcity-last-run.png` record the last local verification run.
 
@@ -92,8 +95,8 @@ audit has a clear finish line.
   confirm boarding, ride, arrival, and mission completion.
 - Walking route visual pass: request several different nearby walking escorts
   and confirm the visible route feels natural around crossings and entrances.
-- Physics feel: verify jumping, gravity, terrain height, and building collision
-  stay stable without clipping through major buildings.
+- Physics feel visual pass: manually sample jump timing, slopes, collisions with
+  vehicles/NPCs, and wall contact so the verified physics also feels natural.
 - Performance: test desktop and mobile-like viewports for stable frame pacing,
   readable HUD, and no overlapping UI.
 - Deployment: Vercel preview must be READY, load the city, show the minimap, and
