@@ -14,6 +14,9 @@ audit has a clear finish line.
   current player marker and landmark labels; map coordinate conversion and
   player state updates must sanitize `NaN` so MapLibre never receives invalid
   `LngLat` centers.
+- Full map navigation: the map exposes a live navigation card, route start/end
+  markers, progress marker, remaining distance, and lane-following point count
+  whenever a taxi/walking route is active.
 - Control model: `A` rotates avatar heading without translating the avatar.
 - Free-look model: arrow keys change only temporary camera view, and the view
   returns behind the avatar after release.

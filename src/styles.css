@@ -1597,6 +1597,41 @@ button.key-prompt {
   filter: drop-shadow(0 0 9px rgba(255, 212, 71, 0.8));
 }
 
+.full-map-route-markers circle {
+  paint-order: stroke;
+  stroke: rgba(5, 9, 12, 0.92);
+  stroke-width: 6;
+}
+
+.full-map-route-markers text {
+  fill: #fff7b0;
+  font-size: 14px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(5, 9, 12, 0.92);
+  stroke-width: 5;
+}
+
+.full-map-route-markers .route-start circle {
+  fill: #52d273;
+}
+
+.full-map-route-markers .route-end circle {
+  fill: #ff6b6b;
+}
+
+.full-map-route-markers .route-milestone {
+  fill: #fff7b0;
+  opacity: 0.96;
+}
+
+.full-map-route-markers .route-progress circle {
+  fill: #4aadff;
+  filter: drop-shadow(0 0 8px rgba(74, 173, 255, 0.9));
+}
+
 .full-map-landmarks circle {
   stroke: rgba(255, 255, 255, 0.85);
   stroke-width: 3;
@@ -1725,6 +1760,59 @@ button.key-prompt {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
+}
+
+.full-map-navigation-card {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: min(292px, calc(100% - 32px));
+  display: grid;
+  gap: 5px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 212, 71, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.86);
+  color: rgba(238, 244, 255, 0.78);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.full-map-navigation-card[data-has-route='false'] {
+  border-color: rgba(255, 255, 255, 0.13);
+}
+
+.full-map-navigation-card span {
+  color: #ffd447;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.full-map-navigation-card strong {
+  color: #f8fbff;
+  font-size: 14px;
+}
+
+.full-map-navigation-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.full-map-route-progressbar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.full-map-route-progressbar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #52d273, #ffd447, #4aadff);
+  box-shadow: 0 0 12px rgba(255, 212, 71, 0.48);
 }
 
 .full-map-legend {

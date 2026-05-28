@@ -59,6 +59,85 @@ function routeGeoJSON(city, route) {
   }
 }
 
+function routeDistance(points = []) {
+  let total = 0
+  for (let i = 1; i < points.length; i += 1) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z)
+  }
+  return total
+}
+
+function formatMeters(value) {
+  const meters = Math.max(0, finiteNumber(value, 0))
+  if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`
+  return `${Math.round(meters)} m`
+}
+
+function routeProgressRatio(points = [], pose = null) {
+  if (!pose || points.length < 2) return 0
+  let best = { distance: Infinity, along: 0 }
+  let traveled = 0
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]
+    const b = points[i]
+    const dx = b.x - a.x
+    const dz = b.z - a.z
+    const segment = Math.max(0.001, Math.hypot(dx, dz))
+    const t = clamp(((pose.x - a.x) * dx + (pose.z - a.z) * dz) / (segment * segment), 0, 1)
+    const px = a.x + dx * t
+    const pz = a.z + dz * t
+    const distance = Math.hypot(pose.x - px, pose.z - pz)
+    if (distance < best.distance) best = { distance, along: traveled + segment * t }
+    traveled += segment
+  }
+  return clamp(best.along / Math.max(0.001, traveled), 0, 1)
+}
+
+function pointAtRouteRatio(points = [], ratio = 0) {
+  if (!points.length) return null
+  if (points.length === 1) return points[0]
+  const total = routeDistance(points)
+  let target = total * clamp(ratio, 0, 1)
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]
+    const b = points[i]
+    const segment = Math.max(0.001, Math.hypot(b.x - a.x, b.z - a.z))
+    if (target <= segment) {
+      const t = target / segment
+      return {
+        x: a.x + (b.x - a.x) * t,
+        z: a.z + (b.z - a.z) * t,
+      }
+    }
+    target -= segment
+  }
+  return points[points.length - 1]
+}
+
+function routeMilestones(points = []) {
+  if (points.length < 2) return []
+  return [0.25, 0.5, 0.75]
+    .map(ratio => pointAtRouteRatio(points, ratio))
+    .filter(Boolean)
+}
+
+function routePhaseLabel(mission, ride) {
+  if (ride) return 'Taxi ride in progress'
+  if (mission?.phase === 'taxi_dispatch') return 'Taxi driving to pickup'
+  if (mission?.phase === 'taxi_waiting') return 'Taxi waiting at curb'
+  if (mission?.phase === 'taxi_boarding') return 'Boarding at pickup'
+  if (mission?.mode === 'walk') return 'Walking escort route'
+  if (mission?.mode === 'taxi') return 'Taxi route planned'
+  return 'Live city scan'
+}
+
+function routeDestinationLabel(mission, ride) {
+  if (ride?.to?.name || ride?.to?.address) return ride.to.address || ride.to.name
+  if (mission?.destination?.address || mission?.destination?.name) return mission.destination.address || mission.destination.name
+  if (mission?.taxi?.targetName) return mission.taxi.targetName
+  return 'No active destination'
+}
+
 function cityMapGeoJSON(city) {
   return {
     type: 'FeatureCollection',
@@ -832,6 +911,17 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
   const primaryRoads = useMemo(() => city.roads.filter(road => road.main), [city.roads])
   const routePoints = useMemo(() => route.filter(hasFinitePoint), [route])
   const activeRoutePoints = useMemo(() => routePoints.map(point => `${point.x},${point.z}`).join(' '), [routePoints])
+  const routeActorPose = taxi || safePlayer
+  const routeMeters = useMemo(() => routeDistance(routePoints), [routePoints])
+  const routeProgress = useMemo(() => routeProgressRatio(routePoints, routeActorPose), [routePoints, routeActorPose.x, routeActorPose.z])
+  const routeProgressPoint = useMemo(() => pointAtRouteRatio(routePoints, routeProgress), [routePoints, routeProgress])
+  const routeMarkers = useMemo(() => routeMilestones(routePoints), [routePoints])
+  const routeRemaining = routeMeters * (1 - routeProgress)
+  const routeHasNavigation = routePoints.length >= 2
+  const routePhase = routePhaseLabel(mission, ride)
+  const routeDestination = routeDestinationLabel(mission, ride)
+  const routeStart = routePoints[0]
+  const routeEnd = routePoints[routePoints.length - 1]
 
   useEffect(() => {
     if (!followGps) return
@@ -969,6 +1059,29 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
               <>
                 <polyline className="full-map-route-halo" points={activeRoutePoints} />
                 <polyline className="full-map-route" points={activeRoutePoints} />
+                <g className="full-map-route-markers">
+                  {routeStart ? (
+                    <g className="route-start" transform={`translate(${routeStart.x} ${routeStart.z})`}>
+                      <circle r="13" />
+                      <text y="-18">START</text>
+                    </g>
+                  ) : null}
+                  {routeMarkers.map((point, index) => (
+                    <circle key={`milestone_${index}`} className="route-milestone" cx={point.x} cy={point.z} r="7" />
+                  ))}
+                  {routeProgressPoint ? (
+                    <g className="route-progress" transform={`translate(${routeProgressPoint.x} ${routeProgressPoint.z})`}>
+                      <circle r="10" />
+                      <text y="26">{Math.round(routeProgress * 100)}%</text>
+                    </g>
+                  ) : null}
+                  {routeEnd ? (
+                    <g className="route-end" transform={`translate(${routeEnd.x} ${routeEnd.z})`}>
+                      <circle r="15" />
+                      <text y="-20">DEST</text>
+                    </g>
+                  ) : null}
+                </g>
               </>
             ) : null}
             <g className="full-map-landmarks">
@@ -1017,6 +1130,20 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
             <strong>{gps.label}</strong>
             <small>{gps.address}</small>
             <small>{formatCoordinate(gps.lat)}N / {formatCoordinate(gps.lng)}E</small>
+          </aside>
+          <aside className="full-map-navigation-card" data-has-route={routeHasNavigation ? 'true' : 'false'}>
+            <span>Live navigation</span>
+            <strong>{routeHasNavigation ? routePhase : 'No active route'}</strong>
+            <small>{routeHasNavigation ? routeDestination : 'Ask a contact, hail a taxi, or choose RealPhone Taxi.'}</small>
+            {routeHasNavigation ? (
+              <>
+                <small>{formatMeters(routeRemaining)} remaining / {formatMeters(routeMeters)} total</small>
+                <div className="full-map-route-progressbar" aria-label="Route progress">
+                  <i style={{ width: `${Math.round(routeProgress * 100)}%` }} />
+                </div>
+                <small>{routePoints.length} lane-following points / {Math.round(routeProgress * 100)}% complete</small>
+              </>
+            ) : null}
           </aside>
           <div className="full-map-legend">
             <span><i className="legend-player" />You</span>

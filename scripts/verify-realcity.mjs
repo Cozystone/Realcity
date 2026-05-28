@@ -2301,6 +2301,9 @@ async function main() {
     assert(await page.locator('.full-map-buildings rect').count() > 20, 'Full map did not render building footprints')
     assert(await page.locator('.full-map-live-vehicles rect').count() > 0, 'Full map did not render live vehicle positions')
     assert(await page.locator('.full-map-live-pedestrians circle').count() > 0, 'Full map did not render live NPC positions')
+    assert(await page.locator('.full-map-navigation-card').count() === 1, 'Full map did not render the live navigation card')
+    const idleNavigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
+    assert(/live navigation/i.test(idleNavigationText), `Full map navigation card is incomplete: ${idleNavigationText}`)
     const zoomBefore = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
     await page.locator('.full-map-controls button[aria-label="Zoom in"]').click()
     await page.waitForFunction(previous => {
@@ -2430,6 +2433,13 @@ async function main() {
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
     assert(await page.locator('.full-map-route').count() === 1, 'Full map did not render the taxi route polyline')
+    assert(await page.locator('.full-map-route-markers .route-start').count() === 1, 'Full map did not render a route start marker')
+    assert(await page.locator('.full-map-route-markers .route-end').count() === 1, 'Full map did not render a route destination marker')
+    assert(await page.locator('.full-map-route-markers .route-progress').count() === 1, 'Full map did not render route progress marker')
+    assert(await page.locator('.full-map-route-progressbar i').count() === 1, 'Full map did not render route progress bar')
+    const navigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
+    assert(/remaining|lane-following/i.test(navigationText), `Full map navigation card did not summarize the active route: ${navigationText}`)
+    assert(await page.locator('.full-map-navigation-card').getAttribute('data-has-route', { timeout: 5000 }) === 'true', 'Full map navigation card did not mark the active route')
     const dispatchMapRoutePoints = await page.locator('.full-map-route').getAttribute('points', { timeout: 5000 })
     const dispatchMapPointCount = dispatchMapRoutePoints.trim().split(/\s+/).filter(Boolean).length
     if (taxiDispatch.missionPhase === 'taxi_dispatch') {

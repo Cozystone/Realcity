@@ -154,6 +154,9 @@ async function main() {
     assertReadableText('Production full map', mapText)
     assert(await page.locator('.full-map-player').count() === 1, 'Production full map did not render the player marker')
     assert(await page.locator('.full-map-controls').count() === 1, 'Production full map controls are missing')
+    assert(await page.locator('.full-map-navigation-card').count() === 1, 'Production full map navigation card is missing')
+    const navigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
+    assert(/live navigation/i.test(navigationText), `Production full map navigation card is incomplete: ${navigationText}`)
     const fullMapStats = {
       buildingFootprints: await page.locator('.full-map-buildings rect').count(),
       liveVehicles: await page.locator('.full-map-live-vehicles rect').count(),
