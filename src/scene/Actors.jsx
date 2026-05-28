@@ -1199,6 +1199,14 @@ class Agent {
     this.socialReaction = null
     this.playerDistance = null
     this.facingPlayerAngle = null
+    this.talkPartnerId = null
+    this.talkPartnerName = null
+    this.talkTopicLabel = null
+    this.talkStartedAt = 0
+    this.visualGesture = null
+    this.renderFacingPartner = false
+    this.facingPartnerAngle = null
+    this.debugSocialConversation = false
     this.mission = null
     this.bumpVelocity = new THREE.Vector2()
     this.bumpTimer = 0
@@ -1237,6 +1245,15 @@ class Agent {
       return 'talking'
     }
     if (this.talkTimer > 0) this.talkTimer -= delta
+    if (this.talkTimer <= 0 && !this.mission) {
+      this.talkPartnerId = null
+      this.talkPartnerName = null
+      this.talkTopicLabel = null
+      this.visualGesture = null
+      this.renderFacingPartner = false
+      this.facingPartnerAngle = null
+      this.debugSocialConversation = false
+    }
 
     if (this.mission) return this.updateMission(delta, city)
 
@@ -1511,8 +1528,14 @@ class Agent {
     this.talkTimer = seconds
     this.socialCooldown = 20 + Math.random() * 20
     this.needs.social = clampValue(this.needs.social + 0.12, 0, 1)
+    this.talkStartedAt = performance.now()
+    this.visualGesture = socialGestureKind(this)
+    this.talkPartnerId = partner?.id || null
+    this.talkPartnerName = partner?.name || null
+    this.talkTopicLabel = topic?.label || (partner ? 'sidewalk conversation' : 'player interaction')
     if (partner) {
       const conversation = topic || conversationTopicFor(this, partner, timeMinutes)
+      this.talkTopicLabel = conversation.label
       const existing = this.relationships[partner.id] || {
         agentId: partner.id,
         name: partner.name,
@@ -1580,6 +1603,12 @@ class Agent {
       socialReaction: this.socialReaction,
       playerDistance: this.playerDistance,
       facingPlayerAngle: this.facingPlayerAngle,
+      talkPartnerId: this.talkPartnerId,
+      talkPartnerName: this.talkPartnerName,
+      talkTopicLabel: this.talkTopicLabel,
+      visualGesture: this.visualGesture,
+      renderFacingPartner: this.renderFacingPartner,
+      facingPartnerAngle: this.facingPartnerAngle,
       workId: this.workId,
       workName: work?.name,
       workAddress: work?.address,
@@ -1923,6 +1952,19 @@ function agentLook(agent) {
     shoeColor: '#10151c',
     accessoryColor: '#473120',
   }
+}
+
+function socialGestureKind(agent) {
+  const text = String(agent.gestureStyle || agent.speechStyle?.gesture || '').toLowerCase()
+  if (text.includes('phone')) return 'checks-phone'
+  if (text.includes('point')) return 'points-while-speaking'
+  if (text.includes('wave')) return 'small-wave'
+  if (text.includes('bag')) return 'adjusts-bag-strap'
+  if (text.includes('fold')) return 'folds-arms'
+  if (text.includes('bow')) return 'formal-bow'
+  if (text.includes('look')) return 'looks-around'
+  if (text.includes('pocket')) return 'hands-in-pockets'
+  return 'quick-nod'
 }
 
 function trafficPose(car, tValue = car.t) {
@@ -2674,6 +2716,7 @@ function NPCs({ city }) {
     if (lateTaxiCommuter) agent.remember('mobility', `I am late for ${target.name} and should use a taxi.`, agent.home.name, 0.7)
     return agent
   }), [city.npcs, places])
+  const agentsById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
   const hipsRef = useRef()
   const torsoRef = useRef()
   const neckRef = useRef()
@@ -2703,6 +2746,9 @@ function NPCs({ city }) {
   const skirtRef = useRef()
   const glassesRef = useRef()
   const scarfRef = useRef()
+  const speechCueRef = useRef()
+  const phoneRef = useRef()
+  const gestureCueRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
   const colorsReady = useRef(false)
@@ -2784,7 +2830,18 @@ function NPCs({ city }) {
         'scarf',
         'skirt',
         'glasses',
+        'speechCue',
+        'phoneProp',
+        'gestureCue',
       ],
+      socialVisualCues: {
+        speechCueInstances: agents.length,
+        phonePropInstances: agents.length,
+        gestureCueInstances: agents.length,
+        partnerFacingRule: 'active conversation partners rotate toward each other within social radius',
+        gestureStyleVariants: unique(agent => agent.gestureStyle),
+        cueKinds: ['speechCue', 'checks-phone', 'points-while-speaking', 'small-wave', 'formal-bow', 'quick-nod'],
+      },
       variation: {
         count: agents.length,
         heightVariants: unique(agent => agent.appearance?.heightScale?.toFixed(2)),
@@ -2820,7 +2877,7 @@ function NPCs({ city }) {
   }, [agents])
 
   useFrame((state, delta) => {
-    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current) return
+    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current || !speechCueRef.current || !phoneRef.current || !gestureCueRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -2901,6 +2958,21 @@ function NPCs({ city }) {
       const agent = agents[i]
       const agentState = agent.update(dt, time, places, city)
       if (agentState === 'talking') talks += 1
+      const talking = agentState === 'talking'
+      const talkPartner = talking && agent.talkPartnerId ? agentsById.get(agent.talkPartnerId) : null
+      agent.renderFacingPartner = false
+      agent.facingPartnerAngle = null
+      if (talking) {
+        agent.visualGesture = agent.visualGesture || socialGestureKind(agent)
+        if (talkPartner && talkPartner.pos && agent.pos.distanceTo(talkPartner.pos) < 12) {
+          const desired = Math.atan2(talkPartner.pos.x - agent.pos.x, talkPartner.pos.z - agent.pos.z)
+          const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
+          agent.heading += turn * Math.min(1, dt * 5.2)
+          const afterTurn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
+          agent.renderFacingPartner = true
+          agent.facingPartnerAngle = Number(Math.abs(afterTurn).toFixed(3))
+        }
+      }
       const playerDistance = agent.pos.distanceTo(player)
       if (!agent.mission && playerDistance < nearestDistance) {
         nearestAgent = agent
@@ -2912,7 +2984,8 @@ function NPCs({ city }) {
       if (!agent.mission && agentState !== 'walking' && playerDistance < NPC_GLANCE_RADIUS) {
         const desired = Math.atan2(store.player.x - agent.pos.x, store.player.z - agent.pos.z)
         const turn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
-        agent.heading += turn * Math.min(1, dt * 3.8)
+        const keepPartnerFocus = talking && agent.debugSocialConversation && agent.renderFacingPartner
+        if (!keepPartnerFocus) agent.heading += turn * Math.min(1, dt * 3.8)
         const afterTurn = Math.atan2(Math.sin(desired - agent.heading), Math.cos(desired - agent.heading))
         agent.facingPlayerAngle = Number(Math.abs(afterTurn).toFixed(3))
         agent.socialReaction = Math.abs(afterTurn) < 0.72 ? 'glancing-at-player' : 'turning-toward-player'
@@ -2928,10 +3001,13 @@ function NPCs({ city }) {
       const stumbling = agentState === 'stumbling'
       const fallSide = hashValue(agent.id) % 2 === 0 ? 1 : -1
       const stumbleLean = stumbling ? Math.sin(state.clock.elapsedTime * 18 + i) * 0.22 : 0
+      const gestureKind = talking ? (agent.visualGesture || socialGestureKind(agent)) : null
+      const gesturePulse = talking ? Math.sin((performance.now() - (agent.talkStartedAt || 0)) * 0.006 + i * 0.7) : 0
+      const socialLean = talking && gestureKind === 'formal-bow' ? 0.13 + gesturePulse * 0.025 : 0
       const base = fallen
         ? { x: agent.pos.x, y: agent.pos.y - 0.46, z: agent.pos.z }
         : agent.pos
-      const bodyRotX = fallen ? 1.12 : 0
+      const bodyRotX = fallen ? 1.12 : socialLean
       const bodyRotZ = fallen ? fallSide * 0.72 : stumbleLean
       const look = agentLook(agent)
       const walking = agentState === 'walking'
@@ -2955,6 +3031,17 @@ function NPCs({ city }) {
       const scarfVisible = look.scarfStyle && look.scarfStyle !== 'none'
       const seniorFace = look.ageBand === 'senior' || agent.age >= 60
       const facialHair = agent.gender === 'man' && (seniorFace || hashValue(`${agent.id}_face_hair`) % 4 === 0)
+      const phoneVisible = talking && gestureKind === 'checks-phone' && !fallen
+      const talkCueVisible = talking && !fallen
+      const handTalkLift = talkCueVisible
+        ? gestureKind === 'folds-arms'
+          ? 0.14
+          : gestureKind === 'hands-in-pockets'
+            ? -0.03
+            : 0.18 + Math.max(0, gesturePulse) * 0.06
+        : 0
+      const leftHandLift = talkCueVisible && gestureKind === 'folds-arms' ? 0.18 : handTalkLift * 0.32
+      const rightHandLift = phoneVisible ? 0.26 : handTalkLift
       const hipY = 0.03 * height
       const torsoY = 0.45 * height
       const chestY = 0.52 * height
@@ -2999,16 +3086,19 @@ function NPCs({ city }) {
       setLocalPart(scarfRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.15], scarfVisible ? [0.19 * shoulder, look.scarfStyle === 'wide' ? 0.052 : 0.034, 0.044] : [0.001, 0.001, 0.001])
       setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? 0.55 : stride, bodyRotZ * 0.35)
       setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
-      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.33 * height, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? 0.92 : -stride * 0.55 * armSwing, bodyRotZ)
-      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.33 * height, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? -0.72 : stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.33 * height + leftHandLift * 0.34, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? 0.92 : talkCueVisible ? -0.28 - gesturePulse * 0.05 : -stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.33 * height + rightHandLift * 0.34, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? -0.72 : talkCueVisible ? 0.38 + gesturePulse * 0.08 : stride * 0.55 * armSwing, bodyRotZ)
       setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], -stride * 0.38 * armSwing)
       setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], stride * 0.38 * armSwing)
-      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.08 * height, 0.035], [0.065, 0.065, 0.065])
-      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height, 0.035], [0.065, 0.065, 0.065])
+      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.08 * height + leftHandLift, 0.035], [0.065, 0.065, 0.065])
+      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height + rightHandLift, phoneVisible ? 0.16 : 0.035], [0.065, 0.065, 0.065])
       setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
       setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
       setLocalPart(cuffRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? 0.55 : stride, bodyRotZ * 0.35)
       setLocalPart(cuffRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
+      setLocalPart(speechCueRef.current, i, dummy, base, agent.heading, [0, 1.47 * height + Math.max(0, gesturePulse) * 0.035, 0.08], talkCueVisible ? [0.13, 0.1, 0.13] : [0.001, 0.001, 0.001])
+      setLocalPart(phoneRef.current, i, dummy, base, agent.heading, [0.34 * shoulder, 0.38 * height + rightHandLift, 0.2], phoneVisible ? [0.055, 0.105, 0.012] : [0.001, 0.001, 0.001])
+      setLocalPart(gestureCueRef.current, i, dummy, base, agent.heading, [0.38 * shoulder, 0.56 * height + rightHandLift * 0.52, 0.18], talkCueVisible && !phoneVisible ? [0.045 + Math.max(0, gesturePulse) * 0.018, 0.045, 0.045] : [0.001, 0.001, 0.001])
     }
 
     socialClock.current += dt
@@ -3104,6 +3194,13 @@ function NPCs({ city }) {
           crosswalkZ: agent.walkPlan?.crosswalk?.z ?? null,
           distanceToTarget: agent.walkPlan?.distanceToTarget ? Number(agent.walkPlan.distanceToTarget.toFixed(2)) : null,
           distanceToWaypoint: agent.walkPlan?.distanceToWaypoint ? Number(agent.walkPlan.distanceToWaypoint.toFixed(2)) : null,
+          talkPartnerId: agent.talkPartnerId || null,
+          talkPartnerName: agent.talkPartnerName || null,
+          talkTopicLabel: agent.talkTopicLabel || null,
+          visualGesture: agent.visualGesture || null,
+          renderFacingPartner: !!agent.renderFacingPartner,
+          facingPartnerAngle: agent.facingPartnerAngle,
+          sharedHumanoidBase: 'player-avatar-shared-humanoid',
         }
       }))
       store.setNearbyAgent(nearestAgent && nearestDistance <= 24
@@ -3136,6 +3233,9 @@ function NPCs({ city }) {
     skirtRef.current.instanceMatrix.needsUpdate = true
     glassesRef.current.instanceMatrix.needsUpdate = true
     scarfRef.current.instanceMatrix.needsUpdate = true
+    speechCueRef.current.instanceMatrix.needsUpdate = true
+    phoneRef.current.instanceMatrix.needsUpdate = true
+    gestureCueRef.current.instanceMatrix.needsUpdate = true
     legRef.current.instanceMatrix.needsUpdate = true
     armRef.current.instanceMatrix.needsUpdate = true
     sleeveRef.current.instanceMatrix.needsUpdate = true
@@ -3320,15 +3420,69 @@ function NPCs({ city }) {
       agent.placeName = detail.placeName || 'verification sidewalk'
       agent.currentIntent = 'ready to guide the player on foot'
       agent.talkTimer = Number.isFinite(Number(detail.talkSeconds)) ? Math.max(0, Number(detail.talkSeconds)) : 0
+      agent.talkPartnerId = null
+      agent.talkPartnerName = null
+      agent.talkTopicLabel = null
+      agent.visualGesture = agent.talkTimer > 0 ? socialGestureKind(agent) : null
+      agent.renderFacingPartner = false
+      agent.facingPartnerAngle = null
+      agent.debugSocialConversation = false
       agent.glanceCooldown = 0
       agent.debugSpeedScale = Number.isFinite(Number(detail.speedScale)) ? Math.max(1, Number(detail.speedScale)) : 1
       return true
     }
+    const debugSocialPair = (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const store = useCityStore.getState()
+      const first = agents.find(item => item.id === detail.aId) || agents[0]
+      const second = agents.find(item => item.id === detail.bId && item !== first) || agents.find(item => item !== first)
+      if (!first || !second) return false
+      const spacing = Number.isFinite(Number(detail.spacing)) ? clampValue(Number(detail.spacing), 1.8, 4.6) : 2.8
+      const center = pedestrianSafeTarget({
+        x: Number.isFinite(Number(detail.x)) ? Number(detail.x) : 8,
+        z: Number.isFinite(Number(detail.z)) ? Number(detail.z) : 40,
+        y: 0,
+        name: 'debug social sidewalk',
+      }, { x: 8, z: 40 }, city.roads)
+      const aSpot = pedestrianSafeTarget({ x: center.x - spacing / 2, z: center.z, y: 0, name: center.name }, center, city.roads)
+      const bSpot = pedestrianSafeTarget({ x: center.x + spacing / 2, z: center.z, y: 0, name: center.name }, center, city.roads)
+      const [ax, az] = resolveBuildingCollision(city, aSpot.x, aSpot.z, aSpot.x, aSpot.z, 0.68)
+      const [bx, bz] = resolveBuildingCollision(city, bSpot.x, bSpot.z, bSpot.x, bSpot.z, 0.68)
+      first.pos.set(ax, terrainHeight(ax, az) + 0.95, az)
+      second.pos.set(bx, terrainHeight(bx, bz) + 0.95, bz)
+      first.heading = Math.atan2(second.pos.x - first.pos.x, second.pos.z - first.pos.z)
+      second.heading = Math.atan2(first.pos.x - second.pos.x, first.pos.z - second.pos.z)
+      for (const agent of [first, second]) {
+        agent.mission = null
+        agent.selfTaxi = null
+        agent.boardingTaxi = null
+        agent.walkRoute = null
+        agent.walkPlan = { mode: 'dwelling', targetName: 'verification sidewalk', waypointName: 'conversation spot', stableRoute: true, routePoints: 1 }
+        agent.activity = 'talking on the sidewalk'
+        agent.placeName = 'verification sidewalk'
+        agent.bumpTimer = 0
+        agent.fallTimer = 0
+        agent.bumpVelocity.set(0, 0)
+        agent.debugSocialConversation = true
+      }
+      const topic = conversationTopicFor(first, second, store.timeMinutes)
+      const seconds = Number.isFinite(Number(detail.seconds)) ? clampValue(Number(detail.seconds), 3, 20) : 8
+      first.talk(seconds, second, topic, store.timeMinutes)
+      second.talk(seconds, first, topic, store.timeMinutes)
+      store.addCityEvent(conversationEventFor(first, second, topic, store.timeMinutes, `debug_social_${Date.now()}`))
+      return {
+        aId: first.id,
+        bId: second.id,
+        topic: topic.label,
+      }
+    }
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
+    const onDebugSocialPair = event => debugSocialPair(event.detail || {})
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
-      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc }
+      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
+      window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
@@ -3337,6 +3491,7 @@ function NPCs({ city }) {
     return () => {
       if (import.meta.env.DEV && typeof window !== 'undefined') {
         window.removeEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
+        window.removeEventListener('realcity:debug-social-pair', onDebugSocialPair)
         if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
       }
       window.removeEventListener('keydown', onKey)
@@ -3463,6 +3618,18 @@ function NPCs({ city }) {
       <instancedMesh ref={cuffRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial map={textures.rubber} color="#10151c" vertexColors roughness={0.78} />
+      </instancedMesh>
+      <instancedMesh ref={speechCueRef} args={[undefined, undefined, agents.length]} frustumCulled={false} renderOrder={8}>
+        <sphereGeometry args={[1, 12, 8]} />
+        <meshBasicMaterial color="#f8fafc" transparent opacity={0.78} depthWrite={false} />
+      </instancedMesh>
+      <instancedMesh ref={phoneRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#111827" roughness={0.42} metalness={0.18} />
+      </instancedMesh>
+      <instancedMesh ref={gestureCueRef} args={[undefined, undefined, agents.length]} frustumCulled={false} renderOrder={8}>
+        <sphereGeometry args={[1, 10, 8]} />
+        <meshStandardMaterial color="#4aadff" emissive="#1f7fd1" emissiveIntensity={0.55} roughness={0.48} />
       </instancedMesh>
     </>
   )

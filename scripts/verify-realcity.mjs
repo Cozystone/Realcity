@@ -670,6 +670,7 @@ async function inspectActorRendering(page) {
       actor.bodyParts?.includes('hairBack') &&
       actor.bodyParts?.includes('faceMarks') &&
       actor.bodyParts?.includes('lapels') &&
+      actor.socialVisualCues?.speechCueInstances === actor.variation?.count &&
       actor.variation?.count > 100
   }, null, { timeout: 15000 })
 
@@ -680,6 +681,9 @@ async function inspectActorRendering(page) {
   assert(actor.rigScale?.armCapsuleTotalHeight === 0.53, 'NPC arm capsule proportions do not match the player avatar')
   assert(actor.rigScale?.legCapsuleTotalHeight === 0.65, 'NPC leg capsule proportions do not match the player avatar')
   assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'brows', 'nose', 'mouth', 'faceMarks', 'cheeks', 'arms', 'hands', 'legs', 'shoes', 'collar', 'lapels', 'badge', 'cuffs'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(['speechCue', 'phoneProp', 'gestureCue'].every(part => actor.bodyParts.includes(part)), `NPC social rendering cues are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(actor.socialVisualCues?.speechCueInstances === actor.variation.count && actor.socialVisualCues?.phonePropInstances === actor.variation.count, `NPC social cue instances do not match actor count: ${JSON.stringify(actor.socialVisualCues)}`)
+  assert(actor.socialVisualCues?.gestureStyleVariants >= 8 && actor.socialVisualCues?.partnerFacingRule, `NPC social gesture metadata is incomplete: ${JSON.stringify(actor.socialVisualCues)}`)
   assert(['collar', 'lapels', 'cheeks', 'front badge', 'pant cuffs'].every(part => actor.streetReadableDetails?.includes(part)), `NPC street-readable detail metadata is incomplete: ${(actor.streetReadableDetails || []).join(', ')}`)
   assert(actor.variation.heightVariants >= 8, `NPC height variation is too low in actor rendering: ${actor.variation.heightVariants}`)
   assert(actor.variation.bodyVariants >= 7, `NPC body type variation is too low in actor rendering: ${actor.variation.bodyVariants}`)
@@ -1371,6 +1375,17 @@ async function inspectCollisionAndMaterials(page) {
 }
 
 async function inspectAgentAutonomy(page) {
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const player = store?.player || { x: 0, z: 40 }
+    window.__REALCITY_NPC_DEBUG__?.startConversation?.({
+      x: player.x + 4,
+      z: player.z + 9,
+      spacing: 2.7,
+      seconds: 9,
+    })
+  })
+
   await page.waitForFunction(() => {
     const state = window.__REALCITY_STORE__?.getState()
     const samples = state?.pedestrianSamples || []
@@ -1378,6 +1393,7 @@ async function inspectAgentAutonomy(page) {
       (state?.cityEvents || []).some(event => event.kind === 'conversation' && event.partnerName && event.topic) &&
       samples.length > 100 &&
       samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0) &&
+      samples.filter(sample => sample.talkPartnerId && sample.visualGesture && sample.renderFacingPartner && sample.facingPartnerAngle < 0.9).length >= 2 &&
       samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionTopic).length >= 6 &&
       (samples.some(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName) ||
         (state?.cityEvents || []).some(event => event.kind === 'mobility' && /taxi/i.test(event.text || '')))
@@ -1393,6 +1409,7 @@ async function inspectAgentAutonomy(page) {
     const relationshipSamples = samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionPartner && sample.lastInteractionTopic)
     const taxiCommuters = samples.filter(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName)
     const autonomousTaxiVehicles = (state?.vehicleSamples || []).filter(sample => sample.routeMode === 'npc-autonomous-taxi' && sample.npcTaxiPhase && sample.npcTaxiTarget)
+    const socialVisualSamples = samples.filter(sample => sample.talkPartnerId && sample.visualGesture && sample.renderFacingPartner && sample.facingPartnerAngle < 0.9)
     return {
       cityEvents: cityEvents.length,
       eventKinds: [...new Set(cityEvents.map(event => event.kind).filter(Boolean))],
@@ -1421,6 +1438,15 @@ async function inspectAgentAutonomy(page) {
       relationshipSamples: relationshipSamples.length,
       taxiCommuters: taxiCommuters.length,
       autonomousTaxiVehicles: autonomousTaxiVehicles.length,
+      socialVisualSamples: socialVisualSamples.length,
+      socialGestureKinds: [...new Set(socialVisualSamples.map(sample => sample.visualGesture).filter(Boolean))],
+      partnerFacingSamples: socialVisualSamples.slice(0, 5).map(sample => ({
+        id: sample.id,
+        partner: sample.talkPartnerName,
+        topic: sample.talkTopicLabel,
+        gesture: sample.visualGesture,
+        angle: sample.facingPartnerAngle,
+      })),
       knownContactSamples: samples.filter(sample => Array.isArray(sample.knownContacts) && sample.knownContacts.length > 0).length,
       memorySamples: samples.filter(sample => sample.lastMemory).length,
       needSamples: samples.filter(sample => typeof sample.energy === 'number' && typeof sample.hunger === 'number' && typeof sample.socialNeed === 'number').length,
@@ -1445,6 +1471,8 @@ async function inspectAgentAutonomy(page) {
   assert(result.needSamples > 100, `NPC need samples are incomplete: ${result.needSamples}`)
   assert(result.relationshipStyles.length >= 6, `Runtime relationship styles are too sparse: ${result.relationshipStyles.join(', ')}`)
   assert(result.conversationEvents >= 1, 'NPC-to-NPC conversation events are missing from the live city feed')
+  assert(result.socialVisualSamples >= 2, `NPC-to-NPC conversations are not exposing rendered social cues: ${JSON.stringify(result.partnerFacingSamples)}`)
+  assert(result.socialGestureKinds.length >= 1, `NPC social gesture cues are missing: ${JSON.stringify(result.partnerFacingSamples)}`)
   assert(result.mobilityEvents >= 1, `NPC autonomous mobility events are missing: ${JSON.stringify(result.mobilityMetadata)}`)
   assert(result.conversationMetadata.every(event => event.agentName && event.partnerName && event.topic), `Conversation event metadata is incomplete: ${JSON.stringify(result.conversationMetadata)}`)
   assert(result.taxiCommuters >= 1, `No NPC is actively using a self-called taxi: ${JSON.stringify(result.intentSamples)}`)

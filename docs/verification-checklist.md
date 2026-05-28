@@ -46,6 +46,8 @@ audit has a clear finish line.
 - NPC social life and reactions: the harness verifies live NPC-to-NPC
   conversation events, relationship memory, and a deterministic nearby NPC
   glance/turn reaction that also surfaces in the city pulse.
+- NPC social visual cues: active conversations expose partner-facing body turns,
+  speech cues, phone/hand gesture props, and runtime gesture metadata.
 - Daily routine: the harness jumps city time through morning commute, workday,
   evening third-place time, and night; tracked NPCs must change scheduled target
   and activity across the day.
