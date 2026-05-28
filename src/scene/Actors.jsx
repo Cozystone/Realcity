@@ -3128,6 +3128,9 @@ function NPCs({ city }) {
       const cityPlaces = routePlacesForRequest(request, city, store.player)
       const distanceToWork = work ? Math.hypot(work.x - store.player.x, work.z - store.player.z) : 0
       const snapshot = best.snapshot(places)
+      if (!store.interaction || store.interaction.agent?.id !== best.id) {
+        store.openInteraction(snapshot)
+      }
       store.setInteraction({ status: 'thinking', request })
       store.showDialogue({ speaker: best.name, role: best.job, text: styleNpcSpeech(best, '잠깐 생각해볼게요...'), agent: snapshot })
 

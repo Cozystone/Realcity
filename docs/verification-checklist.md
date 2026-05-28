@@ -20,6 +20,9 @@ audit has a clear finish line.
   label, currently `ollama:dolphin3:latest`.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
   apps, shows callable NPC contacts, and has a music app entry point.
+- Phone social layer: the harness sends a message, places a call, and sends a
+  route-like request through a contact; the request must open an NPC interaction
+  and produce a mission owned by that contacted NPC.
 - Street norms: every road has a name, landmarks/buildings have road-name
   addresses, trees do not overlap road reserves, and social norm metadata exists
   for pedestrian/traffic/address rules.
@@ -51,8 +54,8 @@ audit has a clear finish line.
   direction at street-camera distance.
 - NPC social life: observe NPC-to-NPC talks near social places and confirm the
   city pulse reports nearby conversations.
-- Phone social layer: send messages to several contacts, place at least one
-  call, and confirm route-like text can trigger a contacted NPC action.
+- Phone social breadth: sample several different contacts and confirm their
+  replies, call text, and resulting action plans stay distinct to their persona.
 - Social reactions: pass close to standing NPCs and confirm they glance toward
   the avatar instead of behaving like static props.
 - Traffic norms: step into a lane and confirm nearby drivers brake/yield; taxis

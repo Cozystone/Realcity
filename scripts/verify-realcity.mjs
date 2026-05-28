@@ -809,7 +809,89 @@ async function inspectPhoneDirectTaxiDispatch(page) {
   assert(state?.source === 'player_taxi' && !state.agentId && !state.agentName, `Phone Taxi dispatched through an NPC instead of direct cab dispatch: ${JSON.stringify(state)}`)
   await page.locator('.phone-close').click()
   await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    if (store?.mission?.source === 'player_taxi') store.finishMission('Phone taxi verification complete.')
+  })
   return state
+}
+
+async function inspectPhoneSocialActions(page) {
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    if (store?.mission) store.finishMission('Phone social verification reset.')
+    store?.closeInteraction?.()
+  })
+
+  await page.locator('.phone-toggle').click()
+  await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+  await page.locator('.phone-tabs button[data-tab="messages"]').click()
+  const selectedName = (await page.locator('.phone-thread-title strong').innerText({ timeout: 5000 })).trim()
+  assert(selectedName, 'Phone messages did not expose a selected contact')
+
+  await page.locator('.phone-message-form input').fill('Where are you now?')
+  await page.locator('.phone-message-form button').click()
+  await page.waitForFunction(name => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.dialogue?.speaker === name &&
+      (state.cityEvents || []).some(event => event.kind === 'phone' && event.agentName === name && event.topic === 'message')
+  }, selectedName, { timeout: 10000 })
+  const messageThread = await page.locator('.phone-bubbles').innerText({ timeout: 5000 })
+  assert(messageThread.includes('Where are you now?'), `Phone message bubble was not rendered: ${messageThread}`)
+
+  await page.locator('.phone-tabs button[data-tab="contacts"]').click()
+  await page.locator('.phone-list article').first().locator('.phone-call-button').click()
+  await page.waitForFunction(name => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.dialogue?.speaker === name &&
+      (state.cityEvents || []).some(event => event.kind === 'phone' && event.agentName === name && event.topic === 'call')
+  }, selectedName, { timeout: 10000 })
+  const callState = await page.evaluate(name => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const event = (state?.cityEvents || []).find(item => item.kind === 'phone' && item.agentName === name && item.topic === 'call')
+    return { speaker: state?.dialogue?.speaker || null, eventText: event?.text || null }
+  }, selectedName)
+
+  await page.locator('.phone-tabs button[data-tab="messages"]').click()
+  await page.locator('.phone-message-form input').fill('Please take me to your workplace. Use a taxi if it is far.')
+  await page.locator('.phone-message-form button').click()
+  await page.waitForFunction(name => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.mission?.agentName === name &&
+      ['walk', 'taxi'].includes(state.mission.mode) &&
+      !!state.mission.destination &&
+      state.interaction?.agent?.name === name &&
+      state.interaction?.status === 'active'
+  }, selectedName, { timeout: 24000 })
+
+  const routeState = await page.evaluate(name => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const actionEvent = (state?.cityEvents || []).find(item => item.kind === 'phone' && item.agentName === name && item.topic === 'route request')
+    return {
+      selectedName: name,
+      missionAgent: state?.mission?.agentName || null,
+      missionMode: state?.mission?.mode || null,
+      missionPhase: state?.mission?.phase || null,
+      missionDestination: state?.mission?.destination?.name || state?.mission?.destination?.address || null,
+      interactionStatus: state?.interaction?.status || null,
+      interactionAgent: state?.interaction?.agent?.name || null,
+      actionEventText: actionEvent?.text || null,
+      latestPulse: state?.pulse || null,
+    }
+  }, selectedName)
+
+  const actionThread = await page.locator('.phone-bubbles').innerText({ timeout: 5000 })
+  assert(actionThread.includes('Action request forwarded'), `Phone action request did not leave a system bubble: ${actionThread}`)
+  assert(routeState.actionEventText?.includes('RealPhone action request'), `Phone route request was not recorded as a city event: ${JSON.stringify(routeState)}`)
+
+  await page.locator('.phone-close').click()
+  await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
+  return {
+    selectedName,
+    messageThread: messageThread.split(/\r?\n/).slice(-5),
+    callState,
+    routeState,
+  }
 }
 
 async function inspectCollisionAndMaterials(page) {
@@ -1560,6 +1642,7 @@ async function main() {
     const screenshotPath = path.join(artifactsDir, 'realcity-last-run.png')
     await page.screenshot({ path: screenshotPath, fullPage: false })
     const phoneDirectTaxi = await inspectPhoneDirectTaxiDispatch(page)
+    const phoneSocialActions = await inspectPhoneSocialActions(page)
     assert(consoleErrors.length === 0, `Console errors were reported: ${consoleErrors.join(' | ')}`)
     assert(pageErrors.length === 0, `Page errors were reported: ${pageErrors.join(' | ')}`)
 
@@ -1584,6 +1667,7 @@ async function main() {
       interiorState,
       phone,
       phoneDirectTaxi,
+      phoneSocialActions,
       controls: {
         headingChangedByA: Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)),
         arrowViewOffset: Math.abs(angleDiff(duringLook.viewHeading, duringLook.heading)),

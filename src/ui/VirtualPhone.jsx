@@ -233,19 +233,38 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     if (!selected || !draft.trim()) return
     const text = draft.trim()
     const reply = replyFor(selected, text, player, timeMinutes)
-    appendThread(selected, [
+    const actionRequested = isActionRequest(text)
+    const items = [
       { from: 'me', text },
       { from: 'them', text: reply },
-    ])
+    ]
+    if (actionRequested) {
+      items.push({
+        from: 'system',
+        text: `Action request forwarded to ${selected.name}. Watch the mission panel for their plan.`,
+      })
+    }
+    appendThread(selected, items)
     setDraft('')
 
     const store = useCityStore.getState()
     store.setPulse(`Phone message sent to ${selected.name}.`)
     store.showDialogue({ speaker: selected.name, role: selected.job, text: reply, agent: phoneAgent(selected) })
+    store.addCityEvent({
+      id: `phone_message_${selected.id}_${Date.now()}`,
+      kind: 'phone',
+      agentId: selected.id,
+      agentName: selected.name,
+      placeName: selected.placeName,
+      topic: actionRequested ? 'route request' : 'message',
+      text: actionRequested
+        ? `${selected.name} received a RealPhone action request: ${text}`
+        : `${selected.name} replied to a RealPhone message near ${selected.placeName}.`,
+    })
 
-    if (isActionRequest(text)) {
+    if (actionRequested) {
       window.dispatchEvent(new CustomEvent('realcity:npc-request', {
-        detail: { agentId: selected.id, text },
+        detail: { agentId: selected.id, text, source: 'phone' },
       }))
     }
   }
@@ -263,8 +282,18 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
     if (!contact) return
     const directText = cleanCallText(contact)
     appendThread(contact, [{ from: 'system', text: `Call connected with ${contact.name}.` }])
-    useCityStore.getState().showDialogue({ speaker: contact.name, role: contact.job, text: directText, agent: phoneAgent(contact) })
-    useCityStore.getState().setPulse(`Calling ${contact.name} through RealPhone.`)
+    const store = useCityStore.getState()
+    store.showDialogue({ speaker: contact.name, role: contact.job, text: directText, agent: phoneAgent(contact) })
+    store.setPulse(`Calling ${contact.name} through RealPhone.`)
+    store.addCityEvent({
+      id: `phone_call_${contact.id}_${Date.now()}`,
+      kind: 'phone',
+      agentId: contact.id,
+      agentName: contact.name,
+      placeName: contact.placeName,
+      topic: 'call',
+      text: `RealPhone call connected with ${contact.name} while they were ${contact.activity}.`,
+    })
     return
   }
 
@@ -353,6 +382,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <button
                     type="button"
                     key={contact.id}
+                    data-contact-id={contact.id}
                     className={contact.id === selected.id ? 'active' : ''}
                     onClick={() => setSelectedId(contact.id)}
                   >
@@ -389,7 +419,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
           {tab === 'contacts' ? (
             <div className="phone-app phone-list">
               {contacts.map(contact => (
-                <article key={contact.id} className={contact.id === selected?.id ? 'active' : ''}>
+                <article key={contact.id} data-contact-id={contact.id} className={contact.id === selected?.id ? 'active' : ''}>
                   <button type="button" onClick={() => { setSelectedId(contact.id); setTab('messages') }}>
                     <span>{contact.name.slice(0, 1)}</span>
                     <div>
@@ -397,7 +427,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <small>{contact.job} / {contact.workAddress || contact.relation}</small>
                     </div>
                   </button>
-                  <button type="button" onClick={() => callContact(contact)}>Call</button>
+                  <button type="button" className="phone-call-button" onClick={() => callContact(contact)}>Call</button>
                 </article>
               ))}
             </div>
