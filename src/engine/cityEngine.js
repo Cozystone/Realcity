@@ -1134,7 +1134,9 @@ function createTiles(buildings, landmarks) {
 
 function worldToLngLat(x, z) {
   const extent = 0.095
-  return [(x / CITY_WORLD_SIZE) * extent, (-z / CITY_WORLD_SIZE) * extent]
+  const safeX = Number.isFinite(Number(x)) ? Number(x) : 0
+  const safeZ = Number.isFinite(Number(z)) ? Number(z) : 0
+  return [(safeX / CITY_WORLD_SIZE) * extent, (-safeZ / CITY_WORLD_SIZE) * extent]
 }
 
 function createGeoJSON(roads, landmarks) {

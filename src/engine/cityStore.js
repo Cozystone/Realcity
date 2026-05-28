@@ -3,6 +3,11 @@ import { DAY_MINUTES } from './cityEngine'
 
 const PLAYER_COLORS = ['#4aadff', '#ffb703', '#8ac926', '#ff6b9d', '#a78bfa', '#2dd4bf', '#f97316']
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
 function randomToken() {
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     const values = new Uint32Array(1)
@@ -172,22 +177,34 @@ export const useCityStore = create((set, get) => ({
 
   setPlayer(player) {
     const current = get().player
+    const nextPlayer = {
+      ...current,
+      ...player,
+      x: finiteNumber(player?.x, current.x),
+      y: finiteNumber(player?.y, current.y),
+      z: finiteNumber(player?.z, current.z),
+      heading: finiteNumber(player?.heading, current.heading),
+      viewHeading: finiteNumber(player?.viewHeading ?? player?.heading, current.viewHeading ?? current.heading),
+      speed: finiteNumber(player?.speed, current.speed),
+      floor: Math.max(0, Math.floor(finiteNumber(player?.floor, current.floor || 0))),
+      floorCount: Math.max(0, Math.floor(finiteNumber(player?.floorCount, current.floorCount || 0))),
+    }
     if (
-      Math.abs(player.x - current.x) < 0.12 &&
-      Math.abs(player.y - current.y) < 0.12 &&
-      Math.abs(player.z - current.z) < 0.12 &&
-      Math.abs(player.heading - current.heading) < 0.008 &&
-      Math.abs((player.viewHeading ?? player.heading) - (current.viewHeading ?? current.heading)) < 0.008 &&
-      Math.abs(player.speed - current.speed) < 0.2 &&
-      (player.placeId || null) === (current.placeId || null) &&
-      !!player.indoors === !!current.indoors &&
-      (player.floor || 0) === (current.floor || 0) &&
-      (player.floorCount || 0) === (current.floorCount || 0) &&
-      (player.floorLabel || null) === (current.floorLabel || null) &&
-      (player.floorZone || null) === (current.floorZone || null)
+      Math.abs(nextPlayer.x - current.x) < 0.12 &&
+      Math.abs(nextPlayer.y - current.y) < 0.12 &&
+      Math.abs(nextPlayer.z - current.z) < 0.12 &&
+      Math.abs(nextPlayer.heading - current.heading) < 0.008 &&
+      Math.abs((nextPlayer.viewHeading ?? nextPlayer.heading) - (current.viewHeading ?? current.heading)) < 0.008 &&
+      Math.abs(nextPlayer.speed - current.speed) < 0.2 &&
+      (nextPlayer.placeId || null) === (current.placeId || null) &&
+      !!nextPlayer.indoors === !!current.indoors &&
+      (nextPlayer.floor || 0) === (current.floor || 0) &&
+      (nextPlayer.floorCount || 0) === (current.floorCount || 0) &&
+      (nextPlayer.floorLabel || null) === (current.floorLabel || null) &&
+      (nextPlayer.floorZone || null) === (current.floorZone || null)
     ) return
 
-    set({ player })
+    set({ player: nextPlayer })
   },
 
   setStats(stats) {

@@ -3280,7 +3280,8 @@ function NPCs({ city }) {
       agent.activity = detail.activity || 'available for directions'
       agent.placeName = detail.placeName || 'verification sidewalk'
       agent.currentIntent = 'ready to guide the player on foot'
-      agent.talkTimer = 0
+      agent.talkTimer = Number.isFinite(Number(detail.talkSeconds)) ? Math.max(0, Number(detail.talkSeconds)) : 0
+      agent.glanceCooldown = 0
       agent.debugSpeedScale = Number.isFinite(Number(detail.speedScale)) ? Math.max(1, Number(detail.speedScale)) : 1
       return true
     }

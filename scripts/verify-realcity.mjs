@@ -613,6 +613,55 @@ async function inspectSupportUX(page) {
   }
 }
 
+async function inspectMapCoordinateResilience(page) {
+  const result = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const city = window.__REALCITY_CITY__
+    if (!store || !city) return null
+    const original = { ...store.player }
+    const badLngLat = city.worldToLngLat(Number.NaN, Number.NaN)
+    store.setPlayer({
+      ...original,
+      x: Number.NaN,
+      y: Number.NaN,
+      z: Number.NaN,
+      heading: Number.NaN,
+      viewHeading: Number.NaN,
+      speed: Number.NaN,
+    })
+    const afterBadSet = { ...window.__REALCITY_STORE__.getState().player }
+    store.setPlayer(original)
+    return {
+      badLngLat,
+      original: {
+        x: original.x,
+        y: original.y,
+        z: original.z,
+        heading: original.heading,
+        viewHeading: original.viewHeading,
+        speed: original.speed,
+      },
+      afterBadSet: {
+        x: afterBadSet.x,
+        y: afterBadSet.y,
+        z: afterBadSet.z,
+        heading: afterBadSet.heading,
+        viewHeading: afterBadSet.viewHeading,
+        speed: afterBadSet.speed,
+      },
+    }
+  })
+  assert(result, 'Map coordinate resilience hooks were unavailable')
+  assert(result.badLngLat.every(Number.isFinite), `worldToLngLat did not sanitize NaN input: ${JSON.stringify(result)}`)
+  assert(Object.values(result.afterBadSet).every(value => Number.isFinite(Number(value))), `Player state accepted NaN coordinates: ${JSON.stringify(result)}`)
+
+  await page.locator('.map-shell').click()
+  await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
+  await page.locator('.full-map-header button').click()
+  await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
+  return result
+}
+
 async function inspectActorRendering(page) {
   await page.waitForFunction(() => {
     const actor = window.__REALCITY_ACTOR_RENDERING__
@@ -1398,6 +1447,113 @@ async function inspectAgentAutonomy(page) {
   return result
 }
 
+async function inspectDeterministicSocialReaction(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_STORE__ &&
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace &&
+    !!window.__REALCITY_NPC_DEBUG__?.placeNpc &&
+    (window.__REALCITY_STORE__?.getState()?.pedestrianSamples || []).length > 80
+  , null, { timeout: 10000 })
+
+  const setup = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const city = window.__REALCITY_CITY__
+    if (!store || !city || !window.__REALCITY_PLAYER_RIG__?.debugPlace || !window.__REALCITY_NPC_DEBUG__?.placeNpc) return null
+    const sample = (store.pedestrianSamples || [])
+      .find(item => item.id && !/taxi|riding|fallen|stumbling|boarding/i.test(item.state || ''))
+    const npc = city.npcs?.find(item => item.id === sample?.id) || city.npcs?.[0]
+    if (!npc) return null
+    const originalPlayer = { ...store.player }
+    const originalNpc = sample
+      ? {
+          id: sample.id,
+          x: sample.x,
+          z: sample.z,
+          heading: sample.heading || 0,
+          activity: sample.state || 'following schedule',
+          placeName: sample.placeName || 'original route',
+        }
+      : null
+    const player = { x: 0, z: 40, heading: Math.PI }
+    const npcPose = { x: player.x + 5.4, z: player.z + 1.2, heading: -Math.PI / 2 }
+    window.__REALCITY_PLAYER_RIG__.debugPlace(player)
+    window.__REALCITY_NPC_DEBUG__.placeNpc({
+      id: npc.id,
+      ...npcPose,
+      activity: 'standing and noticing the player',
+      placeName: 'Central Core plaza',
+      talkSeconds: 5,
+      speedScale: 1,
+    })
+    return {
+      agentId: npc.id,
+      agentName: npc.name,
+      player,
+      npcPose,
+      originalPlayer,
+      originalNpc,
+    }
+  })
+  assert(setup, 'Could not set up deterministic NPC social reaction verification')
+
+  await page.waitForFunction(agentId => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === agentId)
+    return sample &&
+      sample.playerDistance < 8 &&
+      ['glancing-at-player', 'turning-toward-player'].includes(sample.socialReaction) &&
+      typeof sample.facingPlayerAngle === 'number' &&
+      sample.facingPlayerAngle < 0.9
+  }, setup.agentId, { timeout: 10000 })
+
+  const reaction = await page.evaluate(agentId => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === agentId)
+    return {
+      id: sample?.id || null,
+      name: sample?.name || null,
+      playerDistance: sample?.playerDistance || null,
+      socialReaction: sample?.socialReaction || null,
+      facingPlayerAngle: sample?.facingPlayerAngle || null,
+      heading: sample?.heading || null,
+      placeName: sample?.placeName || null,
+      pulse: state?.pulse || '',
+    }
+  }, setup.agentId)
+  reaction.name = reaction.name || setup.agentName
+
+  assert(reaction.name && reaction.socialReaction, `NPC social reaction sample is incomplete: ${JSON.stringify(reaction)}`)
+  assert(/glances over|pass through/i.test(reaction.pulse), `NPC social reaction did not surface in city pulse: ${JSON.stringify(reaction)}`)
+
+  await page.evaluate(({ originalPlayer, originalNpc }) => {
+    if (originalPlayer && window.__REALCITY_PLAYER_RIG__?.debugPlace) {
+      window.__REALCITY_PLAYER_RIG__.debugPlace({
+        x: originalPlayer.x,
+        z: originalPlayer.z,
+        heading: originalPlayer.heading,
+      })
+    }
+    if (originalNpc && window.__REALCITY_NPC_DEBUG__?.placeNpc) {
+      window.__REALCITY_NPC_DEBUG__.placeNpc({
+        id: originalNpc.id,
+        x: originalNpc.x,
+        z: originalNpc.z,
+        heading: originalNpc.heading,
+        activity: originalNpc.activity,
+        placeName: originalNpc.placeName,
+      })
+    }
+  }, setup)
+
+  return {
+    agentName: reaction.name,
+    socialReaction: reaction.socialReaction,
+    playerDistance: reaction.playerDistance,
+    facingPlayerAngle: reaction.facingPlayerAngle,
+    pulse: reaction.pulse,
+  }
+}
+
 async function inspectDailyRoutineTimeShift(page) {
   const original = await page.evaluate(() => {
     const state = window.__REALCITY_STORE__?.getState()
@@ -2065,10 +2221,12 @@ async function main() {
     const actorRendering = await inspectActorRendering(page)
     const multiplayer = await inspectMultiplayer(page)
     const supportUX = await inspectSupportUX(page)
+    const mapCoordinateResilience = await inspectMapCoordinateResilience(page)
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
+    const socialReaction = await inspectDeterministicSocialReaction(page)
     const dailyRoutine = await inspectDailyRoutineTimeShift(page)
     const streetRendering = await inspectStreetRendering(page)
     const automaticDoors = await inspectAutomaticDoors(page)
@@ -2322,9 +2480,11 @@ async function main() {
       actorRendering,
       multiplayer,
       supportUX,
+      mapCoordinateResilience,
       skyState,
       collisionAndMaterials,
       agentAutonomy,
+      socialReaction,
       dailyRoutine,
       streetRendering,
       automaticDoors,

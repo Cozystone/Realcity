@@ -11,7 +11,9 @@ audit has a clear finish line.
 - Browser render: the main WebGL canvas must appear at desktop size and pass a
   canvas pixel/data check.
 - Full map: clicking the circular minimap must open a city-wide map with the
-  current player marker and landmark labels.
+  current player marker and landmark labels; map coordinate conversion and
+  player state updates must sanitize `NaN` so MapLibre never receives invalid
+  `LngLat` centers.
 - Control model: `A` rotates avatar heading without translating the avatar.
 - Free-look model: arrow keys change only temporary camera view, and the view
   returns behind the avatar after release.
@@ -35,6 +37,9 @@ audit has a clear finish line.
 - NPC identity and autonomy metadata: all NPCs must expose unique names,
   persona signatures, appearance signatures, jobs, speech styles, home/work/
   third-place schedule data, needs, memories, and relationship state.
+- NPC social life and reactions: the harness verifies live NPC-to-NPC
+  conversation events, relationship memory, and a deterministic nearby NPC
+  glance/turn reaction that also surfaces in the city pulse.
 - Daily routine: the harness jumps city time through morning commute, workday,
   evening third-place time, and night; tracked NPCs must change scheduled target
   and activity across the day.
@@ -77,12 +82,14 @@ audit has a clear finish line.
 - Human model readability: confirm player and NPCs have visible front-facing
   face cues, hair/back cues, clothing detail, hands/feet, and readable walking
   direction at street-camera distance.
-- NPC social life: observe NPC-to-NPC talks near social places and confirm the
-  city pulse reports nearby conversations.
+- NPC social life visual pass: observe NPC-to-NPC talks near social places and
+  confirm the rendered poses face each other believably, beyond the automated
+  event/relationship checks.
 - Phone social breadth: sample several different contacts and confirm their
   replies, call text, and resulting action plans stay distinct to their persona.
-- Social reactions: pass close to standing NPCs and confirm they glance toward
-  the avatar instead of behaving like static props.
+- Social reactions visual pass: pass close to several standing NPCs and confirm
+  the rendered body/head direction reads as a natural glance, beyond the
+  automated reaction-state check.
 - Traffic norms: step into a lane and confirm nearby drivers brake/yield; taxis
   must be visually distinguishable from private cars.
 - Pedestrian norms: observe NPCs near roads and confirm they favor sidewalks,

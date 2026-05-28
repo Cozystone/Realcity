@@ -19,16 +19,40 @@ function activeTaxiPose(mission, ride) {
   return ride?.taxiPose || mission?.taxi?.pose || null
 }
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+function finitePoint(point, fallback = { x: 0, z: 40 }) {
+  return {
+    x: finiteNumber(point?.x, fallback.x),
+    z: finiteNumber(point?.z, fallback.z),
+  }
+}
+
+function hasFinitePoint(point) {
+  return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z))
+}
+
+function safeLngLat(city, x, z, fallback = { x: 0, z: 40 }) {
+  const point = finitePoint({ x, z }, fallback)
+  const coords = city.worldToLngLat(point.x, point.z)
+  if (Number.isFinite(coords?.[0]) && Number.isFinite(coords?.[1])) return coords
+  return city.worldToLngLat(fallback.x, fallback.z)
+}
+
 function routeGeoJSON(city, route) {
+  const points = (route || []).filter(hasFinitePoint)
   return {
     type: 'FeatureCollection',
-    features: route?.length >= 2
+    features: points.length >= 2
       ? [{
           type: 'Feature',
           properties: { layer: 'taxi-route' },
           geometry: {
             type: 'LineString',
-            coordinates: route.map(point => city.worldToLngLat(point.x, point.z)),
+            coordinates: points.map(point => safeLngLat(city, point.x, point.z)),
           },
         }]
       : [],
@@ -93,26 +117,27 @@ function buildingGeoJSON(city) {
 function sampleGeoJSON(city, samples) {
   return {
     type: 'FeatureCollection',
-    features: samples.map(sample => ({
+    features: samples.filter(hasFinitePoint).map(sample => ({
       type: 'Feature',
       properties: {
         id: sample.id,
         kind: sample.kind || sample.state || 'person',
         assignment: sample.assignment || '',
       },
-      geometry: { type: 'Point', coordinates: city.worldToLngLat(sample.x, sample.z) },
+      geometry: { type: 'Point', coordinates: safeLngLat(city, sample.x, sample.z) },
     })),
   }
 }
 
 function formatCoordinate(value) {
-  return Math.abs(value).toFixed(5)
+  return Math.abs(finiteNumber(value)).toFixed(5)
 }
 
 function nearestAddress(city, x, z) {
+  const point = finitePoint({ x, z })
   let nearest = null
   for (const place of city.addressBook || []) {
-    const distance = Math.hypot(place.x - x, place.z - z)
+    const distance = Math.hypot(place.x - point.x, place.z - point.z)
     if (!nearest || distance < nearest.distance) nearest = { ...place, distance }
   }
   if (nearest?.address) return nearest
@@ -120,7 +145,7 @@ function nearestAddress(city, x, z) {
   let roadMatch = city.roads?.[0] || null
   let roadDistance = Infinity
   for (const road of city.roads || []) {
-    const distance = road.axis === 'x' ? Math.abs(z - road.z) : Math.abs(x - road.x)
+    const distance = road.axis === 'x' ? Math.abs(point.z - road.z) : Math.abs(point.x - road.x)
     if (distance < roadDistance) {
       roadDistance = distance
       roadMatch = road
@@ -135,17 +160,21 @@ function clamp(value, min, max) {
 }
 
 function clampMapCenter(center, zoom) {
-  const span = CITY_WORLD_SIZE / zoom
+  const safeZoom = Math.max(0.1, finiteNumber(zoom, 1))
+  const safeCenter = finitePoint(center, { x: 0, z: 40 })
+  const span = CITY_WORLD_SIZE / safeZoom
   const edge = span / 2
   return {
-    x: clamp(center.x, -CITY_HALF + edge, CITY_HALF - edge),
-    z: clamp(center.z, -CITY_HALF + edge, CITY_HALF - edge),
+    x: clamp(safeCenter.x, -CITY_HALF + edge, CITY_HALF - edge),
+    z: clamp(safeCenter.z, -CITY_HALF + edge, CITY_HALF - edge),
   }
 }
 
 function mapViewport(center, zoom) {
-  const span = CITY_WORLD_SIZE / zoom
-  return `${center.x - span / 2} ${center.z - span / 2} ${span} ${span}`
+  const safeCenter = finitePoint(center, { x: 0, z: 40 })
+  const safeZoom = Math.max(0.1, finiteNumber(zoom, 1))
+  const span = CITY_WORLD_SIZE / safeZoom
+  return `${safeCenter.x - span / 2} ${safeCenter.z - span / 2} ${span} ${span}`
 }
 
 function roadTextTransform(road) {
@@ -156,14 +185,15 @@ function roadTextTransform(road) {
 function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSamples }) {
   const container = useRef(null)
   const map = useRef(null)
-  const viewHeading = player.viewHeading ?? player.heading
+  const safePlayer = finitePoint(player, { x: 0, z: 40 })
+  const viewHeading = finiteNumber(player.viewHeading ?? player.heading, Math.PI)
   const route = activeTaxiRoute(mission, ride)
   const mapData = useMemo(() => cityMapGeoJSON(city), [city])
   const buildingData = useMemo(() => buildingGeoJSON(city), [city])
   const gps = useMemo(() => {
-    const [lng, lat] = city.worldToLngLat(player.x, player.z)
-    return { lng, lat, address: nearestAddress(city, player.x, player.z)?.address || player.district }
-  }, [city, player.x, player.z, player.district])
+    const [lng, lat] = safeLngLat(city, safePlayer.x, safePlayer.z)
+    return { lng, lat, address: nearestAddress(city, safePlayer.x, safePlayer.z)?.address || player.district }
+  }, [city, safePlayer.x, safePlayer.z, player.district])
 
   useEffect(() => {
     if (!container.current || map.current) return
@@ -172,7 +202,7 @@ function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSample
       container: container.current,
       attributionControl: false,
       interactive: false,
-      center: city.worldToLngLat(player.x, player.z),
+      center: safeLngLat(city, safePlayer.x, safePlayer.z),
       zoom: 13.2,
       bearing: 0,
       pitch: 0,
@@ -299,11 +329,11 @@ function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSample
   useEffect(() => {
     if (!map.current) return
     map.current.jumpTo({
-      center: city.worldToLngLat(player.x, player.z),
+      center: safeLngLat(city, safePlayer.x, safePlayer.z),
       bearing: (viewHeading * 180) / Math.PI,
       zoom: 13.6,
     })
-  }, [city, player.x, player.z, viewHeading])
+  }, [city, safePlayer.x, safePlayer.z, viewHeading])
 
   useEffect(() => {
     const source = map.current?.getSource('taxiRoute')
@@ -776,17 +806,19 @@ function placeColor(kind) {
 }
 
 function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSamples, onClose }) {
-  const heading = ((player.viewHeading ?? player.heading) * 180) / Math.PI
+  const safePlayer = finitePoint(player, { x: 0, z: 40 })
+  const heading = (finiteNumber(player.viewHeading ?? player.heading, Math.PI) * 180) / Math.PI
   const route = activeTaxiRoute(mission, ride)
-  const taxi = activeTaxiPose(mission, ride)
-  const taxiHeading = taxi ? ((taxi.heading ?? taxi.yaw ?? 0) * 180) / Math.PI : 0
+  const taxiPose = activeTaxiPose(mission, ride)
+  const taxi = hasFinitePoint(taxiPose) ? taxiPose : null
+  const taxiHeading = taxi ? (finiteNumber(taxi.heading ?? taxi.yaw, 0) * 180) / Math.PI : 0
   const [zoom, setZoom] = useState(1)
-  const [center, setCenter] = useState(() => clampMapCenter({ x: player.x, z: player.z }, 1))
+  const [center, setCenter] = useState(() => clampMapCenter(safePlayer, 1))
   const [followGps, setFollowGps] = useState(true)
   const drag = useRef(null)
   const gps = useMemo(() => {
-    const [lng, lat] = city.worldToLngLat(player.x, player.z)
-    const fix = nearestAddress(city, player.x, player.z)
+    const [lng, lat] = safeLngLat(city, safePlayer.x, safePlayer.z)
+    const fix = nearestAddress(city, safePlayer.x, safePlayer.z)
     return {
       lng,
       lat,
@@ -794,27 +826,28 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
       label: fix?.name || player.district,
       accuracy: `${Math.max(4, Math.min(28, Math.round((fix?.distance || 0) * 0.08 + 5)))}m`,
     }
-  }, [city, player.x, player.z, player.district])
-  const visibleVehicles = useMemo(() => vehicleSamples.slice(0, 140), [vehicleSamples])
-  const visiblePedestrians = useMemo(() => pedestrianSamples.slice(0, 120), [pedestrianSamples])
+  }, [city, safePlayer.x, safePlayer.z, player.district])
+  const visibleVehicles = useMemo(() => vehicleSamples.filter(hasFinitePoint).slice(0, 140), [vehicleSamples])
+  const visiblePedestrians = useMemo(() => pedestrianSamples.filter(hasFinitePoint).slice(0, 120), [pedestrianSamples])
   const primaryRoads = useMemo(() => city.roads.filter(road => road.main), [city.roads])
-  const activeRoutePoints = useMemo(() => route.map(point => `${point.x},${point.z}`).join(' '), [route])
+  const routePoints = useMemo(() => route.filter(hasFinitePoint), [route])
+  const activeRoutePoints = useMemo(() => routePoints.map(point => `${point.x},${point.z}`).join(' '), [routePoints])
 
   useEffect(() => {
     if (!followGps) return
-    setCenter(clampMapCenter({ x: player.x, z: player.z }, zoom))
-  }, [followGps, player.x, player.z, zoom])
+    setCenter(clampMapCenter(safePlayer, zoom))
+  }, [followGps, safePlayer.x, safePlayer.z, zoom])
 
   const changeZoom = useCallback((factor) => {
     const nextZoom = clamp(zoom * factor, 0.82, 5.2)
     setZoom(nextZoom)
-    setCenter(current => clampMapCenter(followGps ? { x: player.x, z: player.z } : current, nextZoom))
-  }, [followGps, player.x, player.z, zoom])
+    setCenter(current => clampMapCenter(followGps ? safePlayer : current, nextZoom))
+  }, [followGps, safePlayer.x, safePlayer.z, zoom])
 
   const recenter = useCallback(() => {
     setFollowGps(true)
-    setCenter(clampMapCenter({ x: player.x, z: player.z }, zoom))
-  }, [player.x, player.z, zoom])
+    setCenter(clampMapCenter(safePlayer, zoom))
+  }, [safePlayer.x, safePlayer.z, zoom])
 
   const onPointerDown = useCallback((event) => {
     if (event.button !== 0) return
@@ -932,7 +965,7 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
                 </text>
               ))}
             </g>
-            {route.length >= 2 ? (
+            {routePoints.length >= 2 ? (
               <>
                 <polyline className="full-map-route-halo" points={activeRoutePoints} />
                 <polyline className="full-map-route" points={activeRoutePoints} />
@@ -952,7 +985,7 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
                 <g
                   key={vehicle.id}
                   className={vehicle.kind === 'taxi' ? 'taxi' : 'car'}
-                  transform={`translate(${vehicle.x} ${vehicle.z}) rotate(${((vehicle.heading || 0) * 180) / Math.PI})`}
+                  transform={`translate(${vehicle.x} ${vehicle.z}) rotate(${(finiteNumber(vehicle.heading, 0) * 180) / Math.PI})`}
                 >
                   <rect x="-6" y="-12" width="12" height="24" rx="3" />
                 </g>
@@ -969,7 +1002,7 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
                 <rect x="-10" y="-7" width="20" height="16" rx="3" />
               </g>
             ) : null}
-            <g className="full-map-player" transform={`translate(${player.x} ${player.z}) rotate(${heading})`}>
+            <g className="full-map-player" transform={`translate(${safePlayer.x} ${safePlayer.z}) rotate(${heading})`}>
               <circle r="22" />
               <path d="M 0 -38 L 16 18 L 0 8 L -16 18 Z" />
             </g>
