@@ -1670,6 +1670,9 @@ async function inspectStreetRendering(page) {
   assert(result.facadeDetails?.physicalMullions >= 1000 && result.facadeDetails?.windowSills >= 1000, `Facade physical window detail is too sparse: ${JSON.stringify(result.facadeDetails)}`)
   assert(result.facadeDetails?.facadeBands >= 500 && result.facadeDetails?.acUnits >= 120 && result.facadeDetails?.drainPipes >= 300, `Facade service/material breakup is incomplete: ${JSON.stringify(result.facadeDetails)}`)
   assert(result.facadeDetails?.balconySideRails >= result.facadeDetails?.balconyDecks * 2, `Balconies lack side-return rails: ${JSON.stringify(result.facadeDetails)}`)
+  assert(result.buildingAccess?.visibleDirectoryBoards > 300 && result.buildingAccess?.visibleCoreWayfindingSigns > 300, `Lobby wayfinding boards are too sparse: ${JSON.stringify(result.buildingAccess)}`)
+  assert(result.buildingAccess?.visibleConciergeDesks > 300 && result.buildingAccess?.visibleQueueRails > 600, `Lobby furniture and queue rails are too sparse: ${JSON.stringify(result.buildingAccess)}`)
+  assert(result.buildingAccess?.readableDirectoryLabels >= 60 && /floor directories/i.test(result.buildingAccess?.interiorVisualRule || ''), `Readable interior directory metadata is incomplete: ${JSON.stringify(result.buildingAccess)}`)
   return result
 }
 

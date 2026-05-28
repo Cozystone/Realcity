@@ -84,6 +84,16 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+function coreLabelFor(interior) {
+  if (interior?.verticalCore === 'elevator') return 'Elevator'
+  if (interior?.verticalCore === 'escalator') return 'Escalator'
+  return 'Stairs'
+}
+
+function buildingDirectoryName(building) {
+  return building.address || building.name || `${building.type || 'City'} lobby`
+}
+
 function useRoadLayout(roads) {
   return useMemo(() => {
     const vertical = roads.filter(road => road.axis === 'z')
@@ -894,6 +904,10 @@ function BuildingInteriorHints({ buildings }) {
   const lobbyRef = useRef()
   const coreRef = useRef()
   const canopyRef = useRef()
+  const directoryRef = useRef()
+  const coreSignRef = useRef()
+  const deskRef = useRef()
+  const queueRailRef = useRef()
   const doorStateRef = useRef([])
   const metadataFrameRef = useRef(0)
   const doorDummyRef = useRef(new THREE.Object3D())
@@ -902,11 +916,16 @@ function BuildingInteriorHints({ buildings }) {
     const lobbies = []
     const cores = []
     const canopies = []
+    const directories = []
+    const coreSigns = []
+    const desks = []
+    const queueRails = []
+    const labels = []
     const doorBuildingIds = new Set()
     ;[...buildings]
       .filter(building => building.interior && Math.hypot(building.x, building.z) < CITY_GRID_HALF * 0.9)
       .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
-      .forEach((building) => {
+      .forEach((building, index) => {
         const interior = building.interior
         const face = entryFaceForBuilding(building)
         const faceLen = faceLength(building, face)
@@ -927,6 +946,13 @@ function BuildingInteriorHints({ buildings }) {
         const openSlide = clamp(doorWidth * 0.32, 0.9, 2.6)
         const triggerRadius = clamp(doorWidth * 0.48 + lobbyDepth * 0.22, 5.2, 9.5)
         const entryWorld = localToWorld(building, faceLocal(building, face, 0, 1.2, 1.8))
+        const labelWorld = localToWorld(building, faceLocal(building, face, 0, 4.05, 1.05))
+        const directoryAlong = -Math.min(faceLen * 0.22, Math.max(1.4, doorWidth * 0.7))
+        const coreSignAlong = Math.min(faceLen * 0.22, Math.max(1.4, doorWidth * 0.7))
+        const directoryWidth = clamp(doorWidth * 0.28 + 0.75, 1.15, 2.1)
+        const coreSignWidth = clamp(doorWidth * 0.42 + 1.1, 1.8, 3.4)
+        const coreLabel = coreLabelFor(interior)
+        const floors = interior.floors || interior.floorCount || 1
 
         doorBuildingIds.add(building.id)
         ;[-1, 1].forEach(side => {
@@ -947,8 +973,36 @@ function BuildingInteriorHints({ buildings }) {
         lobbies.push(facePart(building, face, 0, 0.11, lobbyWidth, 0.07, -lobbyDepth / 2, lobbyDepth))
         cores.push(facePart(building, face, coreAlong, coreHeight / 2, coreWidth, coreHeight, -coreDepth, coreThickness))
         canopies.push(facePart(building, face, 0, 3.7, Math.min(faceLen * 0.68, doorWidth + 2.2), 0.22, 0.86, 1.05))
+        directories.push(facePart(building, face, directoryAlong, 2.12, directoryWidth, 1.72, 0.58, 0.08))
+        coreSigns.push(facePart(building, face, coreSignAlong, 2.62, coreSignWidth, 0.56, 0.6, 0.08))
+        desks.push(facePart(building, face, 0, 0.62, clamp(lobbyWidth * 0.48, 2.6, 6.2), 1.04, -Math.max(1.55, lobbyDepth * 0.36), 1.08))
+        ;[-1, 1].forEach(side => {
+          queueRails.push(facePart(building, face, side * clamp(lobbyWidth * 0.23, 1.4, 3.6), 0.72, 0.08, 1.15, -Math.max(1.9, lobbyDepth * 0.48), clamp(lobbyDepth * 0.34, 1.8, 4.8)))
+        })
+        if (index < 96) {
+          labels.push({
+            id: building.id,
+            name: buildingDirectoryName(building),
+            coreLabel,
+            floors,
+            x: labelWorld.x,
+            y: labelWorld.y,
+            z: labelWorld.z,
+          })
+        }
       })
-    return { doors, lobbies, cores, canopies, doorBuildingCount: doorBuildingIds.size }
+    return {
+      doors,
+      lobbies,
+      cores,
+      canopies,
+      directories,
+      coreSigns,
+      desks,
+      queueRails,
+      labels,
+      doorBuildingCount: doorBuildingIds.size,
+    }
   }, [buildings])
 
   useEffect(() => {
@@ -960,6 +1014,12 @@ function BuildingInteriorHints({ buildings }) {
         automaticDoorRule: 'two sliding glass panels open near the player and close after the doorway clears',
         visibleLobbies: details.lobbies.length,
         visibleVerticalCores: details.cores.length,
+        visibleDirectoryBoards: details.directories.length,
+        visibleCoreWayfindingSigns: details.coreSigns.length,
+        visibleConciergeDesks: details.desks.length,
+        visibleQueueRails: details.queueRails.length,
+        readableDirectoryLabels: details.labels.length,
+        interiorVisualRule: 'lobbies include floor directories, core wayfinding signs, desks, and queue rails',
         doorRule: 'procedural buildings expose one street-facing solid entry portal',
         verticalTravel: 'PageUp/PageDown changes floors while indoors',
       },
@@ -967,16 +1027,33 @@ function BuildingInteriorHints({ buildings }) {
   }, [details])
 
   useLayoutEffect(() => {
-    if (!doorRef.current || !lobbyRef.current || !coreRef.current || !canopyRef.current) return
+    if (
+      !doorRef.current ||
+      !lobbyRef.current ||
+      !coreRef.current ||
+      !canopyRef.current ||
+      !directoryRef.current ||
+      !coreSignRef.current ||
+      !deskRef.current ||
+      !queueRailRef.current
+    ) return
     const dummy = new THREE.Object3D()
     details.doors.forEach((item, i) => setLocalInstance(doorRef.current, i, dummy, item.building, item.local, item.scale))
     details.lobbies.forEach((item, i) => setLocalInstance(lobbyRef.current, i, dummy, item.building, item.local, item.scale))
     details.cores.forEach((item, i) => setLocalInstance(coreRef.current, i, dummy, item.building, item.local, item.scale))
     details.canopies.forEach((item, i) => setLocalInstance(canopyRef.current, i, dummy, item.building, item.local, item.scale))
+    details.directories.forEach((item, i) => setLocalInstance(directoryRef.current, i, dummy, item.building, item.local, item.scale))
+    details.coreSigns.forEach((item, i) => setLocalInstance(coreSignRef.current, i, dummy, item.building, item.local, item.scale))
+    details.desks.forEach((item, i) => setLocalInstance(deskRef.current, i, dummy, item.building, item.local, item.scale))
+    details.queueRails.forEach((item, i) => setLocalInstance(queueRailRef.current, i, dummy, item.building, item.local, item.scale))
     doorRef.current.instanceMatrix.needsUpdate = true
     lobbyRef.current.instanceMatrix.needsUpdate = true
     coreRef.current.instanceMatrix.needsUpdate = true
     canopyRef.current.instanceMatrix.needsUpdate = true
+    directoryRef.current.instanceMatrix.needsUpdate = true
+    coreSignRef.current.instanceMatrix.needsUpdate = true
+    deskRef.current.instanceMatrix.needsUpdate = true
+    queueRailRef.current.instanceMatrix.needsUpdate = true
   }, [details])
 
   useFrame((_, delta) => {
@@ -1022,6 +1099,12 @@ function BuildingInteriorHints({ buildings }) {
           automaticDoorPanels: details.doors.length,
           automaticDoorBuildings: details.doorBuildingCount,
           automaticDoorRule: 'two sliding glass panels open near the player and close after the doorway clears',
+          visibleDirectoryBoards: details.directories.length,
+          visibleCoreWayfindingSigns: details.coreSigns.length,
+          visibleConciergeDesks: details.desks.length,
+          visibleQueueRails: details.queueRails.length,
+          readableDirectoryLabels: details.labels.length,
+          interiorVisualRule: 'lobbies include floor directories, core wayfinding signs, desks, and queue rails',
           openDoorPanels: openPanels,
           openDoorBuildings: openDoorIds.size,
           openDoorIds: [...openDoorIds],
@@ -1050,6 +1133,52 @@ function BuildingInteriorHints({ buildings }) {
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#24313a" roughness={0.36} metalness={0.42} emissive="#10202b" emissiveIntensity={0.16} />
       </instancedMesh>
+      <instancedMesh ref={directoryRef} args={[undefined, undefined, details.directories.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#10202b" roughness={0.28} metalness={0.34} emissive="#2dd4bf" emissiveIntensity={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={coreSignRef} args={[undefined, undefined, details.coreSigns.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#0f1720" roughness={0.24} metalness={0.36} emissive="#ffd447" emissiveIntensity={0.52} />
+      </instancedMesh>
+      <instancedMesh ref={deskRef} args={[undefined, undefined, details.desks.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#6b7280" roughness={0.5} metalness={0.16} />
+      </instancedMesh>
+      <instancedMesh ref={queueRailRef} args={[undefined, undefined, details.queueRails.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#c8d4d8" roughness={0.26} metalness={0.62} />
+      </instancedMesh>
+      {details.labels.map(label => (
+        <Billboard key={`directory-${label.id}`} position={[label.x, label.y, label.z]}>
+          <mesh position={[0, 0, -0.01]}>
+            <planeGeometry args={[2.35, 0.58]} />
+            <meshBasicMaterial color="#07111c" transparent opacity={0.74} depthWrite={false} />
+          </mesh>
+          <Text
+            position={[0, 0.12, 0]}
+            fontSize={0.1}
+            maxWidth={2.1}
+            textAlign="center"
+            color="#f8fbff"
+            outlineWidth={0.008}
+            outlineColor="#07111c"
+          >
+            {label.name}
+          </Text>
+          <Text
+            position={[0, -0.1, 0]}
+            fontSize={0.078}
+            maxWidth={2.1}
+            textAlign="center"
+            color="#b8f2ff"
+            outlineWidth={0.007}
+            outlineColor="#07111c"
+          >
+            {`${label.coreLabel} / ${label.floors}F`}
+          </Text>
+        </Billboard>
+      ))}
     </>
   )
 }

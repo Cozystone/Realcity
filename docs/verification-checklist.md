@@ -62,6 +62,9 @@ audit has a clear finish line.
 - Interior state and floors: the harness places the actual avatar rig inside a
   multi-floor building, confirms the HUD switches to that building interior,
   tests PageUp/PageDown floor movement, then restores the avatar.
+- Interior visual detail: procedural lobbies expose visible directory boards,
+  elevator/stair/escalator wayfinding, concierge desks, queue rails, and
+  readable central-city directory labels.
 - Player physics: the harness jumps with Space and confirms an arc plus gravity
   return, then drives the avatar into a blocked building side wall and confirms
   the player cannot clip into the solid footprint.
