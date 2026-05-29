@@ -967,6 +967,7 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
   const [center, setCenter] = useState(() => clampMapCenter(safePlayer, 1))
   const [followGps, setFollowGps] = useState(true)
   const drag = useRef(null)
+  const mapSvgRef = useRef(null)
   const gps = useMemo(() => {
     const [lng, lat] = safeLngLat(city, safePlayer.x, safePlayer.z)
     const fix = nearestAddress(city, safePlayer.x, safePlayer.z)
@@ -1117,10 +1118,16 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }, [])
 
-  const onWheel = useCallback((event) => {
-    event.preventDefault()
-    setFollowGps(false)
-    changeZoom(event.deltaY < 0 ? 1.18 : 0.84)
+  useEffect(() => {
+    const node = mapSvgRef.current
+    if (!node) return undefined
+    const onWheel = (event) => {
+      event.preventDefault()
+      setFollowGps(false)
+      changeZoom(event.deltaY < 0 ? 1.18 : 0.84)
+    }
+    node.addEventListener('wheel', onWheel, { passive: false })
+    return () => node.removeEventListener('wheel', onWheel)
   }, [changeZoom])
 
   return (
@@ -1135,6 +1142,7 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
         </div>
         <div className="full-map-body">
           <svg
+            ref={mapSvgRef}
             className="full-city-map"
             viewBox={mapViewport(center, zoom)}
             data-zoom={zoom.toFixed(2)}
@@ -1145,7 +1153,6 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
-            onWheel={onWheel}
             onDoubleClick={(event) => {
               event.preventDefault()
               setFollowGps(false)

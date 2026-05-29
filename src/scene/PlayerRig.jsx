@@ -30,6 +30,19 @@ function smoothstep(t) {
   return t * t * (3 - 2 * t)
 }
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+function finitePoint2(point) {
+  return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z))
+}
+
+function finiteRoute(points = []) {
+  return points.filter(finitePoint2)
+}
+
 function isTypingTarget(target) {
   return !!target?.closest?.('input, textarea, select, button')
 }
@@ -436,44 +449,65 @@ export default function PlayerRig({ city }) {
     const store = useCityStore.getState()
     store.tick(dt)
     const ride = store.ride
+    if (!Number.isFinite(pos.current.x) || !Number.isFinite(pos.current.y) || !Number.isFinite(pos.current.z)) {
+      pos.current.set(0, terrainHeight(0, 40) + 1.1, 40)
+      heading.current = Math.PI
+      velocityY.current = 0
+      store.setPulse('Recovered camera position after invalid movement data.')
+    }
 
     if (ride) {
       floorLevel.current = 0
+      const startedAt = finiteNumber(ride.startedAt, performance.now())
+      const duration = Math.max(0.5, finiteNumber(ride.duration, 6))
+      const t = Math.min(1, Math.max(0, (performance.now() - startedAt) / (duration * 1000)))
       if (ride.path?.length >= 2) {
-        const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
-        const distance = (ride.routeMeters || 1) * t
-        const pose = sampleRoute(ride.path, distance)
-        heading.current = pose.heading
+        const path = finiteRoute(ride.path)
+        const routeMeters = Math.max(1, finiteNumber(ride.routeMeters, 1))
+        if (path.length < 2) {
+          store.finishRide('Taxi ride stopped because route data was invalid.')
+          return
+        }
+        const distance = routeMeters * t
+        const pose = sampleRoute(path, distance)
+        if (!finitePoint2(pose)) {
+          store.finishRide('Taxi ride stopped because route position was invalid.')
+          return
+        }
+        heading.current = finiteNumber(pose.heading, heading.current)
         pos.current.set(pose.x, terrainHeight(pose.x, pose.z) + 1.1, pose.z)
-        ride.taxiPose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+        ride.taxiPose = { x: pose.x, z: pose.z, heading: heading.current, yaw: heading.current }
         ride.progress = t
         moving.current = true
         running.current = false
         grounded.current = true
         velocityY.current = 0
         if (t >= 1) {
-          if (ride.exitPoint) {
+          if (finitePoint2(ride.exitPoint)) {
             pos.current.set(ride.exitPoint.x, terrainHeight(ride.exitPoint.x, ride.exitPoint.z) + 1.1, ride.exitPoint.z)
           }
           store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
         }
       } else {
-      const t = Math.min(1, (performance.now() - ride.startedAt) / (ride.duration * 1000))
-      const eased = smoothstep(t)
-      const x = ride.from.x + (ride.to.x - ride.from.x) * eased
-      const z = ride.from.z + (ride.to.z - ride.from.z) * eased
-      heading.current = Math.atan2(ride.to.x - ride.from.x, ride.to.z - ride.from.z)
-      pos.current.set(x, terrainHeight(x, z) + 1.1, z)
-      moving.current = true
-      running.current = false
-      grounded.current = true
-      velocityY.current = 0
-      if (t >= 1) {
-        if (ride.exitPoint) {
-          pos.current.set(ride.exitPoint.x, terrainHeight(ride.exitPoint.x, ride.exitPoint.z) + 1.1, ride.exitPoint.z)
+        if (!finitePoint2(ride.from) || !finitePoint2(ride.to)) {
+          store.finishRide('Taxi ride stopped because endpoints were invalid.')
+          return
         }
-        store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
-      }
+        const eased = smoothstep(t)
+        const x = ride.from.x + (ride.to.x - ride.from.x) * eased
+        const z = ride.from.z + (ride.to.z - ride.from.z) * eased
+        heading.current = finiteNumber(Math.atan2(ride.to.x - ride.from.x, ride.to.z - ride.from.z), heading.current)
+        pos.current.set(x, terrainHeight(x, z) + 1.1, z)
+        moving.current = true
+        running.current = false
+        grounded.current = true
+        velocityY.current = 0
+        if (t >= 1) {
+          if (finitePoint2(ride.exitPoint)) {
+            pos.current.set(ride.exitPoint.x, terrainHeight(ride.exitPoint.x, ride.exitPoint.z) + 1.1, ride.exitPoint.z)
+          }
+          store.finishRide(`Arrived at ${ride.destinationName || 'destination'}.`)
+        }
       }
     } else if (store.mission?.mode === 'taxi' && store.mission.phase === 'taxi_boarding' && store.mission.taxi?.pose) {
       const mission = store.mission
@@ -559,8 +593,14 @@ export default function PlayerRig({ city }) {
       pos.current.y + CAMERA_HEIGHT + CAMERA_DISTANCE * Math.sin(cameraElevation),
       pos.current.z + CAMERA_DISTANCE * Math.cos(cameraOrbit) * ce,
     )
+    if (!Number.isFinite(camTarget.x) || !Number.isFinite(camTarget.y) || !Number.isFinite(camTarget.z)) {
+      camTarget.set(pos.current.x, pos.current.y + CAMERA_HEIGHT + 2, pos.current.z + CAMERA_DISTANCE)
+    }
     state.camera.position.lerp(camTarget, 0.12)
     lookAt.set(pos.current.x, pos.current.y + 1.2, pos.current.z)
+    if (!Number.isFinite(lookAt.x) || !Number.isFinite(lookAt.y) || !Number.isFinite(lookAt.z)) {
+      lookAt.set(0, terrainHeight(0, 40) + 2.3, 40)
+    }
     state.camera.lookAt(lookAt)
 
     const district = city.districtAt(pos.current.x, pos.current.z).name

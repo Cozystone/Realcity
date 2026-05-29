@@ -122,7 +122,8 @@ async function main() {
     page.setDefaultTimeout(30000)
 
     page.on('console', message => {
-      if (message.type() === 'error') consoleErrors.push(message.text())
+      const text = message.text()
+      if (message.type() === 'error' || /Unable to preventDefault inside passive event listener invocation/i.test(text)) consoleErrors.push(text)
     })
     page.on('pageerror', error => pageErrors.push(error.message))
     page.on('request', request => {
@@ -165,6 +166,12 @@ async function main() {
     assert(await page.locator('.full-map-place-taxi').count() === 1, 'Production full map direct taxi button is missing')
     assert(await page.locator('.full-map-place-pin').count() === 1, 'Production full map pin button is missing')
     await page.locator('.full-map-place-button').nth(1).click()
+    const zoomBeforeWheel = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
+    await page.locator('.full-city-map').dispatchEvent('wheel', { deltaY: -160, bubbles: true, cancelable: true })
+    await page.waitForFunction(previous => {
+      const zoom = Number(document.querySelector('.full-city-map')?.getAttribute('data-zoom') || 0)
+      return zoom > previous
+    }, zoomBeforeWheel, { timeout: 5000 })
     await page.locator('.full-map-place-pin').click()
     await page.waitForFunction(() => {
       const card = document.querySelector('.full-map-navigation-card')

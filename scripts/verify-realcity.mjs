@@ -2365,7 +2365,8 @@ async function main() {
 
     const page = await browser.newPage({ viewport: { width: 1440, height: 920 }, deviceScaleFactor: 1 })
     page.on('console', message => {
-      if (message.type() === 'error') consoleErrors.push(message.text())
+      const text = message.text()
+      if (message.type() === 'error' || /Unable to preventDefault inside passive event listener invocation/i.test(text)) consoleErrors.push(text)
     })
     page.on('pageerror', error => pageErrors.push(error.message))
 
@@ -2444,6 +2445,11 @@ async function main() {
     }, zoomBefore, { timeout: 5000 })
     const zoomAfter = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
     assert(zoomAfter > zoomBefore, `Full map zoom control did not increase zoom: ${zoomBefore} -> ${zoomAfter}`)
+    await page.locator('.full-city-map').dispatchEvent('wheel', { deltaY: -180, bubbles: true, cancelable: true })
+    await page.waitForFunction(previous => {
+      const zoom = Number(document.querySelector('.full-city-map')?.getAttribute('data-zoom') || 0)
+      return zoom > previous
+    }, zoomAfter, { timeout: 5000 })
     const mapBox = await page.locator('.full-city-map').boundingBox()
     assert(mapBox, 'Full map SVG bounding box was unavailable for pan verification')
     const viewBoxBeforePan = await page.locator('.full-city-map').getAttribute('viewBox', { timeout: 5000 })
@@ -2622,6 +2628,8 @@ async function main() {
     assert(taxiRide.destinationLaneStats.samples > 0 && taxiRide.destinationLaneStats.laneLike > taxiRide.destinationLaneStats.centerline, `Taxi ride route still follows road centerlines instead of traffic lanes: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.destinationMaxHeadingDelta < 1.2, `Taxi ride still turns with a hard 90-degree corner: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.rideExitPoint, `Taxi ride did not preserve a curbside passenger exit point: ${JSON.stringify(taxiRide)}`)
+    await page.waitForTimeout(900)
+    const rideCanvas = await inspectCanvas(page, { minDataUrlLength: 18000 })
 
     await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 120000 })
     await page.waitForTimeout(700)
@@ -2687,6 +2695,7 @@ async function main() {
       missionText,
       taxiDispatch,
       taxiRide,
+      rideCanvas,
       finalState,
       finalDistrict: finalPlayer.district,
       travelDistance: positionDistance(finalPlayer, afterMove),
