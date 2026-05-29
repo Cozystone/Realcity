@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
+import { placeRhythmFor } from '../engine/placeRhythm'
 import { buildTaxiRoute } from '../engine/taxiRouting'
 import VirtualPhone from './VirtualPhone'
 
@@ -1007,6 +1008,10 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
     () => placeActivitySummary(selectedPlace, pedestrianSamples, vehicleSamples),
     [selectedPlace, pedestrianSamples, vehicleSamples],
   )
+  const selectedPlaceRhythm = useMemo(
+    () => placeRhythmFor(selectedPlace, pedestrianSamples, useCityStore.getState().timeMinutes),
+    [selectedPlace, pedestrianSamples],
+  )
   const selectedPlaceDistance = selectedPlace ? distance2d(selectedPlace, safePlayer) : 0
   const canRequestPlaceTaxi = !!selectedPlace && !mission && !ride
 
@@ -1307,6 +1312,13 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
                 <div><dt>Distance</dt><dd>{formatMeters(selectedPlaceDistance)}</dd></div>
                 <div><dt>Live</dt><dd>{selectedPlaceActivity.npcs} NPC / {selectedPlaceActivity.vehicles} cars / {selectedPlaceActivity.taxis} taxis</dd></div>
               </dl>
+              <div className="full-map-place-rhythm" data-phase={selectedPlaceRhythm.phase}>
+                <b>{selectedPlaceRhythm.status}</b>
+                <small>{selectedPlaceRhythm.inbound} inbound / {selectedPlaceRhythm.onSite} on-site / {selectedPlaceRhythm.topActivity}</small>
+                {selectedPlaceRhythm.examples[0] ? (
+                  <small>{selectedPlaceRhythm.examples[0].name}: {selectedPlaceRhythm.examples[0].intent}</small>
+                ) : null}
+              </div>
               <div className="full-map-place-actions">
                 <button type="button" className="full-map-place-pin" onClick={pinSelectedPlace}>Pin</button>
                 <button type="button" className="full-map-place-taxi" onClick={requestSelectedPlaceTaxi} disabled={!canRequestPlaceTaxi}>

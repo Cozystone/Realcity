@@ -161,6 +161,7 @@ async function main() {
     assert(await page.locator('.full-map-place-card').count() === 1, 'Production full map place intel card is missing')
     const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
     assert(/place intel|access|distance|live/i.test(placeText), `Production full map place intel card is incomplete: ${placeText}`)
+    assert(/inbound|on-site/i.test(placeText), `Production full map place rhythm is missing: ${placeText}`)
     assert(/direct cab dispatch|no NPC relay/i.test(placeText), `Production full map place card did not expose direct taxi dispatch: ${placeText}`)
     assert(await page.locator('.full-map-place-button').count() >= 6, 'Production full map nearby place directory is missing')
     assert(await page.locator('.full-map-place-taxi').count() === 1, 'Production full map direct taxi button is missing')

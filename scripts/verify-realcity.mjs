@@ -853,6 +853,7 @@ async function inspectPhone(page) {
   await page.locator('.phone-tabs button[data-tab="social"]').click()
   const socialText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk|mobility|taxi/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
+  assert(socialText.includes('Place rhythm') && /inbound|on-site/i.test(socialText), `Phone social feed did not expose live place rhythms: ${socialText}`)
   assertReadableText('Phone social app', socialText)
 
   await page.locator('.phone-tabs button[data-tab="music"]').click()
@@ -1756,6 +1757,7 @@ async function inspectDailyRoutineTimeShift(page) {
           timeMinutes: Number((state.timeMinutes || 0).toFixed(1)),
           sampleTimeMinutes: samples[0]?.sampleTimeMinutes ?? null,
           samples: samples.length,
+          namedScheduleSamples: samples.filter(sample => sample.name && sample.job && sample.placeName && sample.scheduleWindow).length,
           scheduleTargets: counts(samples.map(sample => sample.scheduleTarget)),
           scheduleActivities: counts(samples.map(sample => sample.scheduleActivity)),
           tracked: samples.slice(0, 80).map(sample => ({
@@ -1781,6 +1783,7 @@ async function inspectDailyRoutineTimeShift(page) {
   assert(targetTotal(phases[2], 'third') > 35, `Evening schedule did not route enough NPCs to third places: ${JSON.stringify(phases[2].scheduleTargets)}`)
   assert(targetTotal(phases[3], 'home') > 45, `Night schedule did not route enough NPCs home: ${JSON.stringify(phases[3].scheduleTargets)}`)
   assert(/commuting|on shift|class|working|customers|social time|errands|home life/.test(phases.map(activityText).join(' | ')), `Schedule activities are too generic: ${JSON.stringify(phases.map(phase => phase.scheduleActivities))}`)
+  assert(phases.every(phase => phase.namedScheduleSamples > 100), `NPC schedule samples do not expose named place rhythm context: ${JSON.stringify(phases.map(phase => ({ label: phase.label, namedScheduleSamples: phase.namedScheduleSamples })))}`)
 
   const byAgent = new Map()
   for (const phase of phases) {
@@ -1797,6 +1800,7 @@ async function inspectDailyRoutineTimeShift(page) {
       label: phase.label,
       timeMinutes: phase.timeMinutes,
       sampleTimeMinutes: phase.sampleTimeMinutes,
+      namedScheduleSamples: phase.namedScheduleSamples,
       scheduleTargets: phase.scheduleTargets,
       scheduleActivities: phase.scheduleActivities,
     })),
@@ -2428,6 +2432,7 @@ async function main() {
     assert(await page.locator('.full-map-place-card').count() === 1, 'Full map did not render the place intel card')
     const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
     assert(/place intel|access|distance|live/i.test(placeText), `Full map place intel card is incomplete: ${placeText}`)
+    assert(/inbound|on-site/i.test(placeText), `Full map place card did not expose current place rhythm: ${placeText}`)
     assert(await page.locator('.full-map-place-button').count() >= 6, 'Full map did not render a nearby place directory')
     assert(await page.locator('.full-map-place-taxi').count() === 1, 'Full map place card did not render direct taxi action')
     assert(await page.locator('.full-map-place-pin').count() === 1, 'Full map place card did not render route pin action')

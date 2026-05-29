@@ -1131,7 +1131,8 @@ button.key-prompt {
   overflow-y: auto;
 }
 
-.phone-city-events {
+.phone-city-events,
+.phone-place-rhythm {
   margin-bottom: 10px;
   padding: 10px;
   border: 1px solid rgba(98, 216, 166, 0.2);
@@ -1139,31 +1140,49 @@ button.key-prompt {
   background: rgba(98, 216, 166, 0.07);
 }
 
-.phone-city-events > strong {
+.phone-place-rhythm {
+  border-color: rgba(255, 212, 71, 0.24);
+  background: rgba(255, 212, 71, 0.07);
+}
+
+.phone-city-events > strong,
+.phone-place-rhythm > strong {
   display: block;
   margin-bottom: 8px;
   color: #f8fff9;
   font-size: 12px;
 }
 
-.phone-city-events article {
+.phone-city-events article,
+.phone-place-rhythm article {
   margin-bottom: 7px;
   padding: 8px;
   border-color: rgba(98, 216, 166, 0.2);
   background: rgba(3, 16, 25, 0.38);
 }
 
-.phone-city-events article:last-child {
+.phone-place-rhythm article {
+  border-color: rgba(255, 212, 71, 0.22);
+}
+
+.phone-city-events article:last-child,
+.phone-place-rhythm article:last-child {
   margin-bottom: 0;
 }
 
-.phone-city-events article small {
+.phone-city-events article small,
+.phone-place-rhythm article small {
   display: block;
   color: rgba(98, 216, 166, 0.82);
   font-size: 10px;
 }
 
-.phone-city-events article p {
+.phone-place-rhythm article small {
+  color: rgba(255, 212, 71, 0.82);
+}
+
+.phone-city-events article p,
+.phone-place-rhythm article p {
   margin-top: 5px;
 }
 
@@ -1832,6 +1851,28 @@ button.key-prompt {
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.full-map-place-rhythm {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid rgba(158, 228, 147, 0.18);
+  border-radius: 7px;
+  background: rgba(158, 228, 147, 0.07);
+}
+
+.full-map-place-rhythm b {
+  overflow: hidden;
+  color: #f8fbff;
+  font-size: 11px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.full-map-place-rhythm small {
+  color: rgba(238, 244, 255, 0.68);
 }
 
 .full-map-place-actions {

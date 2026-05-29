@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clockLabel, useCityStore } from '../engine/cityStore'
 import { styleNpcSpeech } from '../engine/localLLM'
+import { buildPlaceRhythms } from '../engine/placeRhythm'
 
 const PHONE_TABS = [
   { id: 'messages', label: 'Msg' },
@@ -262,6 +263,7 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
   const [musicPlaying, setMusicPlaying] = useState(false)
   const audioRef = useRef(null)
   const cityEvents = useCityStore(state => state.cityEvents)
+  const pedestrianSamples = useCityStore(state => state.pedestrianSamples)
 
   const contacts = useMemo(
     () => buildContacts(city, focusedAgent, player),
@@ -270,6 +272,10 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
   const routeTargets = useMemo(
     () => buildRouteTargets(city, player),
     [city, player.x, player.z],
+  )
+  const placeRhythms = useMemo(
+    () => buildPlaceRhythms(city, pedestrianSamples, timeMinutes),
+    [city, pedestrianSamples, timeMinutes],
   )
   const selected = contacts.find(contact => contact.id === selectedId) || contacts[0]
   const thread = selected ? (threads[selected.id] || seedThread(selected)) : []
@@ -550,6 +556,16 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                     {event.topic || event.partnerName ? (
                       <footer>{[event.topic, event.partnerName ? `with ${event.partnerName}` : null].filter(Boolean).join(' / ')}</footer>
                     ) : null}
+                  </article>
+                ))}
+              </section>
+              <section className="phone-place-rhythm" aria-label="Place rhythms">
+                <strong>Place rhythm</strong>
+                {placeRhythms.slice(0, 3).map(({ place, rhythm }) => (
+                  <article key={place.id}>
+                    <small>{rhythm.phaseLabel} / {rhythm.expected}</small>
+                    <p>{place.name}: {rhythm.inbound} inbound, {rhythm.onSite} on-site. {rhythm.topActivity}</p>
+                    {rhythm.examples[0] ? <footer>{rhythm.examples[0].name} / {rhythm.examples[0].activity}</footer> : null}
                   </article>
                 ))}
               </section>
