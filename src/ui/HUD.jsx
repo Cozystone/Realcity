@@ -3,18 +3,20 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { CITY_HALF, CITY_WORLD_SIZE } from '../engine/cityEngine'
 import { clockLabel, useCityStore } from '../engine/cityStore'
+import { buildTaxiRoute } from '../engine/taxiRouting'
 import VirtualPhone from './VirtualPhone'
 
 const DEFAULT_WORLD_POINT = { x: 0, z: 40 }
 const DEFAULT_LNGLAT = [0, 0]
 
-function activeTaxiRoute(mission, ride) {
+function activeTaxiRoute(mission, ride, mapRoute = null) {
   if (mission?.phase === 'taxi_dispatch' && mission?.taxi?.path?.length >= 2) return mission.taxi.path
   if (ride?.path?.length >= 2) return ride.path
   if (mission?.phase === 'taxi_waiting' && mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.route?.length >= 2) return mission.route
   if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
+  if (mapRoute?.route?.length >= 2) return mapRoute.route
   return []
 }
 
@@ -146,20 +148,22 @@ function routeMilestones(points = []) {
     .filter(Boolean)
 }
 
-function routePhaseLabel(mission, ride) {
+function routePhaseLabel(mission, ride, mapRoute = null) {
   if (ride) return 'Taxi ride in progress'
   if (mission?.phase === 'taxi_dispatch') return 'Taxi driving to pickup'
   if (mission?.phase === 'taxi_waiting') return 'Taxi waiting at curb'
   if (mission?.phase === 'taxi_boarding') return 'Boarding at pickup'
   if (mission?.mode === 'walk') return 'Walking escort route'
   if (mission?.mode === 'taxi') return 'Taxi route planned'
+  if (mapRoute?.route?.length >= 2) return 'Pinned map route'
   return 'Live city scan'
 }
 
-function routeDestinationLabel(mission, ride) {
+function routeDestinationLabel(mission, ride, mapRoute = null) {
   if (ride?.to?.name || ride?.to?.address) return ride.to.address || ride.to.name
   if (mission?.destination?.address || mission?.destination?.name) return mission.destination.address || mission.destination.name
   if (mission?.taxi?.targetName) return mission.taxi.targetName
+  if (mapRoute?.destination?.address || mapRoute?.destination?.name) return mapRoute.destination.address || mapRoute.destination.name
   return 'No active destination'
 }
 
@@ -323,12 +327,12 @@ function roadTextTransform(road) {
   return `rotate(-90 ${road.x} 0)`
 }
 
-function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSamples }) {
+function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, vehicleSamples }) {
   const container = useRef(null)
   const map = useRef(null)
   const safePlayer = finitePoint(player, { x: 0, z: 40 })
   const viewHeading = finiteNumber(player.viewHeading ?? player.heading, Math.PI)
-  const route = activeTaxiRoute(mission, ride)
+  const route = activeTaxiRoute(mission, ride, mapRoute)
   const mapData = useMemo(() => cityMapGeoJSON(city), [city])
   const buildingData = useMemo(() => buildingGeoJSON(city), [city])
   const gps = useMemo(() => {
@@ -484,7 +488,7 @@ function Minimap({ city, player, mission, ride, pedestrianSamples, vehicleSample
     const source = map.current?.getSource('taxiRoute')
     if (!source) return
     source.setData(routeGeoJSON(city, route))
-  }, [city, route, mission?.updatedAt, ride?.updatedAt])
+  }, [city, route, mission?.updatedAt, ride?.updatedAt, mapRoute?.updatedAt])
 
   useEffect(() => {
     const vehicles = map.current?.getSource('vehicles')
@@ -950,10 +954,10 @@ function placeColor(kind) {
   }[kind] || '#f2c14e'
 }
 
-function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSamples, onClose }) {
+function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples, vehicleSamples, onClose }) {
   const safePlayer = finitePoint(player, { x: 0, z: 40 })
   const heading = (finiteNumber(player.viewHeading ?? player.heading, Math.PI) * 180) / Math.PI
-  const route = activeTaxiRoute(mission, ride)
+  const route = activeTaxiRoute(mission, ride, mapRoute)
   const taxiPose = activeTaxiPose(mission, ride)
   const taxi = hasFinitePoint(taxiPose) ? taxiPose : null
   const taxiHeading = taxi ? (finiteNumber(taxi.heading ?? taxi.yaw, 0) * 180) / Math.PI : 0
@@ -980,14 +984,14 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
   const routePoints = useMemo(() => route.filter(hasFinitePoint), [route])
   const activeRoutePoints = useMemo(() => routePoints.map(point => `${point.x},${point.z}`).join(' '), [routePoints])
   const routeActorPose = taxi || safePlayer
-  const routeMeters = useMemo(() => routeDistance(routePoints), [routePoints])
+  const routeMeters = useMemo(() => finiteNumber(mapRoute?.routeMeters, routeDistance(routePoints)) || routeDistance(routePoints), [mapRoute?.routeMeters, routePoints])
   const routeProgress = useMemo(() => routeProgressRatio(routePoints, routeActorPose), [routePoints, routeActorPose.x, routeActorPose.z])
   const routeProgressPoint = useMemo(() => pointAtRouteRatio(routePoints, routeProgress), [routePoints, routeProgress])
   const routeMarkers = useMemo(() => routeMilestones(routePoints), [routePoints])
   const routeRemaining = routeMeters * (1 - routeProgress)
   const routeHasNavigation = routePoints.length >= 2
-  const routePhase = routePhaseLabel(mission, ride)
-  const routeDestination = routeDestinationLabel(mission, ride)
+  const routePhase = routePhaseLabel(mission, ride, mapRoute)
+  const routeDestination = routeDestinationLabel(mission, ride, mapRoute)
   const routeStart = routePoints[0]
   const routeEnd = routePoints[routePoints.length - 1]
   const selectedPlace = useMemo(
@@ -1027,10 +1031,40 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
 
   const pinSelectedPlace = useCallback(() => {
     if (!selectedPlace) return
+    const routePlan = buildTaxiRoute(safePlayer, selectedPlace, city.roads || [])
+    if (routePlan.points.length < 2) {
+      useCityStore.getState().setPulse(`Could not plot a road route to ${selectedPlace.address || selectedPlace.name}.`)
+      return
+    }
+    const destination = {
+      id: selectedPlace.id,
+      name: selectedPlace.name,
+      address: selectedPlace.address || selectedPlace.roadName || selectedPlace.name,
+      district: selectedPlace.district || 'RealCity',
+      kind: selectedPlace.kind,
+      x: selectedPlace.x,
+      z: selectedPlace.z,
+    }
+    useCityStore.getState().setMapRoute({
+      id: `map_route_${selectedPlace.id}_${Date.now()}`,
+      source: 'map_place_pin',
+      destination,
+      route: routePlan.points,
+      routeMeters: routePlan.routeMeters,
+      directMeters: routePlan.directMeters,
+      routeNames: routePlan.roadNames,
+      summary: `Pinned lane-following route to ${destination.address}.`,
+    })
+    useCityStore.getState().addCityEvent({
+      id: `navigation_pin_${selectedPlace.id}_${Math.round(performance.now())}`,
+      kind: 'navigation',
+      placeName: selectedPlace.name,
+      topic: 'map route pin',
+      text: `Map pinned a lane-following route to ${destination.address} before any taxi was called.`,
+    })
     setFollowGps(false)
     setCenter(clampMapCenter(selectedPlace, Math.max(zoom, 1.35)))
-    useCityStore.getState().setPulse(`${selectedPlace.address || selectedPlace.name} pinned on the city map.`)
-  }, [selectedPlace, zoom])
+  }, [city.roads, safePlayer.x, safePlayer.z, selectedPlace, zoom])
 
   const requestSelectedPlaceTaxi = useCallback(() => {
     if (!selectedPlace) return
@@ -1293,7 +1327,11 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
               </div>
             </aside>
           ) : null}
-          <aside className="full-map-navigation-card" data-has-route={routeHasNavigation ? 'true' : 'false'}>
+          <aside
+            className="full-map-navigation-card"
+            data-has-route={routeHasNavigation ? 'true' : 'false'}
+            data-route-source={mapRoute?.source || mission?.source || ride?.taxiSource || 'live'}
+          >
             <span>Live navigation</span>
             <strong>{routeHasNavigation ? routePhase : 'No active route'}</strong>
             <small>{routeHasNavigation ? routeDestination : 'Ask a contact, hail a taxi, or choose RealPhone Taxi.'}</small>
@@ -1333,6 +1371,7 @@ export default function HUD({ city }) {
   const interaction = useCityStore(state => state.interaction)
   const mission = useCityStore(state => state.mission)
   const ride = useCityStore(state => state.ride)
+  const mapRoute = useCityStore(state => state.mapRoute)
   const multiplayer = useCityStore(state => state.multiplayer)
   const pedestrianSamples = useCityStore(state => state.pedestrianSamples)
   const vehicleSamples = useCityStore(state => state.vehicleSamples)
@@ -1393,6 +1432,7 @@ export default function HUD({ city }) {
           player={player}
           mission={mission}
           ride={ride}
+          mapRoute={mapRoute}
           pedestrianSamples={pedestrianSamples}
           vehicleSamples={vehicleSamples}
         />
@@ -1403,6 +1443,7 @@ export default function HUD({ city }) {
           player={player}
           mission={mission}
           ride={ride}
+          mapRoute={mapRoute}
           pedestrianSamples={pedestrianSamples}
           vehicleSamples={vehicleSamples}
           onClose={() => setMapOpen(false)}

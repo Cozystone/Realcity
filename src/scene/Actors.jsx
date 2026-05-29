@@ -2403,25 +2403,27 @@ function Traffic({ cars, roads }) {
   )
 }
 
-function activeTaxiRoute(mission, ride) {
+function activeTaxiRoute(mission, ride, mapRoute = null) {
   if (mission?.phase === 'taxi_dispatch' && mission?.taxi?.path?.length >= 2) return mission.taxi.path
   if (ride?.path?.length >= 2) return ride.path
   if (mission?.phase === 'taxi_waiting' && mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.route?.length >= 2) return mission.route
   if (mission?.taxi?.destinationPath?.length >= 2) return mission.taxi.destinationPath
   if (mission?.taxi?.path?.length >= 2) return mission.taxi.path
+  if (mapRoute?.route?.length >= 2) return mapRoute.route
   return []
 }
 
 function TaxiRouteRibbon() {
   const mission = useCityStore(state => state.mission)
   const ride = useCityStore(state => state.ride)
-  const route = activeTaxiRoute(mission, ride)
+  const mapRoute = useCityStore(state => state.mapRoute)
+  const route = activeTaxiRoute(mission, ride, mapRoute)
   const geometry = useMemo(() => {
     if (!route.length) return null
     const points = route.map(point => new THREE.Vector3(point.x, terrainHeight(point.x, point.z) + 0.16, point.z))
     return new THREE.BufferGeometry().setFromPoints(points)
-  }, [route, mission?.updatedAt, ride?.updatedAt])
+  }, [route, mission?.updatedAt, ride?.updatedAt, mapRoute?.updatedAt])
 
   if (!geometry) return null
   return (

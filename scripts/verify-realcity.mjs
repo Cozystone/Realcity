@@ -934,6 +934,30 @@ async function inspectMapPlaceTaxiDispatch(page) {
   const selectedPlace = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
   const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
   assert(/direct cab dispatch|no NPC relay/i.test(placeText), `Full map place taxi action does not promise direct dispatch: ${placeText}`)
+  await page.locator('.full-map-place-pin').click()
+  await page.waitForFunction(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    return state?.mapRoute?.source === 'map_place_pin' &&
+      state.mapRoute.route?.length >= 2 &&
+      !state.mission &&
+      !state.ride &&
+      document.querySelector('.full-map-navigation-card')?.getAttribute('data-route-source') === 'map_place_pin' &&
+      document.querySelector('.full-map-navigation-card')?.getAttribute('data-has-route') === 'true'
+  }, null, { timeout: 10000 })
+  assert(await page.locator('.full-map-route').count() === 1, 'Pinned map route did not render on the full map')
+  const pinnedRoute = await page.evaluate(() => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const event = (state?.cityEvents || []).find(item => item.kind === 'navigation' && item.topic === 'map route pin')
+    return {
+      source: state?.mapRoute?.source || null,
+      destination: state?.mapRoute?.destination?.address || state?.mapRoute?.destination?.name || null,
+      routePoints: state?.mapRoute?.route?.length || 0,
+      routeMeters: state?.mapRoute?.routeMeters || 0,
+      eventText: event?.text || null,
+    }
+  })
+  assert(pinnedRoute.source === 'map_place_pin' && pinnedRoute.routePoints >= 2 && pinnedRoute.routeMeters > 20, `Map pin did not create a persistent route: ${JSON.stringify(pinnedRoute)}`)
+  assert(/before any taxi was called/i.test(pinnedRoute.eventText || ''), `Map pin did not log pre-taxi navigation context: ${JSON.stringify(pinnedRoute)}`)
   await page.locator('.full-map-place-taxi').click()
   await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
   await page.waitForFunction(() => {
@@ -978,7 +1002,7 @@ async function inspectMapPlaceTaxiDispatch(page) {
     const store = window.__REALCITY_STORE__?.getState()
     if (store?.mission?.source === 'player_taxi') store.finishMission('Map place taxi verification complete.')
   })
-  return { selectedPlace, placeText: placeText.split(/\r?\n/).slice(0, 14), state }
+  return { selectedPlace, placeText: placeText.split(/\r?\n/).slice(0, 14), pinnedRoute, state }
 }
 
 async function inspectPhoneSocialActions(page) {

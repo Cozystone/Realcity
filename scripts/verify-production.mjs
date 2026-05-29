@@ -164,6 +164,16 @@ async function main() {
     assert(await page.locator('.full-map-place-button').count() >= 6, 'Production full map nearby place directory is missing')
     assert(await page.locator('.full-map-place-taxi').count() === 1, 'Production full map direct taxi button is missing')
     assert(await page.locator('.full-map-place-pin').count() === 1, 'Production full map pin button is missing')
+    await page.locator('.full-map-place-button').nth(1).click()
+    await page.locator('.full-map-place-pin').click()
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.full-map-navigation-card')
+      return card?.getAttribute('data-route-source') === 'map_place_pin' &&
+        card.getAttribute('data-has-route') === 'true' &&
+        document.querySelector('.full-map-route')
+    }, null, { timeout: 10000 })
+    const pinnedNavigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
+    assert(/pinned map route|remaining|lane-following/i.test(pinnedNavigationText), `Production map pin did not create a navigation route: ${pinnedNavigationText}`)
     const fullMapStats = {
       buildingFootprints: await page.locator('.full-map-buildings rect').count(),
       liveVehicles: await page.locator('.full-map-live-vehicles rect').count(),

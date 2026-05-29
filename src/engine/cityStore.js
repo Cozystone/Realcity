@@ -132,6 +132,7 @@ export const useCityStore = create((set, get) => ({
   interaction: null,
   mission: null,
   ride: null,
+  mapRoute: null,
   cityEvents: [],
   pedestrianSamples: [],
   vehicleSamples: [],
@@ -261,6 +262,7 @@ export const useCityStore = create((set, get) => ({
   startMission(mission) {
     set({
       mission: { ...mission, updatedAt: Date.now() },
+      mapRoute: null,
       pulse: mission.summary || `${mission.agentName} is acting on your request.`,
     })
   },
@@ -282,6 +284,7 @@ export const useCityStore = create((set, get) => ({
   startRide(ride) {
     set({
       ride: { ...ride, startedAt: performance.now(), updatedAt: Date.now() },
+      mapRoute: null,
       pulse: ride.label || 'Taxi ride started.',
     })
   },
@@ -295,6 +298,20 @@ export const useCityStore = create((set, get) => ({
 
   setPulse(pulse) {
     set({ pulse })
+  },
+
+  setMapRoute(route) {
+    set(state => ({
+      mapRoute: route ? { ...route, updatedAt: Date.now() } : null,
+      pulse: route?.summary || state.pulse,
+    }))
+  },
+
+  clearMapRoute(text) {
+    set(state => ({
+      mapRoute: null,
+      pulse: text || state.pulse,
+    }))
   },
 
   addCityEvent(event) {
