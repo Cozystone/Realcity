@@ -918,6 +918,69 @@ async function inspectPhoneDirectTaxiDispatch(page) {
   return state
 }
 
+async function inspectMapPlaceTaxiDispatch(page) {
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    if (store?.mission) store.finishMission('Map taxi verification reset.')
+    if (store?.ride) store.finishRide('Map taxi verification reset.')
+    store?.closeInteraction?.()
+  })
+
+  await page.locator('.map-shell').click()
+  await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
+  assert(await page.locator('.full-map-place-taxi').count() === 1, 'Full map place card did not expose direct taxi dispatch')
+  assert(await page.locator('.full-map-place-pin').count() === 1, 'Full map place card did not expose route pinning')
+  await page.locator('.full-map-place-button').nth(1).click()
+  const selectedPlace = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
+  const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
+  assert(/direct cab dispatch|no NPC relay/i.test(placeText), `Full map place taxi action does not promise direct dispatch: ${placeText}`)
+  await page.locator('.full-map-place-taxi').click()
+  await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
+  await page.waitForFunction(() => {
+    const mission = window.__REALCITY_STORE__?.getState()?.mission
+    return mission?.source === 'player_taxi' &&
+      mission.requestChannel === 'map_place_card' &&
+      mission.mode === 'taxi' &&
+      !mission.agentId &&
+      !mission.agentName &&
+      mission.taxi?.path?.length >= 2 &&
+      mission.taxi?.destinationPath?.length >= 2
+  }, null, { timeout: 15000 })
+
+  const state = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const mission = store?.mission
+    const event = (store?.cityEvents || []).find(item => item.kind === 'mobility' && item.topic === 'map taxi')
+    return mission
+      ? {
+          selectedPlace: mission.destination?.id || null,
+          source: mission.source,
+          requestChannel: mission.requestChannel,
+          channelLabel: mission.channelLabel,
+          mode: mission.mode,
+          phase: mission.phase,
+          agentId: mission.agentId || null,
+          agentName: mission.agentName || null,
+          taxiPathPoints: mission.taxi?.path?.length || 0,
+          destinationPathPoints: mission.taxi?.destinationPath?.length || 0,
+          taxiSource: mission.taxi?.source || null,
+          summary: mission.summary,
+          eventText: event?.text || null,
+        }
+      : null
+  })
+  assert(state?.source === 'player_taxi' && state.requestChannel === 'map_place_card' && !state.agentId && !state.agentName, `Map place taxi dispatch used an NPC relay or wrong channel: ${JSON.stringify(state)}`)
+  assert(/map place taxi/i.test(state.summary || ''), `Map taxi summary did not identify the map channel: ${JSON.stringify(state)}`)
+  assert(/no contact or NPC relay/i.test(state.eventText || ''), `Map taxi event did not record direct dispatch: ${JSON.stringify(state)}`)
+  assert(state.taxiPathPoints >= 2 && state.destinationPathPoints >= 2, `Map taxi dispatch did not create lane-following routes: ${JSON.stringify(state)}`)
+
+  await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    if (store?.mission?.source === 'player_taxi') store.finishMission('Map place taxi verification complete.')
+  })
+  return { selectedPlace, placeText: placeText.split(/\r?\n/).slice(0, 14), state }
+}
+
 async function inspectPhoneSocialActions(page) {
   await page.evaluate(() => {
     const store = window.__REALCITY_STORE__?.getState()
@@ -2341,6 +2404,8 @@ async function main() {
     const placeText = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
     assert(/place intel|access|distance|live/i.test(placeText), `Full map place intel card is incomplete: ${placeText}`)
     assert(await page.locator('.full-map-place-button').count() >= 6, 'Full map did not render a nearby place directory')
+    assert(await page.locator('.full-map-place-taxi').count() === 1, 'Full map place card did not render direct taxi action')
+    assert(await page.locator('.full-map-place-pin').count() === 1, 'Full map place card did not render route pin action')
     const placeBefore = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
     await page.locator('.full-map-place-button').nth(1).click()
     const placeAfter = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
@@ -2553,6 +2618,7 @@ async function main() {
 
     const screenshotPath = path.join(artifactsDir, 'realcity-last-run.png')
     await page.screenshot({ path: screenshotPath, fullPage: false })
+    const mapPlaceTaxi = await inspectMapPlaceTaxiDispatch(page)
     const phoneDirectTaxi = await inspectPhoneDirectTaxiDispatch(page)
     const phoneSocialActions = await inspectPhoneSocialActions(page)
     const responsivePerformance = await inspectResponsivePerformance(browser)
@@ -2583,6 +2649,7 @@ async function main() {
       interiorState,
       playerPhysics,
       phone,
+      mapPlaceTaxi,
       phoneDirectTaxi,
       phoneSocialActions,
       walkingEscort,

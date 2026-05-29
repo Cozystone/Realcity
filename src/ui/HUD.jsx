@@ -1003,6 +1003,7 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
     [selectedPlace, pedestrianSamples, vehicleSamples],
   )
   const selectedPlaceDistance = selectedPlace ? distance2d(selectedPlace, safePlayer) : 0
+  const canRequestPlaceTaxi = !!selectedPlace && !mission && !ride
 
   useEffect(() => {
     if (!followGps) return
@@ -1023,6 +1024,33 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
     setFollowGps(true)
     setCenter(clampMapCenter(safePlayer, zoom))
   }, [safePlayer.x, safePlayer.z, zoom])
+
+  const pinSelectedPlace = useCallback(() => {
+    if (!selectedPlace) return
+    setFollowGps(false)
+    setCenter(clampMapCenter(selectedPlace, Math.max(zoom, 1.35)))
+    useCityStore.getState().setPulse(`${selectedPlace.address || selectedPlace.name} pinned on the city map.`)
+  }, [selectedPlace, zoom])
+
+  const requestSelectedPlaceTaxi = useCallback(() => {
+    if (!selectedPlace) return
+    const store = useCityStore.getState()
+    if (store.ride || store.mission) {
+      store.setPulse('Finish the current plan before calling another taxi.')
+      return
+    }
+    window.dispatchEvent(new CustomEvent('realcity:player-taxi-request', {
+      detail: {
+        target: selectedPlace,
+        source: 'map_place_card',
+        requestChannel: 'map_place_card',
+        channelLabel: 'Map place taxi',
+        direct: true,
+      },
+    }))
+    store.setPulse(`Map taxi requested directly to ${selectedPlace.address || selectedPlace.name}.`)
+    onClose?.()
+  }, [selectedPlace, onClose])
 
   const onPointerDown = useCallback((event) => {
     if (event.button !== 0) return
@@ -1238,6 +1266,13 @@ function FullCityMap({ city, player, mission, ride, pedestrianSamples, vehicleSa
                 <div><dt>Distance</dt><dd>{formatMeters(selectedPlaceDistance)}</dd></div>
                 <div><dt>Live</dt><dd>{selectedPlaceActivity.npcs} NPC / {selectedPlaceActivity.vehicles} cars / {selectedPlaceActivity.taxis} taxis</dd></div>
               </dl>
+              <div className="full-map-place-actions">
+                <button type="button" className="full-map-place-pin" onClick={pinSelectedPlace}>Pin</button>
+                <button type="button" className="full-map-place-taxi" onClick={requestSelectedPlaceTaxi} disabled={!canRequestPlaceTaxi}>
+                  Call Taxi
+                </button>
+              </div>
+              <small className="full-map-place-action-note">Direct cab dispatch / no NPC relay</small>
               <div className="full-map-place-list" aria-label="Nearby places">
                 {placeDirectory.slice(0, 6).map(place => (
                   <button

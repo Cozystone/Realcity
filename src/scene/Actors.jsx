@@ -884,6 +884,13 @@ function attachTaxiDestination(mission, destination, roads, store) {
   return dropoff
 }
 
+function directTaxiChannelLabel(mission) {
+  if (mission?.channelLabel) return mission.channelLabel
+  if (mission?.requestChannel === 'map_place_card') return 'Map place taxi'
+  if (mission?.requestChannel === 'realphone_message') return 'RealPhone message taxi'
+  return 'RealPhone Taxi'
+}
+
 function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
   const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads.roads || []
   const cars = Array.isArray(cityOrRoads) ? [] : cityOrRoads.cars || []
@@ -954,8 +961,9 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
   mission.route = routeToDestination.points
   mission.awaitingBoardKey = true
   const directPlayerTaxi = mission.source === 'player_taxi' && !agent
+  const directChannel = directTaxiChannelLabel(mission)
   const dispatchSummary = directPlayerTaxi
-    ? `RealPhone Taxi dispatched ${taxi.driverName}'s cruising cab directly. It is driving to your curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`
+    ? `${directChannel} dispatched ${taxi.driverName}'s cruising cab directly. It is driving to your curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`
     : `${agent?.name || 'You'} ${fleetTaxi ? `hailed ${taxi.driverName}'s passing taxi` : 'called a taxi'}. It is driving to the curb on ${routeToPickup.roadNames[0] || pickup.roadName || 'the road'}.`
   store.updateMission({
     phase: 'taxi_dispatch',
@@ -2556,27 +2564,30 @@ function PlayerTaxiController({ city }) {
   })
 
   useEffect(() => {
-    const startPlayerTaxiMission = (target, source = 'player_taxi') => {
+    const startPlayerTaxiMission = (target, source = 'player_taxi', requestChannel = 'realphone_taxi', channelLabel = 'RealPhone Taxi') => {
       const store = useCityStore.getState()
       const player = store.player
       const destination = target ? entranceTargetFor(target) : null
       const pickup = nearestRoadPickup(player, city.roads)
+      const channel = channelLabel || directTaxiChannelLabel({ requestChannel })
       const mission = {
         id: `${source}_${Date.now()}`,
         mode: 'taxi',
         source,
+        requestChannel,
+        channelLabel: channel,
         phase: 'taxi_dispatch',
         destination,
         pickup,
         steps: destination
-          ? ['RealPhone dispatches the nearest cruising taxi', 'Taxi drives to your curb without NPC relay', 'Press F to board', `Ride to ${destination.name}`]
+          ? [`${channel} dispatches the nearest cruising taxi`, 'Taxi drives to your curb without NPC relay', 'Press F to board', `Ride to ${destination.name}`]
           : ['Raise your hand at the curb', 'Nearest passing taxi pulls over', 'Choose a destination in RealPhone', 'Press F to board'],
-        request: destination ? `Direct RealPhone taxi to ${destination.name}` : 'Street hail passing taxi',
+        request: destination ? `Direct ${channel} to ${destination.name}` : 'Street hail passing taxi',
       }
       store.startMission({
         ...mission,
         summary: destination
-          ? `RealPhone Taxi is dispatching the nearest cruising cab directly to ${destination.name}.`
+          ? `${channel} is dispatching the nearest cruising cab directly to ${destination.name}.`
           : 'Hailing the nearest passing taxi.',
       })
       const started = beginTaxiDispatch(null, mission, store, {
@@ -2584,7 +2595,17 @@ function PlayerTaxiController({ city }) {
         cars: city.cars,
         roads: city.roads,
       })
-      if (!started) store.finishMission('Taxi hail cancelled.')
+      if (!started) {
+        store.finishMission('Taxi hail cancelled.')
+      } else if (destination && requestChannel === 'map_place_card') {
+        store.addCityEvent({
+          id: `mobility_map_taxi_${Math.round(performance.now())}`,
+          kind: 'mobility',
+          placeName: destination.name,
+          topic: 'map taxi',
+          text: `${channel} directly dispatched a cruising cab to ${destination.address || destination.name}; no contact or NPC relay was used.`,
+        })
+      }
       return started
     }
 
@@ -2603,7 +2624,9 @@ function PlayerTaxiController({ city }) {
         store.setPulse('Finish the current plan before calling another taxi.')
         return
       }
-      startPlayerTaxiMission(target, 'player_taxi')
+      const requestChannel = event.detail?.requestChannel || event.detail?.source || 'realphone_taxi'
+      const channelLabel = event.detail?.channelLabel || directTaxiChannelLabel({ requestChannel })
+      startPlayerTaxiMission(target, 'player_taxi', requestChannel, channelLabel)
     }
 
     const onKey = (event) => {

@@ -1833,6 +1833,46 @@ button.key-prompt {
   white-space: nowrap;
 }
 
+.full-map-place-actions {
+  display: grid;
+  grid-template-columns: 0.72fr 1fr;
+  gap: 7px;
+}
+
+.full-map-place-actions button {
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  color: rgba(248, 250, 252, 0.9);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.full-map-place-pin {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.full-map-place-taxi {
+  border-color: rgba(255, 212, 71, 0.46);
+  background: linear-gradient(135deg, rgba(255, 212, 71, 0.96), rgba(74, 173, 255, 0.86));
+  color: #071018;
+  box-shadow: 0 8px 20px rgba(255, 212, 71, 0.2);
+}
+
+.full-map-place-actions button:disabled {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 244, 255, 0.45);
+  cursor: default;
+  box-shadow: none;
+}
+
+.full-map-place-action-note {
+  color: rgba(255, 212, 71, 0.78) !important;
+}
+
 .full-map-place-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
