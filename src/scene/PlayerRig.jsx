@@ -221,7 +221,10 @@ function Character({ moving, running }) {
   const rightLeg = useRef()
   const leftArm = useRef()
   const rightArm = useRef()
+  const leftLid = useRef()
+  const rightLid = useRef()
   const phase = useRef(0)
+  const faceClock = useRef(0)
   const textures = useMemo(() => ({
     fabric: makeProceduralTexture('city-fabric', { size: 128, seed: 31, repeatX: 2, repeatY: 2 }),
     skin: makeProceduralTexture('skin-pores', { size: 128, seed: 32, repeatX: 1.5, repeatY: 1.5 }),
@@ -233,11 +236,20 @@ function Character({ moving, running }) {
   useFrame((_, delta) => {
     const rate = moving.current ? (running.current ? 10 : 6.5) : 0
     phase.current += delta * rate
+    faceClock.current += delta
     const swing = Math.sin(phase.current) * (moving.current ? 0.52 : 0.05)
     if (leftLeg.current) leftLeg.current.rotation.x = swing
     if (rightLeg.current) rightLeg.current.rotation.x = -swing
     if (leftArm.current) leftArm.current.rotation.x = -swing * 0.55
     if (rightArm.current) rightArm.current.rotation.x = swing * 0.55
+    const blinkWindow = 0.16
+    const blinkPeriod = 3.85
+    const blinkPhase = faceClock.current % blinkPeriod
+    const blink = blinkPhase > blinkPeriod - blinkWindow
+      ? Math.sin(((blinkPhase - (blinkPeriod - blinkWindow)) / blinkWindow) * Math.PI)
+      : 0
+    if (leftLid.current) leftLid.current.scale.y = Math.max(0.001, blink)
+    if (rightLid.current) rightLid.current.scale.y = Math.max(0.001, blink)
   })
 
   return (
@@ -327,12 +339,28 @@ function Character({ moving, running }) {
         <meshStandardMaterial map={textures.skin} color="#efc29a" roughness={0.64} />
       </mesh>
       <mesh castShadow position={[-0.088, 1.745, 0.188]}>
-        <sphereGeometry args={[0.022, 8, 6]} />
-        <meshStandardMaterial color="#05070a" roughness={0.34} />
+        <sphereGeometry args={[0.03, 10, 8]} />
+        <meshStandardMaterial color="#f7f3ea" roughness={0.44} />
       </mesh>
       <mesh castShadow position={[0.088, 1.745, 0.188]}>
-        <sphereGeometry args={[0.022, 8, 6]} />
-        <meshStandardMaterial color="#05070a" roughness={0.34} />
+        <sphereGeometry args={[0.03, 10, 8]} />
+        <meshStandardMaterial color="#f7f3ea" roughness={0.44} />
+      </mesh>
+      <mesh castShadow position={[-0.088, 1.744, 0.208]}>
+        <sphereGeometry args={[0.011, 8, 6]} />
+        <meshStandardMaterial color="#05070a" roughness={0.32} />
+      </mesh>
+      <mesh castShadow position={[0.088, 1.744, 0.208]}>
+        <sphereGeometry args={[0.011, 8, 6]} />
+        <meshStandardMaterial color="#05070a" roughness={0.32} />
+      </mesh>
+      <mesh ref={leftLid} castShadow position={[-0.088, 1.748, 0.21]} scale={[1, 0.001, 1]}>
+        <boxGeometry args={[0.058, 0.038, 0.015]} />
+        <meshStandardMaterial map={textures.skin} color="#efc29a" roughness={0.7} />
+      </mesh>
+      <mesh ref={rightLid} castShadow position={[0.088, 1.748, 0.21]} scale={[1, 0.001, 1]}>
+        <boxGeometry args={[0.058, 0.038, 0.015]} />
+        <meshStandardMaterial map={textures.skin} color="#efc29a" roughness={0.7} />
       </mesh>
       <mesh castShadow position={[-0.088, 1.785, 0.202]} rotation={[0, 0, -0.08]}>
         <boxGeometry args={[0.06, 0.01, 0.012]} />

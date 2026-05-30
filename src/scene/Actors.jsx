@@ -2754,6 +2754,8 @@ function NPCs({ city }) {
   const sleeveRef = useRef()
   const hairRef = useRef()
   const eyeRef = useRef()
+  const pupilRef = useRef()
+  const eyelidRef = useRef()
   const browRef = useRef()
   const noseRef = useRef()
   const mouthRef = useRef()
@@ -2835,6 +2837,9 @@ function NPCs({ city }) {
         'hairBack',
         'ears',
         'eyes',
+        'eyeWhites',
+        'pupils',
+        'eyelids',
         'brows',
         'nose',
         'mouth',
@@ -2867,6 +2872,12 @@ function NPCs({ city }) {
         gestureStyleVariants: unique(agent => agent.gestureStyle),
         cueKinds: ['speechCue', 'checks-phone', 'points-while-speaking', 'small-wave', 'formal-bow', 'quick-nod'],
       },
+      facialAnimation: {
+        blinkRule: 'per-agent asynchronous eyelid closure over visible eye whites',
+        pupilRule: 'small dark pupils sit over the eye whites with subtle saccade offsets',
+        sharedWithPlayer: 'PlayerRig.Character now uses the same eye-white, pupil, and eyelid face stack',
+        perAgentSeeded: true,
+      },
       variation: {
         count: agents.length,
         heightVariants: unique(agent => agent.appearance?.heightScale?.toFixed(2)),
@@ -2879,7 +2890,7 @@ function NPCs({ city }) {
         skinTones: unique(agent => agent.appearance?.skinColor),
         faceAccessoryVariants: unique(agent => `${agent.appearance?.glassesStyle}:${agent.appearance?.ageBand}:${agent.gender}`),
       },
-      streetReadableDetails: ['collar', 'lapels', 'cheeks', 'front badge', 'pant cuffs'],
+      streetReadableDetails: ['collar', 'lapels', 'cheeks', 'eye whites', 'pupils', 'blink eyelids', 'front badge', 'pant cuffs'],
       samplePeople: agents.slice(0, 12).map(agent => ({
         id: agent.id,
         name: agent.name,
@@ -2902,7 +2913,7 @@ function NPCs({ city }) {
   }, [agents])
 
   useFrame((state, delta) => {
-    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current || !speechCueRef.current || !phoneRef.current || !gestureCueRef.current) return
+    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !pupilRef.current || !eyelidRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current || !speechCueRef.current || !phoneRef.current || !gestureCueRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -2933,6 +2944,8 @@ function NPCs({ city }) {
         handRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         earRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
         earRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
+        eyelidRef.current.setColorAt(i * 2, color.set(skinTone(agent)))
+        eyelidRef.current.setColorAt(i * 2 + 1, color.set(skinTone(agent)))
         browRef.current.setColorAt(i * 2, color.set(hairTone(agent)))
         browRef.current.setColorAt(i * 2 + 1, color.set(hairTone(agent)))
         legRef.current.setColorAt(i * 2, color.set(look.pantsColor))
@@ -2964,6 +2977,7 @@ function NPCs({ city }) {
       if (sleeveRef.current.instanceColor) sleeveRef.current.instanceColor.needsUpdate = true
       if (handRef.current.instanceColor) handRef.current.instanceColor.needsUpdate = true
       if (earRef.current.instanceColor) earRef.current.instanceColor.needsUpdate = true
+      if (eyelidRef.current.instanceColor) eyelidRef.current.instanceColor.needsUpdate = true
       if (browRef.current.instanceColor) browRef.current.instanceColor.needsUpdate = true
       if (legRef.current.instanceColor) legRef.current.instanceColor.needsUpdate = true
       if (shoeRef.current.instanceColor) shoeRef.current.instanceColor.needsUpdate = true
@@ -3056,6 +3070,16 @@ function NPCs({ city }) {
       const scarfVisible = look.scarfStyle && look.scarfStyle !== 'none'
       const seniorFace = look.ageBand === 'senior' || agent.age >= 60
       const facialHair = agent.gender === 'man' && (seniorFace || hashValue(`${agent.id}_face_hair`) % 4 === 0)
+      const blinkPeriod = 3.1 + (hashValue(`${agent.id}_blink`) % 140) / 70
+      const blinkWindow = 0.13 + (hashValue(`${agent.id}_blink_window`) % 5) * 0.006
+      const blinkPhase = (state.clock.elapsedTime + (hashValue(`${agent.id}_blink_offset`) % 1000) * 0.003) % blinkPeriod
+      const blink = blinkPhase > blinkPeriod - blinkWindow
+        ? Math.sin(((blinkPhase - (blinkPeriod - blinkWindow)) / blinkWindow) * Math.PI)
+        : 0
+      const saccade = talking || agent.socialReaction
+        ? Math.sin(state.clock.elapsedTime * 3.4 + i * 0.63) * 0.003
+        : Math.sin(state.clock.elapsedTime * 1.15 + i * 1.31) * 0.006
+      const pupilY = Math.sin(state.clock.elapsedTime * 0.9 + i * 0.47) * 0.002
       const phoneVisible = talking && gestureKind === 'checks-phone' && !fallen
       const talkCueVisible = talking && !fallen
       const handTalkLift = talkCueVisible
@@ -3087,8 +3111,12 @@ function NPCs({ city }) {
       setLocalPart(hairBackRef.current, i, dummy, base, agent.heading, [0, hairBackY, hairLong ? -0.16 : -0.145], shaved ? [0.001, 0.001, 0.001] : [0.33 * headScale, (longHair ? 0.42 : bobHair ? 0.26 : 0.14) * headScale, 0.075 * headScale], bodyRotX * 0.64, bodyRotZ)
       setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
       setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
-      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.188], [0.022, 0.022, 0.014])
-      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.188], [0.022, 0.022, 0.014])
+      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.188], [0.032, 0.019, 0.012])
+      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.188], [0.032, 0.019, 0.012])
+      setLocalPart(pupilRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale + saccade, eyeY + pupilY, 0.205], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
+      setLocalPart(pupilRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale + saccade, eyeY + pupilY, 0.205], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
+      setLocalPart(eyelidRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY + 0.004, 0.209], [0.06, Math.max(0.001, 0.038 * blink), 0.014])
+      setLocalPart(eyelidRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY + 0.004, 0.209], [0.06, Math.max(0.001, 0.038 * blink), 0.014])
       setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, -0.08)
       setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, 0.08)
       setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.215], [0.026, 0.052, 0.026])
@@ -3248,6 +3276,8 @@ function NPCs({ city }) {
     faceMarkRef.current.instanceMatrix.needsUpdate = true
     cheekRef.current.instanceMatrix.needsUpdate = true
     eyeRef.current.instanceMatrix.needsUpdate = true
+    pupilRef.current.instanceMatrix.needsUpdate = true
+    eyelidRef.current.instanceMatrix.needsUpdate = true
     browRef.current.instanceMatrix.needsUpdate = true
     noseRef.current.instanceMatrix.needsUpdate = true
     mouthRef.current.instanceMatrix.needsUpdate = true
@@ -3579,8 +3609,16 @@ function NPCs({ city }) {
         <meshStandardMaterial map={textures.hair} color="#19130f" vertexColors roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={eyeRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
+        <sphereGeometry args={[1, 10, 8]} />
+        <meshStandardMaterial color="#f7f3ea" roughness={0.44} />
+      </instancedMesh>
+      <instancedMesh ref={pupilRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
         <sphereGeometry args={[1, 8, 6]} />
-        <meshStandardMaterial color="#05070a" roughness={0.38} />
+        <meshStandardMaterial color="#05070a" roughness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={eyelidRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.skin} color="#efc29a" vertexColors roughness={0.72} />
       </instancedMesh>
       <instancedMesh ref={browRef} args={[undefined, undefined, agents.length * 2]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
