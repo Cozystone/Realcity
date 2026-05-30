@@ -2124,6 +2124,21 @@ function vehicleSignalIntent(brakingReason, car, assignedPose) {
   return null
 }
 
+function vehicleSignalSide(signalIntent) {
+  if (!signalIntent) return null
+  if (signalIntent === 'service-pull-over') return 'right-side-pull-over'
+  if (signalIntent === 'red-light-stop' || signalIntent === 'following-gap') return 'rear-caution'
+  return 'hazard-all'
+}
+
+function signalCornerActive(signalSide, corner) {
+  if (!signalSide) return false
+  if (signalSide === 'hazard-all') return true
+  if (signalSide === 'right-side-pull-over') return corner === 'front-right' || corner === 'rear-right'
+  if (signalSide === 'rear-caution') return corner === 'rear-left' || corner === 'rear-right'
+  return false
+}
+
 function Traffic({ cars, roads }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
@@ -2139,6 +2154,9 @@ function Traffic({ cars, roads }) {
   const licenseRef = useRef()
   const taxiSignRef = useRef()
   const driverRef = useRef()
+  const driverTorsoRef = useRef()
+  const driverHandRef = useRef()
+  const steeringRef = useRef()
   const brakeGlowRef = useRef()
   const signalRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
@@ -2153,10 +2171,22 @@ function Traffic({ cars, roads }) {
     metal: makeProceduralTexture('brushed-metal', { size: 128, seed: 504, repeatX: 2.2, repeatY: 0.8 }),
     skin: makeProceduralTexture('skin-pores', { size: 128, seed: 505, repeatX: 1.2, repeatY: 1.2 }),
     paper: makeProceduralTexture('paper-plate', { size: 128, seed: 506, repeatX: 1.1, repeatY: 1.1 }),
+    fabric: makeProceduralTexture('city-fabric', { size: 128, seed: 507, repeatX: 1.8, repeatY: 1.8 }),
   }), [])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.__REALCITY_TRAFFIC_RENDERING__ = {
+      vehicleBase: 'procedural-driver-visible-traffic',
+      cabinParts: ['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'],
+      signalRules: ['hazard-all', 'right-side-pull-over', 'rear-caution'],
+      behaviorCues: ['braking-forward-lean', 'checking-curb-mirror', 'hands-on-wheel'],
+      vehicleCount: cars.length,
+    }
+  }, [cars.length])
+
   useFrame((state, delta) => {
-    if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current || !brakeGlowRef.current || !signalRef.current) return
+    if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current || !driverTorsoRef.current || !driverHandRef.current || !steeringRef.current || !brakeGlowRef.current || !signalRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const pedestrians = [
@@ -2197,6 +2227,7 @@ function Traffic({ cars, roads }) {
               : null
       const shouldBrake = !assignedPose && !!brakingReason
       const signalIntent = vehicleSignalIntent(brakingReason, car, assignedPose)
+      const signalSide = vehicleSignalSide(signalIntent)
       const signalBlink = !!signalIntent && Math.sin(state.clock.elapsedTime * 8.4 + car.phase) > -0.25
       car.brake = shouldBrake
         ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
@@ -2247,9 +2278,17 @@ function Traffic({ cars, roads }) {
         laneKey: trafficState.laneKey,
         brakingReason,
         signalIntent,
+        signalSide,
         signalBlink,
+        signalLampCount: signalBlink && signalSide === 'hazard-all' ? 4 : signalBlink && signalSide ? 2 : 0,
         visualSafetyCue: brakingReason ? 'brake-lights-and-driver-yield' : signalIntent ? 'amber-caution-signal' : null,
         brakeLightIntensity: Number(clampValue(car.brake || 0, 0, 1).toFixed(3)),
+        driverCabinCue: 'visible-driver-hands-wheel',
+        driverPose: brakingReason
+          ? 'braking-forward-lean'
+          : signalIntent === 'service-pull-over'
+            ? 'checking-curb-mirror'
+            : 'hands-on-wheel',
         driverReaction: brakingReason
           ? `${car.driverName} reacts to ${brakingReason.replaceAll('-', ' ')}`
           : signalIntent
@@ -2280,7 +2319,14 @@ function Traffic({ cars, roads }) {
       setLocalPart(windshieldRef.current, i * 2 + 1, dummy, base, yaw, [0, dim.height + dim.cabinHeight * 0.18, cabinZ - dim.cabinLength * 0.52], [dim.width * 0.5, dim.cabinHeight * 0.42, 0.04], 0.18)
       setLocalPart(sideWindowRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.38, dim.height + dim.cabinHeight * 0.18, cabinZ], [0.045, dim.cabinHeight * 0.52, dim.cabinLength * 0.58])
       setLocalPart(sideWindowRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.38, dim.height + dim.cabinHeight * 0.18, cabinZ], [0.045, dim.cabinHeight * 0.52, dim.cabinLength * 0.58])
-      setLocalPart(driverRef.current, i, dummy, base, yaw, [-dim.width * 0.16, dim.height + dim.cabinHeight * 0.48, cabinZ + 0.1], [0.2, 0.24, 0.2])
+      const driverLean = clampValue(car.brake || 0, 0, 1) * 0.06
+      const mirrorCheck = signalIntent === 'service-pull-over' ? 0.045 : 0
+      const handPulse = signalBlink ? Math.sin(state.clock.elapsedTime * 12 + car.phase) * 0.012 : 0
+      setLocalPart(driverTorsoRef.current, i, dummy, base, yaw, [-dim.width * 0.16 + mirrorCheck, dim.height + dim.cabinHeight * 0.26, cabinZ + 0.04 + driverLean], [0.18, 0.22, 0.14], car.brake * 0.12, 0)
+      setLocalPart(driverRef.current, i, dummy, base, yaw, [-dim.width * 0.16 + mirrorCheck, dim.height + dim.cabinHeight * 0.55, cabinZ + 0.1 + driverLean], [0.16, 0.18, 0.16], car.brake * 0.08, signalIntent === 'service-pull-over' ? -0.1 : 0)
+      setLocalPart(steeringRef.current, i, dummy, base, yaw, [-dim.width * 0.14, dim.height + dim.cabinHeight * 0.33, cabinZ + dim.cabinLength * 0.35], [0.14, 0.14, 0.018], Math.PI / 2, 0)
+      setLocalPart(driverHandRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.22, dim.height + dim.cabinHeight * 0.35 + handPulse, cabinZ + dim.cabinLength * 0.35], [0.045, 0.045, 0.045])
+      setLocalPart(driverHandRef.current, i * 2 + 1, dummy, base, yaw, [-dim.width * 0.06, dim.height + dim.cabinHeight * 0.35 - handPulse, cabinZ + dim.cabinLength * 0.35], [0.045, 0.045, 0.045])
       setLocalPart(wheelRef.current, i * 4, dummy, base, yaw, [-wheelX, -0.34, wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
       setLocalPart(wheelRef.current, i * 4 + 1, dummy, base, yaw, [wheelX, -0.34, wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
       setLocalPart(wheelRef.current, i * 4 + 2, dummy, base, yaw, [-wheelX, -0.34, -wheelZ], [0.36, 0.22, 0.36], 0, Math.PI / 2)
@@ -2295,11 +2341,12 @@ function Traffic({ cars, roads }) {
       setLocalPart(tailLightRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.28, 0.05, rear - 0.035], [0.22 + car.brake * 0.18, 0.12 + car.brake * 0.12, 0.08])
       setLocalPart(brakeGlowRef.current, i * 2, dummy, base, yaw, [-dim.width * 0.28, 0.08, rear - 0.08], car.brake > 0.04 ? [0.34 + car.brake * 0.34, 0.2 + car.brake * 0.24, 0.035] : [0.001, 0.001, 0.001])
       setLocalPart(brakeGlowRef.current, i * 2 + 1, dummy, base, yaw, [dim.width * 0.28, 0.08, rear - 0.08], car.brake > 0.04 ? [0.34 + car.brake * 0.34, 0.2 + car.brake * 0.24, 0.035] : [0.001, 0.001, 0.001])
-      const signalScale = signalBlink ? [0.16, 0.11, 0.045] : [0.001, 0.001, 0.001]
-      setLocalPart(signalRef.current, i * 4, dummy, base, yaw, [-dim.width * 0.42, 0.1, front + 0.055], signalScale)
-      setLocalPart(signalRef.current, i * 4 + 1, dummy, base, yaw, [dim.width * 0.42, 0.1, front + 0.055], signalScale)
-      setLocalPart(signalRef.current, i * 4 + 2, dummy, base, yaw, [-dim.width * 0.43, 0.1, rear - 0.055], signalScale)
-      setLocalPart(signalRef.current, i * 4 + 3, dummy, base, yaw, [dim.width * 0.43, 0.1, rear - 0.055], signalScale)
+      const activeSignalScale = [0.16, 0.11, 0.045]
+      const hiddenSignalScale = [0.001, 0.001, 0.001]
+      setLocalPart(signalRef.current, i * 4, dummy, base, yaw, [-dim.width * 0.42, 0.1, front + 0.055], signalBlink && signalCornerActive(signalSide, 'front-left') ? activeSignalScale : hiddenSignalScale)
+      setLocalPart(signalRef.current, i * 4 + 1, dummy, base, yaw, [dim.width * 0.42, 0.1, front + 0.055], signalBlink && signalCornerActive(signalSide, 'front-right') ? activeSignalScale : hiddenSignalScale)
+      setLocalPart(signalRef.current, i * 4 + 2, dummy, base, yaw, [-dim.width * 0.43, 0.1, rear - 0.055], signalBlink && signalCornerActive(signalSide, 'rear-left') ? activeSignalScale : hiddenSignalScale)
+      setLocalPart(signalRef.current, i * 4 + 3, dummy, base, yaw, [dim.width * 0.43, 0.1, rear - 0.055], signalBlink && signalCornerActive(signalSide, 'rear-right') ? activeSignalScale : hiddenSignalScale)
       setLocalPart(bumperRef.current, i * 2, dummy, base, yaw, [0, -0.04, front + 0.08], [dim.width * 0.84, 0.16, 0.11])
       setLocalPart(bumperRef.current, i * 2 + 1, dummy, base, yaw, [0, -0.04, rear - 0.08], [dim.width * 0.84, 0.16, 0.11])
       setLocalPart(grilleRef.current, i, dummy, base, yaw, [0, 0.11, front + 0.1], [dim.width * 0.42, 0.16, 0.035])
@@ -2320,6 +2367,9 @@ function Traffic({ cars, roads }) {
     windshieldRef.current.instanceMatrix.needsUpdate = true
     sideWindowRef.current.instanceMatrix.needsUpdate = true
     driverRef.current.instanceMatrix.needsUpdate = true
+    driverTorsoRef.current.instanceMatrix.needsUpdate = true
+    driverHandRef.current.instanceMatrix.needsUpdate = true
+    steeringRef.current.instanceMatrix.needsUpdate = true
     wheelRef.current.instanceMatrix.needsUpdate = true
     wheelHubRef.current.instanceMatrix.needsUpdate = true
     headlightRef.current.instanceMatrix.needsUpdate = true
@@ -2354,6 +2404,18 @@ function Traffic({ cars, roads }) {
       <instancedMesh ref={driverRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
         <sphereGeometry args={[1, 14, 10]} />
         <meshStandardMaterial map={textures.skin} color="#d4a17d" roughness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={driverTorsoRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
+        <capsuleGeometry args={[1, 1.3, 6, 10]} />
+        <meshStandardMaterial map={textures.fabric} color="#243447" roughness={0.78} metalness={0.04} />
+      </instancedMesh>
+      <instancedMesh ref={driverHandRef} args={[undefined, undefined, cars.length * 2]} castShadow frustumCulled={false}>
+        <sphereGeometry args={[1, 10, 8]} />
+        <meshStandardMaterial map={textures.skin} color="#d4a17d" roughness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={steeringRef} args={[undefined, undefined, cars.length]} castShadow frustumCulled={false}>
+        <torusGeometry args={[1, 0.16, 8, 18]} />
+        <meshStandardMaterial map={textures.rubber} color="#10151c" roughness={0.62} metalness={0.16} />
       </instancedMesh>
       <instancedMesh ref={wheelRef} args={[undefined, undefined, cars.length * 4]} castShadow frustumCulled={false}>
         <cylinderGeometry args={[1, 1, 1, 18]} />

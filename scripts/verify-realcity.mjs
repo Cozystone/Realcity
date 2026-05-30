@@ -1487,7 +1487,10 @@ async function inspectCollisionAndMaterials(page) {
       vehicleFollowingBrakes: (state?.vehicleSamples || []).filter(sample => sample.brakingReason === 'following-vehicle').length,
       vehicleBrakeLightSamples: (state?.vehicleSamples || []).filter(sample => sample.brakingReason && sample.visualSafetyCue === 'brake-lights-and-driver-yield' && sample.brakeLightIntensity > 0).length,
       vehicleSignalIntentSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.driverReaction).length,
+      vehicleSignalSideSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.signalSide && typeof sample.signalLampCount === 'number').length,
       vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
+      vehicleDriverCabinSamples: (state?.vehicleSamples || []).filter(sample => sample.driverCabinCue === 'visible-driver-hands-wheel' && ['hands-on-wheel', 'braking-forward-lean', 'checking-curb-mirror'].includes(sample.driverPose)).length,
+      trafficRendering: window.__REALCITY_TRAFFIC_RENDERING__ || null,
       clouds: window.__REALCITY_CLOUDS__ || null,
       textures: window.__REALCITY_TEXTURES__ || null,
     }
@@ -1512,7 +1515,12 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleFollowingBrakes >= 1, `No vehicles are braking for the car ahead: ${result.vehicleFollowingBrakes}`)
   assert(result.vehicleBrakeLightSamples >= 1, `No braking vehicles expose brake-light safety cues: ${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleSignalIntentSamples >= 1, `No vehicles expose turn/hazard signal intent: ${result.vehicleSignalIntentSamples}`)
+  assert(result.vehicleSignalSideSamples >= result.vehicleSignalIntentSamples, `Vehicle signal side/lamp metadata is incomplete: ${result.vehicleSignalSideSamples}/${result.vehicleSignalIntentSamples}`)
   assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
+  assert(result.vehicleDriverCabinSamples === result.vehicleSamples, `Visible driver cabin metadata is incomplete: ${result.vehicleDriverCabinSamples}/${result.vehicleSamples}`)
+  assert(result.trafficRendering?.vehicleBase === 'procedural-driver-visible-traffic', `Traffic rendering metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'].every(part => result.trafficRendering?.cabinParts?.includes(part)), `Traffic driver cabin parts are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['hazard-all', 'right-side-pull-over', 'rear-caution'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
