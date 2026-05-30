@@ -854,6 +854,7 @@ async function inspectPhone(page) {
   const socialText = await page.locator('.phone-device').innerText({ timeout: 5000 })
   assert(socialText.includes('Live city') && /routine|need|conversation|crosswalk|mobility|taxi/i.test(socialText), `Phone social feed did not expose live city autonomy events: ${socialText}`)
   assert(socialText.includes('Place rhythm') && /inbound|on-site/i.test(socialText), `Phone social feed did not expose live place rhythms: ${socialText}`)
+  assert(/walking|taxi|crosswalk|on-site|inbound/i.test(socialText) && /arrived|~\d+ min/i.test(socialText), `Phone place rhythm did not expose NPC movement purpose and ETA: ${socialText}`)
   assertReadableText('Phone social app', socialText)
 
   await page.locator('.phone-tabs button[data-tab="music"]').click()
@@ -879,6 +880,30 @@ async function inspectPhone(page) {
     music: musicText.split(/\r?\n/).slice(0, 12),
     taxi: taxiText.split(/\r?\n/).slice(0, 12),
   }
+}
+
+async function inspectFullMapNpcPurpose(page, label = 'Full map') {
+  const buttons = page.locator('.full-map-place-button')
+  const placeCount = await buttons.count()
+  const attempts = Math.max(1, Math.min(6, placeCount))
+  const snapshots = []
+
+  for (let index = 0; index < attempts; index += 1) {
+    if (index > 0) await buttons.nth(index).click()
+    const text = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
+    const agentCount = await page.locator('.full-map-place-agent').count()
+    snapshots.push(text.split(/\r?\n/).slice(0, 12))
+    if (
+      agentCount > 0 &&
+      /walking|taxi|crosswalk|on-site|inbound/i.test(text) &&
+      /arrived|~\d+ min/i.test(text)
+    ) {
+      assertReadableText(`${label} NPC purpose`, text)
+      return { agentCount, text: text.split(/\r?\n/).slice(0, 14) }
+    }
+  }
+
+  throw new Error(`${label} did not expose named NPC route purpose near any sampled place: ${JSON.stringify(snapshots)}`)
 }
 
 async function inspectPhoneDirectTaxiDispatch(page) {
@@ -2440,6 +2465,7 @@ async function main() {
     await page.locator('.full-map-place-button').nth(1).click()
     const placeAfter = await page.locator('.full-map-place-card').getAttribute('data-place-id', { timeout: 5000 })
     assert(placeBefore !== placeAfter, `Full map place directory did not change selected place: ${placeBefore}`)
+    const fullMapNpcPurpose = await inspectFullMapNpcPurpose(page)
     await page.locator('.full-map-controls button', { hasText: 'GPS' }).click()
     await page.waitForFunction(() => document.querySelector('.full-city-map')?.getAttribute('data-follow') === 'true', null, { timeout: 5000 })
     const zoomBefore = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
@@ -2686,6 +2712,7 @@ async function main() {
       interiorState,
       playerPhysics,
       phone,
+      fullMapNpcPurpose,
       mapPlaceTaxi,
       phoneDirectTaxi,
       phoneSocialActions,

@@ -1875,6 +1875,59 @@ button.key-prompt {
   color: rgba(238, 244, 255, 0.68);
 }
 
+.full-map-place-agents {
+  display: grid;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.full-map-place-agent {
+  display: grid;
+  gap: 3px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(238, 244, 255, 0.08);
+}
+
+.full-map-place-agent span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.full-map-place-agent strong {
+  overflow: hidden;
+  color: rgba(248, 250, 252, 0.95);
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.full-map-place-agent span small {
+  max-width: 96px;
+  overflow: hidden;
+  color: rgba(255, 212, 71, 0.78);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.full-map-place-agent em {
+  color: rgba(158, 228, 147, 0.92);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.full-map-place-agent > small,
+.full-map-place-no-agents {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .full-map-place-actions {
   display: grid;
   grid-template-columns: 0.72fr 1fr;

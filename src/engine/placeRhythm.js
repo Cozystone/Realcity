@@ -34,10 +34,35 @@ function mostCommon(values, fallback) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || fallback
 }
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
 function sampleMatchesPlace(sample, place, radius) {
   if (!sample || !place) return false
   if (sample.placeName === place.name || sample.targetName === place.name || sample.taxiTargetName === place.name) return true
   return Number.isFinite(Number(sample.x)) && Number.isFinite(Number(sample.z)) && distance2d(sample, place) <= radius
+}
+
+function flowForSample(sample, place) {
+  const targetName = sample.targetName || sample.taxiTargetName || place.name
+  const distanceToTarget = finiteNumber(sample.distanceToTarget, Infinity)
+  const routeMode = sample.routeMode || ''
+
+  if (sample.travelMode === 'taxi') return `taxi to ${targetName}`
+  if (sample.state === 'crossing' || routeMode === 'crossing') return `crosswalk to ${targetName}`
+  if (routeMode && routeMode !== 'dwelling') return `walking to ${targetName}`
+  if (sample.placeName === place.name || distanceToTarget <= 8) return `on-site at ${place.name}`
+  if (sample.targetName === place.name || sample.taxiTargetName === place.name) return `inbound to ${place.name}`
+  return `near ${place.name}`
+}
+
+function etaForSample(sample) {
+  const distanceToTarget = finiteNumber(sample.distanceToTarget, 0)
+  if (distanceToTarget <= 8) return 'arrived'
+  const metersPerMinute = sample.travelMode === 'taxi' ? 320 : 76
+  return `~${Math.max(1, Math.round(distanceToTarget / metersPerMinute))} min`
 }
 
 export function placeRhythmFor(place, pedestrianSamples = [], timeMinutes = 0) {
@@ -90,7 +115,10 @@ export function placeRhythmFor(place, pedestrianSamples = [], timeMinutes = 0) {
       name: sample.name || sample.id,
       job: sample.job || sample.role || 'resident',
       activity: sample.scheduleActivity || sample.state || 'moving',
+      flow: flowForSample(sample, place),
+      eta: etaForSample(sample),
       intent: sample.currentIntent || sample.routeStatus || sample.targetName || place.name,
+      routeStatus: sample.routeStatus || null,
       distance: Math.round(distance2d(sample, place)),
     })),
   }

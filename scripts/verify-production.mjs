@@ -98,6 +98,30 @@ async function maybeTriggerNpcRequest(page) {
   }
 }
 
+async function inspectFullMapNpcPurpose(page) {
+  const buttons = page.locator('.full-map-place-button')
+  const placeCount = await buttons.count()
+  const attempts = Math.max(1, Math.min(6, placeCount))
+  const snapshots = []
+
+  for (let index = 0; index < attempts; index += 1) {
+    if (index > 0) await buttons.nth(index).click()
+    const text = await page.locator('.full-map-place-card').innerText({ timeout: 5000 })
+    const agentCount = await page.locator('.full-map-place-agent').count()
+    snapshots.push(text.split(/\r?\n/).slice(0, 12))
+    if (
+      agentCount > 0 &&
+      /walking|taxi|crosswalk|on-site|inbound/i.test(text) &&
+      /arrived|~\d+ min/i.test(text)
+    ) {
+      assertReadableText('Production full map NPC purpose', text)
+      return { agentCount, text: text.split(/\r?\n/).slice(0, 14) }
+    }
+  }
+
+  throw new Error(`Production full map did not expose named NPC route purpose near any sampled place: ${JSON.stringify(snapshots)}`)
+}
+
 async function main() {
   mkdirSync(artifactsDir, { recursive: true })
   const executablePath = findBrowserExecutable()
@@ -166,6 +190,7 @@ async function main() {
     assert(await page.locator('.full-map-place-button').count() >= 6, 'Production full map nearby place directory is missing')
     assert(await page.locator('.full-map-place-taxi').count() === 1, 'Production full map direct taxi button is missing')
     assert(await page.locator('.full-map-place-pin').count() === 1, 'Production full map pin button is missing')
+    const fullMapNpcPurpose = await inspectFullMapNpcPurpose(page)
     await page.locator('.full-map-place-button').nth(1).click()
     const zoomBeforeWheel = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
     await page.locator('.full-city-map').dispatchEvent('wheel', { deltaY: -160, bubbles: true, cancelable: true })
@@ -221,6 +246,7 @@ async function main() {
       promptText: promptText.split(/\r?\n/).slice(0, 8),
       map: {
         hasLiveGpsFix: /live gps fix/i.test(mapText),
+        fullMapNpcPurpose,
         ...fullMapStats,
       },
       phoneTaxi: phoneTaxiText.split(/\r?\n/).slice(0, 14),

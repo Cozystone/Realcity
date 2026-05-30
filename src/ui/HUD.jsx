@@ -1315,9 +1315,20 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
               <div className="full-map-place-rhythm" data-phase={selectedPlaceRhythm.phase}>
                 <b>{selectedPlaceRhythm.status}</b>
                 <small>{selectedPlaceRhythm.inbound} inbound / {selectedPlaceRhythm.onSite} on-site / {selectedPlaceRhythm.topActivity}</small>
-                {selectedPlaceRhythm.examples[0] ? (
-                  <small>{selectedPlaceRhythm.examples[0].name}: {selectedPlaceRhythm.examples[0].intent}</small>
-                ) : null}
+                <div className="full-map-place-agents" aria-label="NPC movement near selected place">
+                  {selectedPlaceRhythm.examples.length ? selectedPlaceRhythm.examples.map(agent => (
+                    <article key={agent.id} className="full-map-place-agent">
+                      <span>
+                        <strong>{agent.name}</strong>
+                        <small>{agent.job}</small>
+                      </span>
+                      <em>{agent.flow} / {agent.eta}</em>
+                      <small>{agent.intent}</small>
+                    </article>
+                  )) : (
+                    <small className="full-map-place-no-agents">No named NPC route is active here yet.</small>
+                  )}
+                </div>
               </div>
               <div className="full-map-place-actions">
                 <button type="button" className="full-map-place-pin" onClick={pinSelectedPlace}>Pin</button>

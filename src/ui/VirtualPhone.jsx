@@ -565,7 +565,11 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
                   <article key={place.id}>
                     <small>{rhythm.phaseLabel} / {rhythm.expected}</small>
                     <p>{place.name}: {rhythm.inbound} inbound, {rhythm.onSite} on-site. {rhythm.topActivity}</p>
-                    {rhythm.examples[0] ? <footer>{rhythm.examples[0].name} / {rhythm.examples[0].activity}</footer> : null}
+                    {rhythm.examples[0] ? (
+                      <footer>
+                        {rhythm.examples[0].name} / {rhythm.examples[0].job} / {rhythm.examples[0].flow} / {rhythm.examples[0].eta}
+                      </footer>
+                    ) : null}
                   </article>
                 ))}
               </section>
