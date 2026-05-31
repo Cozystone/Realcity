@@ -2699,12 +2699,14 @@ function PlayerTaxiController({ city }) {
       if (event.code === 'KeyF') {
         const mission = store.mission
         if (!mission || mission.mode !== 'taxi' || mission.phase !== 'taxi_waiting') return
-        event.preventDefault()
+        if (event.cancelable) event.preventDefault()
         const taxi = mission.taxi
         if (taxi?.pose) {
           const door = taxiPassengerDoorPoint(taxi, 'player')
-          const distance = Math.hypot(store.player.x - door.x, store.player.z - door.z)
-          if (distance > 18) {
+          const boardingPoints = [door, taxi.passengerPickup, mission.pickup, taxi.pickupStop]
+            .filter(point => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z)))
+          const distance = Math.min(...boardingPoints.map(point => Math.hypot(store.player.x - point.x, store.player.z - point.z)))
+          if (distance > 26) {
             store.setPulse('Move closer to the taxi door before boarding.')
             return
           }
@@ -2732,7 +2734,7 @@ function PlayerTaxiController({ city }) {
 
       if (event.code === 'KeyH') {
         if (store.ride || store.mission) return
-        event.preventDefault()
+        if (event.cancelable) event.preventDefault()
         const player = store.player
         const pickup = nearestRoadPickup(player, city.roads)
         const nearbyTaxi = nearestAvailableTaxi(pickup, city.cars, city.roads, TAXI_HAIL_RADIUS)

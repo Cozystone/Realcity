@@ -101,6 +101,23 @@ function buildRouteTargets(city, player) {
   }))
 }
 
+function indoorDirectoryForPlayer(player) {
+  if (!player?.indoors) return []
+  const currentFloor = Math.max(1, player.floor || 1)
+  const directory = Array.isArray(player.floorDirectory) ? player.floorDirectory : []
+  if (!directory.length) {
+    return [{
+      level: currentFloor,
+      label: player.floorLabel || `Floor ${currentFloor}`,
+      zone: player.floorZone || 'active interior',
+      guide: player.floorGuide || player.accessHint || '',
+    }]
+  }
+  return directory
+    .filter(entry => Math.abs((entry.level || 1) - currentFloor) <= 2)
+    .slice(0, 5)
+}
+
 function cleanSeedThread(contact) {
   return [
     {
@@ -276,6 +293,10 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
   const placeRhythms = useMemo(
     () => buildPlaceRhythms(city, pedestrianSamples, timeMinutes),
     [city, pedestrianSamples, timeMinutes],
+  )
+  const indoorDirectory = useMemo(
+    () => indoorDirectoryForPlayer(player),
+    [player.indoors, player.floor, player.floorDirectory, player.floorLabel, player.floorZone, player.floorGuide],
   )
   const selected = contacts.find(contact => contact.id === selectedId) || contacts[0]
   const thread = selected ? (threads[selected.id] || seedThread(selected)) : []
@@ -541,6 +562,22 @@ export default function VirtualPhone({ city, player, focusedAgent, timeMinutes }
 
           {tab === 'social' ? (
             <div className="phone-app phone-feed">
+              {player.indoors ? (
+                <section className="phone-indoor-directory" aria-label="Indoor directory">
+                  <strong>Indoor directory</strong>
+                  <article>
+                    <small>{player.placeName} / Floor {player.floor || 1} of {player.floorCount || 1}</small>
+                    <p>{player.floorLabel}: {player.floorZone}</p>
+                    {player.floorGuide ? <footer>{player.floorGuide}</footer> : null}
+                  </article>
+                  {indoorDirectory.map(entry => (
+                    <article key={`${entry.level}-${entry.label}`} data-current={entry.level === player.floor ? 'true' : 'false'}>
+                      <small>{entry.level}F / {entry.core || player.coreHint || 'Floor core'}</small>
+                      <p>{entry.label}: {entry.zone}</p>
+                    </article>
+                  ))}
+                </section>
+              ) : null}
               <section className="phone-city-events" aria-label="Live city events">
                 <strong>Live city</strong>
                 {!(cityEvents || []).length ? (

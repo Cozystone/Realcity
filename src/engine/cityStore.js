@@ -105,6 +105,8 @@ export const useCityStore = create((set, get) => ({
     floorZone: null,
     accessHint: null,
     coreHint: null,
+    floorGuide: null,
+    floorDirectory: [],
   },
   weather: {
     label: 'Clear',

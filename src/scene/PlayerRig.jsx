@@ -43,6 +43,70 @@ function finiteRoute(points = []) {
   return points.filter(finitePoint2)
 }
 
+function localPoint(item, x, z) {
+  const dx = x - item.x
+  const dz = z - item.z
+  const cos = Math.cos(item.rot || 0)
+  const sin = Math.sin(item.rot || 0)
+  return {
+    x: dx * cos - dz * sin,
+    z: dx * sin + dz * cos,
+  }
+}
+
+function cameraSolidHit(city, x, z, radius = 1.25) {
+  const colliders = city.getNearbyBuildings?.(x, z) || city.buildings || []
+  for (const building of colliders) {
+    if (building.h < 3) continue
+    const local = localPoint(building, x, z)
+    if (Math.abs(local.x) < building.w / 2 + radius && Math.abs(local.z) < building.d / 2 + radius) return true
+  }
+
+  for (const place of city.landmarks || []) {
+    const interior = place.interior
+    if (!interior?.solidWalls) continue
+    const local = localPoint(place, x, z)
+    if (Math.abs(local.x) < interior.width / 2 + radius && Math.abs(local.z) < interior.depth / 2 + radius) return true
+  }
+  return false
+}
+
+function resolveCameraTarget(city, focus, target, radius = 1.35) {
+  let targetX = target.x
+  let targetZ = target.z
+  let avoidedLineOfSight = false
+  const dx = target.x - focus.x
+  const dz = target.z - focus.z
+  let previous = { x: focus.x, z: focus.z }
+
+  for (let step = 1; step <= 14; step += 1) {
+    const t = step / 14
+    const probe = { x: focus.x + dx * t, z: focus.z + dz * t }
+    if (cameraSolidHit(city, probe.x, probe.z, radius)) {
+      targetX = previous.x
+      targetZ = previous.z
+      avoidedLineOfSight = true
+      break
+    }
+    previous = probe
+  }
+
+  let [safeX, safeZ] = resolveBuildingCollision(city, focus.x, focus.z, targetX, targetZ, radius)
+  const targetDistance = Math.hypot(dx, dz)
+  if (Math.hypot(safeX - focus.x, safeZ - focus.z) < 4.2 && targetDistance > 0.001) {
+    const scale = Math.min(1, 4.2 / targetDistance)
+    ;[safeX, safeZ] = resolveBuildingCollision(city, focus.x, focus.z, focus.x + dx * scale, focus.z + dz * scale, radius)
+  }
+  const avoided = Math.hypot(safeX - target.x, safeZ - target.z) > 0.08
+  if (!avoided && !avoidedLineOfSight) return { x: target.x, y: target.y, z: target.z, avoided: false }
+  return {
+    x: safeX,
+    y: Math.max(target.y, terrainHeight(safeX, safeZ) + 3.2),
+    z: safeZ,
+    avoided: true,
+  }
+}
+
 function isTypingTarget(target) {
   return !!target?.closest?.('input, textarea, select, button')
 }
@@ -616,11 +680,17 @@ export default function PlayerRig({ city }) {
     const cameraOrbit = viewHeading + Math.PI
     const cameraElevation = CAMERA_BASE_ELEVATION + lookPitch.current
     const ce = Math.cos(cameraElevation)
+    const rideCamera = !!ride || (store.mission?.mode === 'taxi' && ['taxi_boarding', 'taxi_ride'].includes(store.mission.phase))
     camTarget.set(
       pos.current.x + CAMERA_DISTANCE * Math.sin(cameraOrbit) * ce,
       pos.current.y + CAMERA_HEIGHT + CAMERA_DISTANCE * Math.sin(cameraElevation),
       pos.current.z + CAMERA_DISTANCE * Math.cos(cameraOrbit) * ce,
     )
+    const cameraPlace = currentInterior(city, pos.current.x, pos.current.z)
+    const cameraSafety = !cameraPlace || rideCamera
+      ? resolveCameraTarget(city, pos.current, camTarget, rideCamera ? 2.4 : 1.35)
+      : { x: camTarget.x, y: camTarget.y, z: camTarget.z, avoided: false }
+    camTarget.set(cameraSafety.x, cameraSafety.y, cameraSafety.z)
     if (!Number.isFinite(camTarget.x) || !Number.isFinite(camTarget.y) || !Number.isFinite(camTarget.z)) {
       camTarget.set(pos.current.x, pos.current.y + CAMERA_HEIGHT + 2, pos.current.z + CAMERA_DISTANCE)
     }
@@ -630,9 +700,30 @@ export default function PlayerRig({ city }) {
       lookAt.set(0, terrainHeight(0, 40) + 2.3, 40)
     }
     state.camera.lookAt(lookAt)
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      window.__REALCITY_CAMERA_STATE__ = {
+        mode: ride ? 'taxi_ride' : rideCamera ? 'taxi_boarding' : cameraPlace ? 'interior' : 'walk',
+        avoidedSolid: cameraSafety.avoided,
+        camera: {
+          x: state.camera.position.x,
+          y: state.camera.position.y,
+          z: state.camera.position.z,
+        },
+        target: {
+          x: camTarget.x,
+          y: camTarget.y,
+          z: camTarget.z,
+        },
+        focus: {
+          x: pos.current.x,
+          y: pos.current.y,
+          z: pos.current.z,
+        },
+      }
+    }
 
     const district = city.districtAt(pos.current.x, pos.current.z).name
-    const place = currentInterior(city, pos.current.x, pos.current.z)
+    const place = cameraPlace
     const storeNow = useCityStore.getState()
     if ((place?.id || null) !== lastPlace.current) {
       lastPlace.current = place?.id || null
@@ -679,6 +770,8 @@ export default function PlayerRig({ city }) {
       floorZone: floorInfo?.zone || null,
       accessHint: floorInfo?.access || null,
       coreHint: floorInfo?.core || null,
+      floorGuide: floorInfo?.guide || null,
+      floorDirectory: place?.floorDirectory || [],
     })
   })
 

@@ -198,6 +198,15 @@ async function main() {
       const zoom = Number(document.querySelector('.full-city-map')?.getAttribute('data-zoom') || 0)
       return zoom > previous
     }, zoomBeforeWheel, { timeout: 5000 })
+    const mapBox = await page.locator('.full-city-map').boundingBox()
+    assert(mapBox, 'Production full map did not expose a scroll target')
+    const zoomBeforePhysicalWheel = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
+    await page.mouse.move(mapBox.x + mapBox.width * 0.5, mapBox.y + mapBox.height * 0.5)
+    await page.mouse.wheel(0, -160)
+    await page.waitForFunction(previous => {
+      const zoom = Number(document.querySelector('.full-city-map')?.getAttribute('data-zoom') || 0)
+      return zoom > previous
+    }, zoomBeforePhysicalWheel, { timeout: 5000 })
     await page.locator('.full-map-place-pin').click()
     await page.waitForFunction(() => {
       const card = document.querySelector('.full-map-navigation-card')

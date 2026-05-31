@@ -311,6 +311,8 @@ async function getTaxiRouteState(page) {
     const activeRoute = ride?.path || mission?.taxi?.destinationPath || mission?.route || mission?.taxi?.path || []
     return {
       missionPhase: mission?.phase || null,
+      player: state?.player ? { x: state.player.x, z: state.player.z, indoors: state.player.indoors, placeName: state.player.placeName } : null,
+      cameraState: window.__REALCITY_CAMERA_STATE__ || null,
       dispatchPathPoints: mission?.taxi?.path?.length || 0,
       destinationPathPoints: mission?.taxi?.destinationPath?.length || mission?.route?.length || 0,
       ridePathPoints: ride?.path?.length || 0,
@@ -2046,7 +2048,9 @@ async function inspectInteriorStateAndFloors(page) {
         player.floorCount > 1 &&
         !!player.floorLabel &&
         !!player.floorZone &&
-        !!player.coreHint
+        !!player.coreHint &&
+        Array.isArray(player.floorDirectory) &&
+        player.floorDirectory.length === player.floorCount
     }, setup, { timeout: 7000 })
 
     const initialPlayer = await getPlayer(page)
@@ -2054,6 +2058,19 @@ async function inspectInteriorStateAndFloors(page) {
     assert(initialHud.includes(initialPlayer.placeName), `HUD did not show the interior place name: ${initialHud}`)
     assert(initialHud.includes(`Floor 1 of ${initialPlayer.floorCount}`), `HUD did not show the first floor state: ${initialHud}`)
     assert(initialHud.includes(initialPlayer.floorLabel), `HUD did not expose floor label text: ${initialHud}`)
+    assert(initialPlayer.floorGuide && initialPlayer.floorDirectory.length === initialPlayer.floorCount, `Player interior directory state is incomplete: ${JSON.stringify(initialPlayer)}`)
+    await page.locator('.indoor-directory-panel').waitFor({ state: 'visible', timeout: 5000 })
+    const directoryHud = await page.locator('.indoor-directory-panel').innerText({ timeout: 5000 })
+    assert(/indoor directory/i.test(directoryHud) && directoryHud.includes(initialPlayer.placeName) && directoryHud.includes(initialPlayer.floorLabel), `Indoor directory HUD is incomplete: ${directoryHud}`)
+    assert(await page.locator('.indoor-floor-list article').count() >= 2, `Indoor directory HUD did not render nearby floors: ${directoryHud}`)
+
+    await page.locator('.phone-toggle').click()
+    await page.locator('.phone-device').waitFor({ state: 'visible', timeout: 10000 })
+    await page.locator('.phone-tabs button[data-tab="social"]').click()
+    const phoneIndoorText = await page.locator('.phone-indoor-directory').innerText({ timeout: 5000 })
+    assert(/indoor directory/i.test(phoneIndoorText) && phoneIndoorText.includes(initialPlayer.placeName) && phoneIndoorText.includes(initialPlayer.floorLabel), `RealPhone indoor directory is incomplete: ${phoneIndoorText}`)
+    await page.locator('.phone-close').click()
+    await page.locator('.phone-device').waitFor({ state: 'hidden', timeout: 10000 })
 
     await holdKey(page, 'PageUp', 180)
     await page.waitForFunction(({ id }) => {
@@ -2084,6 +2101,10 @@ async function inspectInteriorStateAndFloors(page) {
       floorZone: returnedPlayer.floorZone,
       accessHint: returnedPlayer.accessHint,
       coreHint: returnedPlayer.coreHint,
+      floorGuide: returnedPlayer.floorGuide,
+      directoryFloors: returnedPlayer.floorDirectory?.length || 0,
+      directoryHud: directoryHud.split(/\r?\n/).slice(0, 12),
+      phoneIndoor: phoneIndoorText.split(/\r?\n/).slice(0, 12),
       hudShowsInterior: initialHud.includes(setup.name) && upperHud.includes(`Floor ${upperPlayer.floor} of ${upperPlayer.floorCount}`),
     }
   } finally {
@@ -2494,6 +2515,13 @@ async function main() {
     }, zoomAfter, { timeout: 5000 })
     const mapBox = await page.locator('.full-city-map').boundingBox()
     assert(mapBox, 'Full map SVG bounding box was unavailable for pan verification')
+    const zoomBeforePhysicalWheel = Number(await page.locator('.full-city-map').getAttribute('data-zoom', { timeout: 5000 }))
+    await page.mouse.move(mapBox.x + mapBox.width * 0.5, mapBox.y + mapBox.height * 0.5)
+    await page.mouse.wheel(0, -180)
+    await page.waitForFunction(previous => {
+      const zoom = Number(document.querySelector('.full-city-map')?.getAttribute('data-zoom') || 0)
+      return zoom > previous
+    }, zoomBeforePhysicalWheel, { timeout: 5000 })
     const viewBoxBeforePan = await page.locator('.full-city-map').getAttribute('viewBox', { timeout: 5000 })
     await page.mouse.move(mapBox.x + mapBox.width * 0.52, mapBox.y + mapBox.height * 0.52)
     await page.mouse.down()
@@ -2646,10 +2674,15 @@ async function main() {
     }
     await dispatchKey(page, 'KeyF', 'keydown')
     await dispatchKey(page, 'KeyF', 'keyup')
-    await page.waitForFunction(() => {
-      const mission = window.__REALCITY_STORE__?.getState()?.mission
-      return !!mission?.boardingRequested && ['taxi_boarding', 'taxi_ride'].includes(mission.phase)
-    }, null, { timeout: 10000 })
+    try {
+      await page.waitForFunction(() => {
+        const mission = window.__REALCITY_STORE__?.getState()?.mission
+        return !!mission?.boardingRequested && ['taxi_boarding', 'taxi_ride'].includes(mission.phase)
+      }, null, { timeout: 10000 })
+    } catch (error) {
+      const debugTaxi = await getTaxiRouteState(page)
+      throw new Error(`Taxi F boarding key was ignored or blocked: ${JSON.stringify(debugTaxi)}`)
+    }
     const boardingTaxi = await getTaxiRouteState(page)
     assert(boardingTaxi.boardingRequested && boardingTaxi.boardingStartedAt > 0, `Taxi boarding did not expose a timed boarding phase: ${JSON.stringify(boardingTaxi)}`)
 
@@ -2672,6 +2705,18 @@ async function main() {
     assert(taxiRide.rideExitPoint, `Taxi ride did not preserve a curbside passenger exit point: ${JSON.stringify(taxiRide)}`)
     await page.waitForTimeout(900)
     const rideCanvas = await inspectCanvas(page, { minDataUrlLength: 18000 })
+    const taxiRideCamera = await page.evaluate(() => window.__REALCITY_CAMERA_STATE__ || null)
+    assert(
+      taxiRideCamera &&
+        taxiRideCamera.mode === 'taxi_ride' &&
+        Number.isFinite(Number(taxiRideCamera.camera?.x)) &&
+        Number.isFinite(Number(taxiRideCamera.camera?.y)) &&
+        Number.isFinite(Number(taxiRideCamera.camera?.z)) &&
+        Number.isFinite(Number(taxiRideCamera.target?.x)) &&
+        Number.isFinite(Number(taxiRideCamera.target?.y)) &&
+        Number.isFinite(Number(taxiRideCamera.target?.z)),
+      `Taxi ride camera state is invalid after F boarding: ${JSON.stringify(taxiRideCamera)}`,
+    )
 
     await page.locator('.mission-panel').waitFor({ state: 'hidden', timeout: 120000 })
     await page.waitForTimeout(700)
@@ -2738,6 +2783,7 @@ async function main() {
       missionText,
       taxiDispatch,
       taxiRide,
+      taxiRideCamera,
       rideCanvas,
       finalState,
       finalDistrict: finalPlayer.district,

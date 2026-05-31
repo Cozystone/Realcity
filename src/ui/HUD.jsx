@@ -305,6 +305,10 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+function preventDefaultIfCancelable(event) {
+  if (event?.cancelable) event.preventDefault()
+}
+
 function clampMapCenter(center, zoom) {
   const safeZoom = Math.max(0.1, finiteNumber(zoom, 1))
   const safeCenter = finitePoint(center, { x: 0, z: 40 })
@@ -465,8 +469,22 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
         ],
       },
     })
+    map.current.scrollZoom?.disable()
+    map.current.boxZoom?.disable()
+    map.current.dragPan?.disable()
+    map.current.keyboard?.disable()
+    map.current.doubleClickZoom?.disable()
+    map.current.touchZoomRotate?.disable()
+
+    const minimapNode = container.current
+    const stopMinimapWheel = (event) => {
+      preventDefaultIfCancelable(event)
+      event.stopPropagation()
+    }
+    minimapNode?.addEventListener('wheel', stopMinimapWheel, { passive: false })
 
     return () => {
+      minimapNode?.removeEventListener('wheel', stopMinimapWheel)
       map.current?.remove()
       map.current = null
     }
@@ -940,6 +958,42 @@ function MissionPanel({ mission, ride }) {
   )
 }
 
+function IndoorDirectoryPanel({ player }) {
+  if (!player?.indoors) return null
+  const floors = Array.isArray(player.floorDirectory) ? player.floorDirectory : []
+  const currentFloor = Math.max(1, player.floor || 1)
+  const preview = floors.length
+    ? floors
+      .filter(entry => Math.abs((entry.level || 1) - currentFloor) <= 2)
+      .slice(0, 5)
+    : [{
+        level: currentFloor,
+        label: player.floorLabel || `Floor ${currentFloor}`,
+        zone: player.floorZone || 'active interior',
+        core: player.coreHint || 'Floor core',
+      }]
+
+  return (
+    <aside className="indoor-directory-panel" aria-label="Indoor floor directory">
+      <div className="eyebrow">Indoor Directory</div>
+      <h2>{player.placeName}</h2>
+      <p>{player.coreHint || 'Floor core'} / Floor {currentFloor} of {player.floorCount || 1}</p>
+      {player.floorGuide ? <small>{player.floorGuide}</small> : null}
+      <div className="indoor-floor-list">
+        {preview.map(entry => (
+          <article key={`${entry.level}-${entry.label}`} data-current={entry.level === currentFloor ? 'true' : 'false'}>
+            <span>{entry.level}F</span>
+            <div>
+              <strong>{entry.label}</strong>
+              <small>{entry.zone}</small>
+            </div>
+          </article>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
 function placeColor(kind) {
   return {
     hospital: '#e85d75',
@@ -1127,7 +1181,8 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
     const node = mapSvgRef.current
     if (!node) return undefined
     const onWheel = (event) => {
-      event.preventDefault()
+      preventDefaultIfCancelable(event)
+      event.stopPropagation()
       setFollowGps(false)
       changeZoom(event.deltaY < 0 ? 1.18 : 0.84)
     }
@@ -1159,7 +1214,7 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
             onDoubleClick={(event) => {
-              event.preventDefault()
+              preventDefaultIfCancelable(event)
               setFollowGps(false)
               changeZoom(1.24)
             }}
@@ -1442,6 +1497,7 @@ export default function HUD({ city }) {
 
       <Compass heading={viewHeading} />
       <AgentCard agent={displayedAgent} stats={stats} pulse={pulse} />
+      <IndoorDirectoryPanel player={player} />
       <MultiplayerPanel multiplayer={multiplayer} />
       <Dialogue dialogue={dialogue} />
       <InteractionPanel interaction={interaction} />
