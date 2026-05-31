@@ -5,7 +5,7 @@ import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalFo
 import { resolveBuildingCollision } from '../engine/collision'
 import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
-import { fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
+import { askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
@@ -3773,6 +3773,36 @@ function NPCs({ city }) {
         text: styleNpcSpeech(best, '말씀하세요. 제가 가능한 일인지 판단하고 같이 움직일게요.'),
         agent,
       })
+      store.showDialogue({
+        speaker: best.name,
+        role: best.job,
+        text: styleNpcSpeech(best, 'Local LLM is thinking through this person and current street context. One moment.'),
+        agent,
+      })
+      window.setTimeout(() => {
+        const beforeGreeting = useCityStore.getState()
+        if (beforeGreeting.interaction?.agent?.id !== best.id || beforeGreeting.interaction?.status !== 'open') return
+        void askLocalNPC(agent, `Day ${store.day}, ${formatTime(store.timeMinutes)}. Player district: ${store.player.district}. Player is ${Math.round(bestDistance)}m away.`)
+          .then(line => {
+            const latest = useCityStore.getState()
+            const runtime = typeof window !== 'undefined' ? window.__REALCITY_LLM__ : null
+            const spoken = line || fallbackLine(best)
+            if (latest.focusedAgent?.id !== best.id && latest.interaction?.agent?.id !== best.id) return
+            best.remember(runtime?.lastSource === 'local-llm' ? 'llm-greeting' : 'fallback-greeting', spoken, best.placeName, runtime?.lastSource === 'local-llm' ? 0.72 : 0.46)
+            latest.addCityEvent({
+              id: `llm_greeting_${best.id}_${Date.now()}`,
+              kind: runtime?.lastSource === 'local-llm' ? 'llm' : 'dialogue',
+              agentId: best.id,
+              agentName: best.name,
+              placeName: best.placeName,
+              topic: runtime?.lastSource === 'local-llm' ? 'local LLM greeting' : 'fallback greeting',
+              text: runtime?.lastSource === 'local-llm'
+                ? `${best.name} answers through local ${runtime.provider}:${runtime.model}: ${spoken}`.slice(0, 180)
+                : `${best.name} answers from fallback dialogue because local LLM was unavailable: ${spoken}`.slice(0, 180),
+            })
+            latest.showDialogue({ speaker: best.name, role: best.job, text: spoken, agent: best.snapshot(places) })
+          })
+      }, 900)
       window.setTimeout(() => { busy.current = false }, 450)
     }
 
@@ -3840,6 +3870,7 @@ function NPCs({ city }) {
         safety: plan.safety,
         offer: plan.offer,
         urgency: plan.urgency,
+        llm: plan.llm,
         request,
       }
 
@@ -3861,6 +3892,7 @@ function NPCs({ city }) {
         safety: plan.safety,
         offer: plan.offer,
         urgency: plan.urgency,
+        llm: plan.llm,
         request,
         source: plan.source,
         summary: plan.speech,

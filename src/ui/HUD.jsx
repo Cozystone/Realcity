@@ -598,7 +598,25 @@ function Dialogue({ dialogue }) {
   )
 }
 
-function AgentCard({ agent, stats, pulse }) {
+function LlmRuntimeLine({ stats, runtime }) {
+  const source = runtime?.lastSource || 'idle'
+  const live = source === 'local-llm' || source === 'local-llm+fallback-route'
+  const thinking = runtime?.status === 'thinking'
+  const label = live ? 'LIVE' : thinking ? 'THINKING' : runtime?.failures > 0 ? 'FALLBACK' : 'READY'
+  const latency = runtime?.lastLatencyMs ? `${Math.round(runtime.lastLatencyMs / 100) / 10}s` : ''
+  const modelLabel = `${runtime?.provider || 'ollama'}:${runtime?.model || stats?.llm || 'dolphin3:latest'}`
+
+  return (
+    <div className="agent-llm" data-llm-source={source} data-llm-live={live ? 'true' : 'false'}>
+      <span>Local LLM</span>
+      <strong>{label}</strong>
+      <small>{modelLabel}{latency ? ` / ${latency}` : ''}</small>
+      {runtime?.lastAgentName ? <small>{runtime.lastPurpose || 'npc'} / {runtime.lastAgentName}</small> : null}
+    </div>
+  )
+}
+
+function AgentCard({ agent, stats, pulse, llmRuntime }) {
   if (agent) {
     const needs = agent.needs || {}
     const needRows = [
@@ -634,6 +652,7 @@ function AgentCard({ agent, stats, pulse }) {
         {lifeRoute.length ? (
           <small className="agent-life-route">Daily route: {lifeRoute.slice(0, 3).join(' -> ')}</small>
         ) : null}
+        <LlmRuntimeLine stats={stats} runtime={llmRuntime} />
         {agent.socialReaction ? <small>{agent.socialReaction.replaceAll('-', ' ')}</small> : null}
         {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
         {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}
@@ -651,7 +670,7 @@ function AgentCard({ agent, stats, pulse }) {
         <div><span>Tiles</span><strong>{stats.tiles}</strong></div>
       </div>
       <p>{pulse}</p>
-      <small>{stats.llm}</small>
+      <LlmRuntimeLine stats={stats} runtime={llmRuntime} />
     </aside>
   )
 }
@@ -1562,8 +1581,16 @@ export default function HUD({ city }) {
   const multiplayer = useCityStore(state => state.multiplayer)
   const pedestrianSamples = useCityStore(state => state.pedestrianSamples)
   const vehicleSamples = useCityStore(state => state.vehicleSamples)
+  const llmRuntime = useCityStore(state => state.llmRuntime)
   const viewHeading = player.viewHeading ?? player.heading
   const displayedAgent = focusedAgent || nearbyAgent
+
+  useEffect(() => {
+    const applyRuntime = event => useCityStore.getState().setLlmRuntime(event.detail)
+    window.addEventListener('realcity:llm-runtime', applyRuntime)
+    if (window.__REALCITY_LLM__) useCityStore.getState().setLlmRuntime(window.__REALCITY_LLM__)
+    return () => window.removeEventListener('realcity:llm-runtime', applyRuntime)
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -1598,7 +1625,7 @@ export default function HUD({ city }) {
       </section>
 
       <Compass heading={viewHeading} />
-      <AgentCard agent={displayedAgent} stats={stats} pulse={pulse} />
+      <AgentCard agent={displayedAgent} stats={stats} pulse={pulse} llmRuntime={llmRuntime} />
       <IndoorDirectoryPanel player={player} />
       <MultiplayerPanel multiplayer={multiplayer} />
       <Dialogue dialogue={dialogue} />

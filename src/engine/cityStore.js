@@ -128,6 +128,23 @@ export const useCityStore = create((set, get) => ({
     tiles: 0,
     llm: 'ollama',
   },
+  llmRuntime: {
+    provider: 'ollama',
+    endpoint: '/ollama/api/generate',
+    model: 'dolphin3:latest',
+    status: 'idle',
+    available: null,
+    requests: 0,
+    successes: 0,
+    failures: 0,
+    lastSource: 'idle',
+    lastPurpose: null,
+    lastAgentName: null,
+    lastLatencyMs: null,
+    lastError: null,
+    lastResponsePreview: null,
+    lastCheckedAt: null,
+  },
   playerPhysics: {
     health: 1,
     stability: 1,
@@ -227,6 +244,11 @@ export const useCityStore = create((set, get) => ({
 
   setStats(stats) {
     set(state => ({ stats: { ...state.stats, ...stats } }))
+  },
+
+  setLlmRuntime(patch) {
+    if (!patch) return
+    set(state => ({ llmRuntime: { ...state.llmRuntime, ...patch } }))
   },
 
   setSky(sky) {

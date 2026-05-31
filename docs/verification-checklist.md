@@ -23,8 +23,9 @@ audit has a clear finish line.
   returns behind the avatar after release.
 - Movement: `W` moves the avatar forward in the avatar-facing direction.
 - NPC access: `E` opens a nearby NPC interaction panel.
-- Local LLM route: NPC request planning uses the configured local provider
-  label, currently `ollama:dolphin3:latest`.
+- Local LLM route: NPC greeting and request planning call the configured local
+  provider when Ollama is available, currently `ollama:dolphin3:latest`, and
+  expose live/fallback telemetry in the HUD and mission state.
 - RealPhone UI: the lower-right phone opens, exposes message/contact/social/music
   apps, shows callable NPC contacts, has a music app entry point, and rejects
   mojibake/broken visible text in those phone surfaces.

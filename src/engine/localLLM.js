@@ -4,6 +4,38 @@ const provider = import.meta.env.VITE_LOCAL_LLM_PROVIDER || 'ollama'
 const endpoint = import.meta.env.VITE_LOCAL_LLM_ENDPOINT || '/ollama/api/generate'
 const model = import.meta.env.VITE_LOCAL_LLM_MODEL || 'dolphin3:latest'
 
+const llmRuntime = {
+  provider,
+  endpoint,
+  model,
+  status: 'idle',
+  available: null,
+  requests: 0,
+  successes: 0,
+  failures: 0,
+  lastSource: 'idle',
+  lastPurpose: null,
+  lastAgentName: null,
+  lastLatencyMs: null,
+  lastError: null,
+  lastResponsePreview: null,
+  lastCheckedAt: null,
+}
+
+function publishLlmRuntime(patch = {}) {
+  Object.assign(llmRuntime, patch, { lastCheckedAt: Date.now() })
+  const snapshot = { ...llmRuntime }
+  if (typeof window !== 'undefined') {
+    window.__REALCITY_LLM__ = snapshot
+    window.dispatchEvent(new CustomEvent('realcity:llm-runtime', { detail: snapshot }))
+  }
+  return snapshot
+}
+
+export function llmRuntimeSnapshot() {
+  return { ...llmRuntime }
+}
+
 const PLACE_ALIASES = [
   {
     id: 'hanbit_hospital',
@@ -48,7 +80,10 @@ const PLACE_ALIASES = [
 ]
 
 export function llmStatus() {
-  return `${provider}:${model}`
+  const live = llmRuntime.lastSource === 'local-llm' || llmRuntime.lastSource === 'local-llm+fallback-route'
+  const pending = llmRuntime.status === 'thinking'
+  const state = live ? 'live' : pending ? 'thinking' : llmRuntime.failures > 0 ? 'fallback-ready' : 'ready'
+  return `${provider}:${model} ${state}`
 }
 
 export function styleNpcSpeech(agent, speech) {
@@ -62,13 +97,37 @@ export function styleNpcSpeech(agent, speech) {
   return `${speechPrefix} ${cleanSpeech}`.replace(/\s+/g, ' ').slice(0, 220)
 }
 
-async function completeLocal(prompt, { temperature = 0.7, maxTokens = 160 } = {}) {
-  if (typeof window === 'undefined') return null
-  if (window.location.hostname.endsWith('.vercel.app') && endpoint.startsWith('/ollama')) return null
+async function completeLocal(prompt, { temperature = 0.7, maxTokens = 160, purpose = 'npc-dialogue', agentName = null, json = false, timeoutMs = 32000 } = {}) {
+  if (typeof window === 'undefined') {
+    return { ok: false, text: null, source: 'server-unavailable', latencyMs: 0, error: 'window-unavailable' }
+  }
+  if (window.location.hostname.endsWith('.vercel.app') && endpoint.startsWith('/ollama')) {
+    publishLlmRuntime({
+      status: 'disabled-production',
+      available: false,
+      lastSource: 'production-disabled',
+      lastPurpose: purpose,
+      lastAgentName: agentName,
+      lastError: 'Local Ollama calls are disabled on Vercel production.',
+    })
+    return { ok: false, text: null, source: 'production-disabled', latencyMs: 0, error: 'production-local-llm-disabled' }
+  }
 
+  const startedAt = performance.now()
+  publishLlmRuntime({
+    status: 'thinking',
+    available: null,
+    requests: llmRuntime.requests + 1,
+    lastSource: 'pending',
+    lastPurpose: purpose,
+    lastAgentName: agentName,
+    lastLatencyMs: null,
+    lastError: null,
+  })
+  let timeout = null
   try {
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 9500)
+    timeout = window.setTimeout(() => controller.abort(), timeoutMs)
     const body = provider === 'openai-compatible'
       ? {
           model,
@@ -80,6 +139,8 @@ async function completeLocal(prompt, { temperature = 0.7, maxTokens = 160 } = {}
           model,
           prompt: prompt.text,
           stream: false,
+          format: json ? 'json' : undefined,
+          keep_alive: '10m',
           options: { temperature, num_predict: maxTokens },
         }
 
@@ -89,12 +150,56 @@ async function completeLocal(prompt, { temperature = 0.7, maxTokens = 160 } = {}
       body: JSON.stringify(body),
       signal: controller.signal,
     })
-    window.clearTimeout(timeout)
-    if (!response.ok) return null
+    if (!response.ok) {
+      const latencyMs = Math.round(performance.now() - startedAt)
+      publishLlmRuntime({
+        status: 'fallback',
+        available: false,
+        failures: llmRuntime.failures + 1,
+        lastSource: 'fallback-http-error',
+        lastLatencyMs: latencyMs,
+        lastError: `HTTP ${response.status}`,
+      })
+      return { ok: false, text: null, source: 'fallback-http-error', latencyMs, error: `HTTP ${response.status}` }
+    }
     const data = await response.json()
-    return (data.response || data.choices?.[0]?.message?.content || data.message?.content || '').trim() || null
-  } catch {
-    return null
+    const text = (data.response || data.choices?.[0]?.message?.content || data.message?.content || '').trim()
+    const latencyMs = Math.round(performance.now() - startedAt)
+    if (!text) {
+      publishLlmRuntime({
+        status: 'fallback',
+        available: false,
+        failures: llmRuntime.failures + 1,
+        lastSource: 'fallback-empty-response',
+        lastLatencyMs: latencyMs,
+        lastError: 'empty-response',
+      })
+      return { ok: false, text: null, source: 'fallback-empty-response', latencyMs, error: 'empty-response' }
+    }
+    publishLlmRuntime({
+      status: 'live',
+      available: true,
+      successes: llmRuntime.successes + 1,
+      lastSource: 'local-llm',
+      lastLatencyMs: latencyMs,
+      lastError: null,
+      lastResponsePreview: text.slice(0, 180),
+    })
+    return { ok: true, text, source: 'local-llm', latencyMs, error: null }
+  } catch (error) {
+    const latencyMs = Math.round(performance.now() - startedAt)
+    const message = error?.name === 'AbortError' ? `timeout-${timeoutMs}ms` : (error?.message || String(error))
+    publishLlmRuntime({
+      status: 'fallback',
+      available: false,
+      failures: llmRuntime.failures + 1,
+      lastSource: error?.name === 'AbortError' ? 'fallback-timeout' : 'fallback-network-error',
+      lastLatencyMs: latencyMs,
+      lastError: message,
+    })
+    return { ok: false, text: null, source: error?.name === 'AbortError' ? 'fallback-timeout' : 'fallback-network-error', latencyMs, error: message }
+  } finally {
+    if (timeout) window.clearTimeout(timeout)
   }
 }
 
@@ -130,8 +235,8 @@ export async function askLocalNPC(agent, context) {
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
-  }, { temperature: 0.85, maxTokens: 90 })
-  return styleNpcSpeech(agent, response)
+  }, { temperature: 0.85, maxTokens: 90, purpose: 'npc-greeting', agentName: agent.name, timeoutMs: 14000 })
+  return styleNpcSpeech(agent, response.text)
 }
 
 function extractJson(text) {
@@ -661,87 +766,92 @@ function cleanPlanSpeech(agent, value, fallback) {
 
 export async function planLocalNPCAction(agent, request, context = {}) {
   const places = Array.isArray(context.places) ? context.places : []
+  const safe = missionFallbackActionPlan(agent, request, context)
   const schema = {
-    intent: 'escort_to_work | escort_to_place | smalltalk | clarify | decline',
-    decision: 'accept | clarify | decline | answer',
-    mode: 'walk | taxi | talk',
-    destination: 'work | home | third | named_place | none',
-    targetPlaceId: 'known city place id or empty string',
-    targetPlaceName: 'known city place name or empty string',
-    speech: 'Korean sentence spoken by the NPC',
-    reasoning: 'short private reason for the chosen action',
-    safety: 'one concrete safety or social norm to follow',
-    offer: 'what the NPC is offering to do for the player',
-    urgency: 'low | normal | urgent',
-    steps: ['short action step 1', 'short action step 2'],
+    speech: 'short Korean sentence spoken by the NPC',
+    reasoning: 'short private reason',
+    safety: 'one concrete safety or social norm',
+    offer: 'what the NPC offers to do',
+    urgency: 'low | normal | urgent | normal-far',
   }
 
-  const knownPlaces = places
+  const importantPlaces = []
+  const pushPlace = place => {
+    if (place && !importantPlaces.some(item => item.id === place.id)) importantPlaces.push(place)
+  }
+  pushPlace(places.find(place => place.id === safe.targetPlaceId))
+  pushPlace(places.find(place => place.id === agent.workId))
+  places.filter(place => includesPlaceCandidate(request, [place.id, place.name, place.address, place.roadName, place.kind])).slice(0, 5).forEach(pushPlace)
+  places.slice(0, 8).forEach(pushPlace)
+
+  const knownPlaces = importantPlaces
+    .slice(0, 10)
     .map(place => `${place.id}: ${place.name} (${place.kind})${place.address ? ` at ${place.address}` : ''}`)
     .join('\n')
+  const cognitionBrief = [
+    agent.cognition?.selectedPolicy?.label ? `Policy: ${agent.cognition.selectedPolicy.label}` : null,
+    agent.cognition?.reflection?.text ? `Reflection: ${agent.cognition.reflection.text.slice(0, 150)}` : null,
+    agent.memories?.[0]?.text ? `Memory: ${agent.memories[0].text.slice(0, 120)}` : null,
+  ].filter(Boolean).join('\n')
 
   const system = [
-    'You are the decision system for one autonomous NPC in a playable virtual city.',
-    'The player can ask for realistic favors, guidance, transport, or conversation.',
-    'Think about the NPC schedule, job, personality, safety, urgency, and available city actions.',
-    'Use the NPC cognitive state: retrieved memories, reflection, utility policy, and social norms are context, but final actions must be executable by the city simulation.',
-    'Return only strict JSON matching this schema:',
+    'Return one-line JSON only. No markdown.',
+    'You are a fast local-LLM personality layer for one autonomous NPC in RealCity.',
+    'The simulator already made an executable candidate plan; you only add NPC speech and short rationale.',
+    'JSON schema:',
     JSON.stringify(schema),
-    'Use Korean for speech. Keep steps concrete and executable in a 3D city simulation.',
-    'Always include reasoning, safety, offer, and urgency so the simulation can show the NPC decision.',
-    'Keep the speech in the NPC personal speech style, voice, and gesture flavor; do not make every NPC sound the same.',
-    'If the player asks to be taken to the NPC workplace, use destination "work".',
-    'If the player names a known city place, use destination "named_place" and set targetPlaceId.',
-    'If the trip is far, urgent, or the player asks for a taxi, mode can be "taxi"; otherwise use "walk".',
-    'Do not claim impossible actions. Clarify when the request is ambiguous.',
+    'Use Korean for speech, reasoning, safety, and offer.',
+    'Safety must mention sidewalk, curb, taxi, road, crosswalk, or lane.',
   ].join('\n')
 
   const user = [
-    `NPC: ${agent.name}, ${agent.age}, ${agent.gender}`,
-    `Job: ${agent.job}`,
-    `Personality: ${agent.personality}`,
-    `Speech style: ${agent.speechStyle?.label || 'natural'}`,
-    `Speech flavor: ${agent.speechStyle?.flavor || 'ordinary'}`,
-    `Voice: ${agent.voice || 'neutral'}`,
-    `Gesture: ${agent.gestureStyle || 'small nod'}`,
-    `Style brief: ${agent.styleBrief || ''}`,
-    `Current activity: ${agent.activity}`,
-    `Current place: ${agent.placeName}`,
-    `Workplace: ${agent.workName || 'unknown'}`,
-    `Distance to work: ${Math.round(context.distanceToWork || 0)} meters`,
-    ...cognitionPromptLines(agent),
-    `City time: ${context.timeLabel || 'unknown'}`,
-    `Player district: ${context.playerDistrict || 'unknown'}`,
-    `Known city places:\n${knownPlaces || 'none'}`,
+    `NPC ${agent.name}: ${agent.age} ${agent.gender}, ${agent.job}, ${agent.personality}, ${agent.speechStyle?.label || 'natural'}.`,
+    `Now: ${agent.activity} at ${agent.placeName}.`,
+    cognitionBrief,
+    `Candidate: ${safe.mode} / ${safe.destination} / ${safe.targetPlaceName || safe.targetPlaceId || 'none'} / ${safe.offer || safe.reasoning}`,
+    `Known places: ${knownPlaces || 'none'}`,
     `Player request: ${request}`,
   ].join('\n')
 
-  const text = await completeLocal({
+  const completion = await completeLocal({
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
-  }, { temperature: 0.42, maxTokens: 240 })
+  }, { temperature: 0.12, maxTokens: 50, purpose: 'npc-action-plan', agentName: agent.name, timeoutMs: 18000 })
 
-  const parsed = extractJson(text)
-  const safe = missionFallbackActionPlan(agent, request, context)
-  const parsedPlace = resolvePlanPlace(parsed, request, places)
+  const parsed = extractJson(completion.text)
+  const parsedExecutable = parsed ? {
+    ...safe,
+    ...parsed,
+    intent: typeof parsed.intent === 'string' ? parsed.intent : safe.intent,
+    decision: typeof parsed.decision === 'string' ? parsed.decision : safe.decision,
+    mode: typeof parsed.mode === 'string' ? parsed.mode : safe.mode,
+    destination: typeof parsed.destination === 'string' ? parsed.destination : safe.destination,
+    targetPlaceId: typeof parsed.targetPlaceId === 'string' && parsed.targetPlaceId ? parsed.targetPlaceId : safe.targetPlaceId,
+    targetPlaceName: typeof parsed.targetPlaceName === 'string' && parsed.targetPlaceName ? parsed.targetPlaceName : safe.targetPlaceName,
+    steps: Array.isArray(parsed.steps) && parsed.steps.length ? parsed.steps : safe.steps,
+  } : null
+  const parsedPlace = resolvePlanPlace(parsedExecutable, request, places)
   const safePlace = resolvePlanPlace(safe, request, places)
   const safeAddressExact = safePlace?.address && includesPlaceCandidate(request, [safePlace.address])
   const parsedMatchesSafeAddress = parsedPlace?.id && safePlace?.id && parsedPlace.id === safePlace.id
   const safeAcceptsRoute = safe.decision === 'accept' && safe.destination !== 'none'
-  const parsedCanRoute = parsed && (
-    parsed.destination === 'work' ||
-    parsed.destination === 'home' ||
-    parsed.destination === 'third' ||
-    (parsed.destination === 'named_place' && parsedPlace)
+  const parsedCanRoute = parsedExecutable && (
+    parsedExecutable.destination === 'work' ||
+    parsedExecutable.destination === 'home' ||
+    parsedExecutable.destination === 'third' ||
+    (parsedExecutable.destination === 'named_place' && parsedPlace)
   )
   const plan = safeAddressExact && !parsedMatchesSafeAddress
     ? safe
-    : parsedCanRoute || !safeAcceptsRoute ? (parsed || safe) : safe
+    : parsedCanRoute || !safeAcceptsRoute ? (parsedExecutable || safe) : safe
   const resolvedPlace = resolvePlanPlace(plan, request, places)
   const details = planDetails(agent, plan, request, context, resolvedPlace)
+  const source = parsed
+    ? (plan === safe ? 'local-llm+fallback-route' : 'local-llm+sim-route')
+    : completion.ok ? 'local-llm-unparsed+fallback' : `fallback:${completion.source}`
 
   return {
     intent: typeof plan.intent === 'string' ? plan.intent : safe.intent,
@@ -758,7 +868,18 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     steps: Array.isArray(plan.steps) && plan.steps.length
       ? plan.steps.slice(0, 5).map(step => String(step).slice(0, 90))
       : safe.steps,
-    source: parsed ? (plan === safe ? 'local-llm+fallback-route' : 'local-llm') : 'fallback',
+    source,
+    llm: {
+      provider,
+      model,
+      endpoint,
+      ok: completion.ok,
+      source: completion.source,
+      parsed: !!parsed,
+      latencyMs: completion.latencyMs,
+      error: completion.error || null,
+      responsePreview: completion.text ? completion.text.slice(0, 180) : null,
+    },
   }
 }
 

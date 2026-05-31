@@ -3093,15 +3093,24 @@ async function main() {
         offer: mission.offer || '',
         urgency: mission.urgency || '',
         source: mission.source || '',
+        llm: mission.llm || null,
+        llmRuntime: window.__REALCITY_LLM__ || null,
         requestEvents: (state?.cityEvents || []).filter(event => event.kind === 'request' && event.agentId === mission.agentId).length,
         focusedMemory: focused.memories?.[0]?.text || '',
       }
     })
+    const localLlmStatus = collectOllamaStatus()
+    const localLlmExpected = localLlmStatus.ok && /dolphin3:latest/i.test(localLlmStatus.stdout || '')
     assert(missionPlan.reasoning && missionPlan.safety && missionPlan.offer && missionPlan.urgency, `NPC action plan did not expose reasoning/safety/offer/urgency: ${JSON.stringify(missionPlan)}`)
     assert(!BROKEN_TEXT_PATTERN.test(`${missionPlan.reasoning} ${missionPlan.safety} ${missionPlan.offer}`), `NPC mission plan contains mojibake text: ${JSON.stringify(missionPlan)}`)
     assert(/sidewalk|curb|taxi|road|crosswalk|lane/i.test(missionPlan.safety), `NPC safety norm is not concrete enough: ${JSON.stringify(missionPlan)}`)
     assert(missionPlan.requestEvents >= 1 && /Player asked/i.test(missionPlan.focusedMemory), `NPC request memory/event was not recorded: ${JSON.stringify(missionPlan)}`)
     assert(missionText.includes(missionPlan.offer.slice(0, 24)), `Mission panel did not display the NPC offer: ${JSON.stringify({ missionText, missionPlan })}`)
+    if (localLlmExpected) {
+      assert(/^local-llm/.test(missionPlan.source), `Ollama is available, but NPC mission did not use local LLM: ${JSON.stringify({ missionPlan, localLlmStatus })}`)
+      assert(missionPlan.llm?.ok && missionPlan.llm?.provider === 'ollama' && missionPlan.llm?.model === 'dolphin3:latest', `NPC mission did not record Ollama execution metadata: ${JSON.stringify(missionPlan)}`)
+      assert(missionPlan.llmRuntime?.successes > 0 && missionPlan.llmRuntime?.lastSource === 'local-llm', `Local LLM runtime telemetry did not record a successful call: ${JSON.stringify(missionPlan.llmRuntime)}`)
+    }
 
     await page.waitForFunction(() => {
       const state = window.__REALCITY_STORE__?.getState()
@@ -3269,6 +3278,7 @@ async function main() {
         arrowReturnOffset: Math.abs(angleDiff(afterLook.viewHeading, afterLook.heading)),
         forwardDistance,
       },
+      localLlmMission: missionPlan,
       missionText,
       taxiDispatch,
       taxiRide,
