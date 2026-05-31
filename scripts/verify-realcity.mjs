@@ -1642,6 +1642,70 @@ async function inspectAgentAutonomy(page) {
   return result
 }
 
+async function inspectNeedDrivenErrand(page) {
+  const setup = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const player = store?.player || { x: 0, z: 40 }
+    const debug = window.__REALCITY_NPC_DEBUG__
+    if (!debug?.placeNpc || !debug?.startNeedErrand) return null
+    const id = 'npc_0'
+    debug.placeNpc({
+      id,
+      x: player.x + 4.8,
+      z: player.z + 8.4,
+      heading: store?.player?.heading || 0,
+      activity: 'checking personal needs',
+      placeName: 'verification sidewalk',
+      speedScale: 1,
+    })
+    return debug.startNeedErrand({ id, hunger: 0.94, energy: 0.6, social: 0.5 })
+  })
+
+  assert(setup?.id && setup?.targetName, `Could not start deterministic NPC need errand: ${JSON.stringify(setup)}`)
+
+  await page.waitForFunction((id) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === id)
+    const event = (state?.cityEvents || []).find(item =>
+      item.kind === 'need' &&
+      item.agentId === id &&
+      /changes course|detour|food break|rest stop|social check-in/i.test(item.text || item.topic || '')
+    )
+    return sample?.needErrandReason &&
+      sample.needErrandLabel &&
+      sample.needErrandTargetName &&
+      sample.needErrandRemainingMinutes > 0 &&
+      event
+  }, setup.id, { timeout: 10000 })
+
+  await page.locator('.agent-card [data-need-errand="true"]').waitFor({ state: 'visible', timeout: 10000 })
+  const cardText = await page.locator('.agent-card').innerText({ timeout: 5000 })
+  assert(/food break|rest stop|social check-in|city min|Daily route|Energy|Hunger|Social/i.test(cardText), `Nearby agent card did not expose need-driven life state: ${cardText}`)
+  assertReadableText('Need-driven nearby agent card', cardText)
+
+  const result = await page.evaluate((id) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === id)
+    const event = (state?.cityEvents || []).find(item => item.kind === 'need' && item.agentId === id)
+    return {
+      setup: window.__REALCITY_NPC_DEBUG__ ? 'debug-ready' : 'debug-missing',
+      id,
+      name: sample?.name || null,
+      reason: sample?.needErrandReason || null,
+      label: sample?.needErrandLabel || null,
+      targetName: sample?.needErrandTargetName || null,
+      remainingMinutes: sample?.needErrandRemainingMinutes || null,
+      routeStatus: sample?.routeStatus || null,
+      strongestNeed: sample?.strongestNeed || null,
+      eventText: event?.text || null,
+    }
+  }, setup.id)
+  result.cardText = cardText
+
+  assert(result.reason && result.targetName && result.eventText, `Need-driven errand result is incomplete: ${JSON.stringify(result)}`)
+  return result
+}
+
 async function inspectDeterministicSocialReaction(page) {
   await page.waitForFunction(() =>
     !!window.__REALCITY_STORE__ &&
@@ -2477,6 +2541,7 @@ async function main() {
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
+    const needDrivenErrand = await inspectNeedDrivenErrand(page)
     const socialReaction = await inspectDeterministicSocialReaction(page)
     const dailyRoutine = await inspectDailyRoutineTimeShift(page)
     const streetRendering = await inspectStreetRendering(page)
@@ -2807,6 +2872,7 @@ async function main() {
       skyState,
       collisionAndMaterials,
       agentAutonomy,
+      needDrivenErrand,
       socialReaction,
       dailyRoutine,
       streetRendering,

@@ -192,6 +192,7 @@ function placeActivitySummary(place, pedestrianSamples = [], vehicleSamples = []
 
 function socialSummaryFor(person) {
   if (!person) return 'No social context'
+  if (person.needErrandLabel && person.needErrandTargetName) return `Detouring for ${person.needErrandLabel} at ${person.needErrandTargetName}`
   if (person.talkPartnerName && person.talkTopicLabel) return `Talking with ${person.talkPartnerName} about ${person.talkTopicLabel}`
   if (person.lastInteractionPartner && person.lastInteractionTopic) return `Knows ${person.lastInteractionPartner}: ${person.lastInteractionTopic}`
   if (person.knownContacts?.[0]) return `Remembers ${person.knownContacts[0].name}: ${person.knownContacts[0].lastTopic || 'recent contact'}`
@@ -201,6 +202,7 @@ function socialSummaryFor(person) {
 
 function socialScore(person) {
   return (person.talkPartnerId ? 80 : 0) +
+    (person.needErrandLabel ? 36 : 0) +
     (person.relationshipCount || 0) * 8 +
     (person.knownContacts?.length || 0) * 5 +
     (person.lastMemory ? 3 : 0)
@@ -595,12 +597,40 @@ function Dialogue({ dialogue }) {
 
 function AgentCard({ agent, stats, pulse }) {
   if (agent) {
+    const needs = agent.needs || {}
+    const needRows = [
+      ['Energy', needs.energy],
+      ['Hunger', needs.hunger],
+      ['Social', needs.social],
+    ].filter(([, value]) => typeof value === 'number')
+    const lifeRoute = [agent.homeAddress, agent.workAddress || agent.workName, agent.thirdAddress || agent.thirdName].filter(Boolean)
     return (
       <aside className="agent-card">
         <div className="eyebrow">Nearby Agent</div>
         <h2>{agent.name}</h2>
         <p>{agent.job} / {agent.age} / {agent.gender}</p>
         <p>{agent.activity} at {agent.placeName}</p>
+        {agent.needErrand ? (
+          <div className="agent-errand" data-need-errand="true">
+            <span>{agent.needErrand.label}</span>
+            <strong>{agent.needErrand.targetName}</strong>
+            <small>{Math.ceil(agent.needErrand.remainingMinutes || 0)} city min before returning to schedule</small>
+          </div>
+        ) : null}
+        {needRows.length ? (
+          <div className="agent-needs" aria-label="NPC needs">
+            {needRows.map(([label, value]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <i><b style={{ width: `${Math.round(value * 100)}%` }} /></i>
+                <em>{Math.round(value * 100)}</em>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {lifeRoute.length ? (
+          <small className="agent-life-route">Daily route: {lifeRoute.slice(0, 3).join(' -> ')}</small>
+        ) : null}
         {agent.socialReaction ? <small>{agent.socialReaction.replaceAll('-', ' ')}</small> : null}
         {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
         {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}

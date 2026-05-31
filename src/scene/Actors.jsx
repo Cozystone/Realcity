@@ -24,6 +24,8 @@ const NPC_GLANCE_PULSE_RADIUS = 12
 const WALK_ROUTE_WAYPOINT_RADIUS = 1.8
 const WALK_ROUTE_REPLAN_SECONDS = 2.35
 const WALK_ROUTE_MAX_WAYPOINTS = 12
+const NEED_ERRAND_MIN_SECONDS = 22
+const NEED_ERRAND_DURATION_MINUTES = 22
 
 function formatTime(minutes) {
   return `${Math.floor(minutes / 60)}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`
@@ -40,6 +42,55 @@ function clampValue(value, min, max) {
 function scheduleFor(agent, timeMinutes) {
   const hour = timeMinutes / 60
   return agent.schedule.find(slot => hour >= slot.start && hour < slot.end) || agent.schedule[0]
+}
+
+function needErrandProfile(agent) {
+  const needs = agent.needs || {}
+  if (needs.hunger > 0.82) {
+    return {
+      reason: 'hunger',
+      label: 'food break',
+      activity: 'getting food',
+      targetKinds: ['cafe', 'retail', 'leisure', 'transit'],
+      memory: 'I need to step out for food before I keep going.',
+    }
+  }
+  if (needs.energy < 0.22) {
+    return {
+      reason: 'energy',
+      label: 'rest stop',
+      activity: 'taking a rest stop',
+      targetKinds: ['park', 'cafe', 'leisure'],
+      memory: 'I need a short rest before the next part of my day.',
+    }
+  }
+  if (needs.social < 0.18) {
+    return {
+      reason: 'social',
+      label: 'social check-in',
+      activity: 'looking for a social check-in',
+      targetKinds: ['cafe', 'park', 'retail', 'leisure', 'transit'],
+      memory: 'I want to check in with someone before heading back.',
+    }
+  }
+  return null
+}
+
+function chooseNeedErrandPlace(agent, places, profile) {
+  if (!profile || !places?.size) return null
+  const allPlaces = [...places.values()]
+  const candidates = allPlaces.filter(place => profile.targetKinds.includes(place.kind))
+  const fallback = agent.thirdId ? places.get(agent.thirdId) : null
+  const pool = candidates.length ? candidates : fallback ? [fallback] : allPlaces
+  if (!pool.length) return null
+  const seed = hashValue(`${agent.id}_${profile.reason}_${agent.relationshipCount || 0}`)
+  return pool[seed % pool.length]
+}
+
+function errandMinutesRemaining(errand, timeMinutes) {
+  if (!errand) return 0
+  const elapsed = ((timeMinutes - errand.startedAt) + 1440) % 1440
+  return Math.max(0, errand.durationMinutes - elapsed)
 }
 
 function nearestRoadForPlace(place, roads = []) {
@@ -188,6 +239,17 @@ function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }, roads = []) {
 }
 
 function targetFor(agent, places, timeMinutes, roads = []) {
+  if (agent.needErrand?.targetId) {
+    const place = places.get(agent.needErrand.targetId)
+    if (place) {
+      return {
+        ...scheduleTargetForPlace(place, agent.offset, roads),
+        activity: agent.needErrand.activity || agent.needErrand.label || 'need errand',
+        needErrand: agent.needErrand,
+      }
+    }
+  }
+
   const slot = scheduleFor(agent, timeMinutes)
   if (slot.target === 'home') {
     return { ...pedestrianSafeTarget(agent.home, agent.pos || agent.home, roads), activity: slot.activity }
@@ -1223,6 +1285,8 @@ class Agent {
     this.walkPlan = null
     this.selfTaxi = null
     this.taxiCooldown = 0
+    this.needErrand = null
+    this.needErrandCooldown = NEED_ERRAND_MIN_SECONDS + (hashValue(data.id) % 16)
     this.stuckTimer = 0
     this.lastRouteDistance = null
     this.blockedContacts = 0
@@ -1235,6 +1299,7 @@ class Agent {
     this.playerCooldown = Math.max(0, this.playerCooldown - delta)
     this.glanceCooldown = Math.max(0, this.glanceCooldown - delta)
     this.taxiCooldown = Math.max(0, this.taxiCooldown - delta)
+    this.needErrandCooldown = Math.max(0, this.needErrandCooldown - delta)
     this.updateNeeds(delta)
     if (this.fallTimer > 0) {
       this.fallTimer = Math.max(0, this.fallTimer - delta)
@@ -1265,6 +1330,7 @@ class Agent {
 
     if (this.mission) return this.updateMission(delta, city)
 
+    this.updateNeedErrand(timeMinutes, places, roads)
     const target = targetFor(this, places, timeMinutes, roads)
     if (this.selfTaxi) {
       updateAutonomousNpcTaxi(this, target, delta, city)
@@ -1282,6 +1348,7 @@ class Agent {
       : this.intentFor(target, timeMinutes)
 
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
+    if (this.needErrand && distance < 4.2) this.applyNeedErrandRelief(delta)
     if (distance > 2.2) {
       const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace
       moveAgentToward(this, target, delta, speed, city)
@@ -1301,6 +1368,82 @@ class Agent {
     }
     this.routeStatus = 'at scheduled destination'
     return 'dwelling'
+  }
+
+  startNeedErrand(profile, places, timeMinutes, forced = false) {
+    const place = chooseNeedErrandPlace(this, places, profile)
+    if (!place) return false
+    this.needErrand = {
+      id: `${this.id}_${profile.reason}_${Math.floor(timeMinutes)}`,
+      reason: profile.reason,
+      label: profile.label,
+      activity: profile.activity,
+      targetId: place.id,
+      targetName: place.name,
+      startedAt: timeMinutes,
+      durationMinutes: forced ? NEED_ERRAND_DURATION_MINUTES + 10 : NEED_ERRAND_DURATION_MINUTES + (hashValue(`${this.id}_${profile.reason}`) % 10),
+      forced,
+    }
+    this.walkRoute = null
+    this.walkPlan = null
+    this.routeStatus = `need detour: ${profile.label} at ${place.name}`
+    this.currentIntent = `${profile.label} at ${place.name} because ${strongestNeedPhrase(this)}`
+    this.remember('need', `${profile.memory} Detouring to ${place.name}.`, this.placeName, 0.82)
+    useCityStore.getState().addCityEvent({
+      id: `need_errand_${this.needErrand.id}_${Date.now()}`,
+      kind: 'need',
+      agentId: this.id,
+      agentName: this.name,
+      placeName: place.name,
+      topic: profile.label,
+      text: `${this.name} changes course for a ${profile.label} at ${place.name} instead of blindly following the schedule.`,
+    })
+    return true
+  }
+
+  updateNeedErrand(timeMinutes, places) {
+    if (this.needErrand) {
+      if (this.selfTaxi) return
+      const remaining = errandMinutesRemaining(this.needErrand, timeMinutes)
+      if (remaining > 0) {
+        this.currentIntent = `${this.needErrand.label} at ${this.needErrand.targetName}; ${Math.ceil(remaining)} city min before returning to schedule`
+        return
+      }
+      const completed = this.needErrand
+      this.remember('need', `Finished ${completed.label} at ${completed.targetName} and returning to my schedule.`, completed.targetName, 0.7)
+      useCityStore.getState().addCityEvent({
+        id: `need_errand_done_${completed.id}_${Date.now()}`,
+        kind: 'need',
+        agentId: this.id,
+        agentName: this.name,
+        placeName: completed.targetName,
+        topic: completed.label,
+        text: `${this.name} finishes a ${completed.label} at ${completed.targetName} and returns to the daily route.`,
+      })
+      this.needErrand = null
+      this.needErrandCooldown = 42 + (hashValue(`${this.id}_cooldown_${Math.floor(timeMinutes)}`) % 38)
+      this.walkRoute = null
+      this.walkPlan = null
+      return
+    }
+
+    if (this.needErrandCooldown > 0 || this.selfTaxi || this.talkTimer > 0) return
+    const profile = needErrandProfile(this)
+    if (!profile) return
+    this.startNeedErrand(profile, places, timeMinutes)
+  }
+
+  applyNeedErrandRelief(delta) {
+    if (!this.needErrand) return
+    if (this.needErrand.reason === 'hunger') {
+      this.needs.hunger = clampValue(this.needs.hunger - 0.018 * delta, 0, 1)
+      this.needs.energy = clampValue(this.needs.energy + 0.003 * delta, 0, 1)
+    } else if (this.needErrand.reason === 'energy') {
+      this.needs.energy = clampValue(this.needs.energy + 0.018 * delta, 0, 1)
+      this.needs.urgency = clampValue(this.needs.urgency - 0.006 * delta, 0, 1)
+    } else if (this.needErrand.reason === 'social') {
+      this.needs.social = clampValue(this.needs.social + 0.017 * delta, 0, 1)
+    }
   }
 
   updateMission(delta, city) {
@@ -1626,6 +1769,14 @@ class Agent {
       homeAddress: this.home?.address,
       x: this.pos.x,
       z: this.pos.z,
+      needErrand: this.needErrand ? {
+        id: this.needErrand.id,
+        reason: this.needErrand.reason,
+        label: this.needErrand.label,
+        targetName: this.needErrand.targetName,
+        activity: this.needErrand.activity,
+        remainingMinutes: errandMinutesRemaining(this.needErrand, useCityStore.getState().timeMinutes),
+      } : null,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
       selfTaxi: this.selfTaxi ? {
         id: this.selfTaxi.id,
@@ -3296,6 +3447,11 @@ function NPCs({ city }) {
           energy: agent.needs ? Number(agent.needs.energy.toFixed(2)) : null,
           hunger: agent.needs ? Number(agent.needs.hunger.toFixed(2)) : null,
           socialNeed: agent.needs ? Number(agent.needs.social.toFixed(2)) : null,
+          strongestNeed: strongestNeedPhrase(agent),
+          needErrandReason: agent.needErrand?.reason || null,
+          needErrandLabel: agent.needErrand?.label || null,
+          needErrandTargetName: agent.needErrand?.targetName || null,
+          needErrandRemainingMinutes: agent.needErrand ? Number(errandMinutesRemaining(agent.needErrand, time).toFixed(1)) : null,
           targetName: agent.walkPlan?.targetName || agent.placeName || null,
           travelMode: agent.selfTaxi ? 'taxi' : 'walk',
           taxiPhase: agent.selfTaxi?.phase || null,
@@ -3468,6 +3624,8 @@ function NPCs({ city }) {
         request,
       }
 
+      best.needErrand = null
+      best.needErrandCooldown = 18
       best.mission = mission
       best.talk(2.4)
       store.setInteraction({ status: 'active', plan })
@@ -3536,6 +3694,8 @@ function NPCs({ city }) {
       agent.mission = null
       agent.selfTaxi = null
       agent.boardingTaxi = null
+      agent.needErrand = null
+      agent.needErrandCooldown = 0
       agent.stuckTimer = 0
       agent.blockedContacts = 0
       agent.bumpTimer = 0
@@ -3556,6 +3716,39 @@ function NPCs({ city }) {
       agent.debugSpeedScale = Number.isFinite(Number(detail.speedScale)) ? Math.max(1, Number(detail.speedScale)) : 1
       return true
     }
+
+    const debugNeedErrand = (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const store = useCityStore.getState()
+      const agent = agents.find(item => item.id === detail.id) || agents[0]
+      if (!agent) return false
+      agent.mission = null
+      agent.selfTaxi = null
+      agent.boardingTaxi = null
+      agent.walkRoute = null
+      agent.walkPlan = null
+      agent.needErrand = null
+      agent.needErrandCooldown = 0
+      agent.needs.hunger = Number.isFinite(Number(detail.hunger)) ? clampValue(Number(detail.hunger), 0, 1) : 0.91
+      agent.needs.energy = Number.isFinite(Number(detail.energy)) ? clampValue(Number(detail.energy), 0, 1) : Math.max(agent.needs.energy, 0.44)
+      agent.needs.social = Number.isFinite(Number(detail.social)) ? clampValue(Number(detail.social), 0, 1) : Math.max(agent.needs.social, 0.4)
+      agent.needs.urgency = Number.isFinite(Number(detail.urgency)) ? clampValue(Number(detail.urgency), 0, 1) : agent.needs.urgency
+      const profile = needErrandProfile(agent) || {
+        reason: 'hunger',
+        label: 'food break',
+        activity: 'getting food',
+        targetKinds: ['cafe', 'retail'],
+        memory: 'I need a visible debug food break.',
+      }
+      const started = agent.startNeedErrand(profile, places, store.timeMinutes, true)
+      return started ? {
+        id: agent.id,
+        name: agent.name,
+        reason: agent.needErrand.reason,
+        targetName: agent.needErrand.targetName,
+      } : false
+    }
+
     const debugSocialPair = (detail = {}) => {
       if (!import.meta.env.DEV) return false
       const store = useCityStore.getState()
@@ -3603,11 +3796,13 @@ function NPCs({ city }) {
     }
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})
+    const onDebugNeedErrand = event => debugNeedErrand(event.detail || {})
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
-      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair }
+      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair, startNeedErrand: debugNeedErrand }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
       window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)
+      window.addEventListener('realcity:debug-need-errand', onDebugNeedErrand)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
@@ -3617,6 +3812,7 @@ function NPCs({ city }) {
       if (import.meta.env.DEV && typeof window !== 'undefined') {
         window.removeEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
         window.removeEventListener('realcity:debug-social-pair', onDebugSocialPair)
+        window.removeEventListener('realcity:debug-need-errand', onDebugNeedErrand)
         if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
       }
       window.removeEventListener('keydown', onKey)

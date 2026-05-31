@@ -49,6 +49,10 @@ audit has a clear finish line.
 - NPC identity and autonomy metadata: all NPCs must expose unique names,
   persona signatures, appearance signatures, jobs, speech styles, home/work/
   third-place schedule data, needs, memories, and relationship state.
+- Need-driven autonomy: NPC hunger, energy, and social need thresholds can
+  trigger a short real detour to a suitable cafe, park, retail, or social place;
+  the detour must appear in pedestrian samples, city events, and the nearby
+  agent card instead of remaining as invisible flavor text.
 - NPC social life and reactions: the harness verifies live NPC-to-NPC
   conversation events, relationship memory, and a deterministic nearby NPC
   glance/turn reaction that also surfaces in the city pulse.
