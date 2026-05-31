@@ -73,6 +73,9 @@ audit has a clear finish line.
 - Turn-lane behavior: roads expose right-hand turn-lane policy and vehicles
   publish straight/left/right intent, turn signal distance, turn decision
   distance, and active left/right signal-side telemetry.
+- Turn-lane rendering: main intersections render visible left-turn pocket
+  paint, hooked turn arrows, right-turn yield triangles, and chevrons tied to
+  the same `laneModel`/`turnIntent` telemetry.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - Place meaning: every landmark exposes a gameplay role, address, access plan,

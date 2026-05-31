@@ -1337,7 +1337,7 @@ async function inspectWalkingEscort(page) {
         const side = road.axis === 'x'
           ? (place.z >= road.z ? 1 : -1)
           : (place.x >= road.x ? 1 : -1)
-        const startDistance = 54
+        const startDistance = 38
         let start
         if (road.axis === 'x') {
           let sx = clamp(place.x - startDistance, road.from + 14, road.to - 14)
@@ -1357,11 +1357,11 @@ async function inspectWalkingEscort(page) {
           privatePlace,
           distance: Math.hypot(place.x - player.x, place.z - player.z),
           agentDistance,
-          score: Math.abs(agentDistance - 58) + (privatePlace ? 35 : 0),
+          score: Math.abs(agentDistance - 42) + (privatePlace ? 35 : 0),
         }
       })
       .filter(Boolean)
-      .filter(place => place.agentDistance >= 36 && place.agentDistance <= 90)
+      .filter(place => place.agentDistance >= 24 && place.agentDistance <= 58)
       .sort((a, b) => a.score - b.score)
     const target = walkPlaces[0]
     if (!target) return { error: 'no-nearby-walk-target', player, sampleCount: samples.length }
@@ -1376,7 +1376,7 @@ async function inspectWalkingEscort(page) {
       heading,
       activity: 'available for walking directions',
       placeName: `${target.road.name} sidewalk`,
-      speedScale: 5.8,
+      speedScale: 3.1,
     })
     window.__REALCITY_PLAYER_RIG__?.debugPlace?.({
       x: target.start.x + Math.sin(heading + Math.PI / 2) * 6.2,
@@ -2534,6 +2534,7 @@ async function inspectStreetRendering(page) {
       rendering?.crosswalks?.zebraStripes > 0 &&
       rendering?.trafficSignals?.heads > 0 &&
       rendering?.pedestrianSignals?.heads > 0 &&
+      rendering?.turnLaneMarkings?.pocketMarkings > 0 &&
       rendering?.sharedMobility?.gbfsStationModels > 0 &&
       rendering?.facades?.proceduralWindowTexture
   }, null, { timeout: 15000 })
@@ -2558,6 +2559,14 @@ async function inspectStreetRendering(page) {
     `SUMO signal program/link metadata is incomplete: ${JSON.stringify(result.trafficSignals)}`,
   )
   assert(['green', 'yellow', 'all-red'].includes(result.trafficSignals?.currentPhase) && /^([GgyrsuOo]{4}|rrrr)$/.test(result.trafficSignals?.sumoState || ''), `Traffic signal live SUMO state is incomplete: ${JSON.stringify(result.trafficSignals)}`)
+  assert(
+    result.turnLaneMarkings?.pocketMarkings >= 80 &&
+      result.turnLaneMarkings?.turnArrowHeads >= 80 &&
+      result.turnLaneMarkings?.rightTurnYieldAreas >= 80 &&
+      result.turnLaneMarkings?.yieldChevrons >= 160 &&
+      /turnIntent/i.test(result.turnLaneMarkings?.stencilPolicy || ''),
+    `Turn-pocket/lane-arrow markings are incomplete: ${JSON.stringify(result.turnLaneMarkings)}`,
+  )
   assert(result.pedestrianSignals?.heads >= result.crosswalks.crossingPads, `Pedestrian signal heads do not cover crosswalk approaches: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.labeledHeads >= 20 && /curb-side/i.test(result.pedestrianSignals?.placement || ''), `Pedestrian signal placement metadata is incomplete: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0, `Pedestrian signals are not exposing simultaneous WALK/WAIT states: ${JSON.stringify(result.pedestrianSignals)}`)

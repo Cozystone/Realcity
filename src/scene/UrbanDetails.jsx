@@ -887,11 +887,60 @@ function Bollards({ roads }) {
 function LaneReflectors({ roads }) {
   const reflectorRef = useRef()
   const arrowsRef = useRef()
+  const turnPocketRef = useRef()
+  const turnPocketEdgeRef = useRef()
+  const turnArrowStemRef = useRef()
+  const turnArrowBendRef = useRef()
+  const turnArrowHeadRef = useRef()
+  const yieldAreaRef = useRef()
+  const yieldChevronRef = useRef()
   const { mainVertical, mainHorizontal } = useRoadLayout(roads)
   const details = useMemo(() => {
     const reflectors = []
     const arrows = []
+    const turnPockets = []
+    const turnPocketEdges = []
+    const turnArrowStems = []
+    const turnArrowBends = []
+    const turnArrowHeads = []
+    const yieldAreas = []
+    const yieldChevrons = []
     const mainRoads = [...mainHorizontal, ...mainVertical]
+    const addLanePoint = (road, along, lateral) => road.axis === 'x'
+      ? { x: along, z: road.z + lateral }
+      : { x: road.x + lateral, z: along }
+    const yawFor = (road, direction) => road.axis === 'x'
+      ? (direction > 0 ? Math.PI / 2 : -Math.PI / 2)
+      : (direction > 0 ? 0 : Math.PI)
+    const addApproachMarkings = (road, crossCoord, crossWidth, direction) => {
+      const laneOffset = road.width * 0.27
+      const laneLateral = road.axis === 'x' ? direction * laneOffset : -direction * laneOffset
+      const turnLateral = laneLateral * 0.34
+      const yieldLateral = laneLateral * 1.08
+      const pocketLength = road.laneModel?.turnPocketLengthMeters || (road.main ? 34 : 18)
+      const signalDistance = road.laneModel?.turnSignalDistanceMeters || (road.main ? 52 : 34)
+      const stopAlong = crossCoord - direction * crossWidth * 0.92
+      const pocketAlong = stopAlong - direction * pocketLength * 0.54
+      const arrowAlong = stopAlong - direction * Math.min(signalDistance * 0.32, 18)
+      const yieldAlong = stopAlong - direction * Math.min(signalDistance * 0.43, 23)
+      const yaw = yawFor(road, direction)
+      const pocket = addLanePoint(road, pocketAlong, turnLateral)
+      const arrow = addLanePoint(road, arrowAlong, turnLateral)
+      const yieldPoint = addLanePoint(road, yieldAlong, yieldLateral)
+      const lateralBend = Math.max(1.4, road.width * 0.12)
+      const leftBend = addLanePoint(road, arrowAlong + direction * 2.4, turnLateral - Math.sign(laneLateral || 1) * lateralBend)
+
+      turnPockets.push({ ...pocket, sx: 1.18, sz: pocketLength, yaw })
+      turnPocketEdges.push({ ...addLanePoint(road, pocketAlong, turnLateral - Math.sign(laneLateral || 1) * 0.82), sx: 0.16, sz: pocketLength * 0.94, yaw })
+      turnPocketEdges.push({ ...addLanePoint(road, pocketAlong, turnLateral + Math.sign(laneLateral || 1) * 0.82), sx: 0.16, sz: pocketLength * 0.94, yaw })
+      turnArrowStems.push({ ...arrow, sx: 0.34, sz: 8.8, yaw })
+      turnArrowBends.push({ ...leftBend, sx: 3.4, sz: 0.36, yaw: yaw + Math.PI / 2 })
+      turnArrowHeads.push({ ...addLanePoint(road, arrowAlong + direction * 5.2, turnLateral - Math.sign(laneLateral || 1) * lateralBend * 1.28), sx: 1.28, sz: 1.7, yaw: yaw + Math.PI / 2 })
+      yieldAreas.push({ ...yieldPoint, sx: 2.8, sz: 3.1, yaw })
+      yieldChevrons.push({ ...addLanePoint(road, yieldAlong - direction * 1.8, yieldLateral), sx: 0.18, sz: 2.7, yaw: yaw + 0.55 })
+      yieldChevrons.push({ ...addLanePoint(road, yieldAlong + direction * 1.8, yieldLateral), sx: 0.18, sz: 2.7, yaw: yaw - 0.55 })
+    }
+
     for (const road of mainRoads) {
       const laneOffset = road.width * 0.27
       for (let p = road.from + 46; p < road.to - 46; p += 38) {
@@ -907,11 +956,46 @@ function LaneReflectors({ roads }) {
         }
       }
     }
-    return { reflectors: reflectors.slice(0, 1300), arrows: arrows.slice(0, 90) }
+    for (const h of mainHorizontal) {
+      for (const v of mainVertical) {
+        if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.94) continue
+        addApproachMarkings(h, v.x, v.width, 1)
+        addApproachMarkings(h, v.x, v.width, -1)
+        addApproachMarkings(v, h.z, h.width, 1)
+        addApproachMarkings(v, h.z, h.width, -1)
+      }
+    }
+    return {
+      reflectors: reflectors.slice(0, 1300),
+      arrows: arrows.slice(0, 90),
+      turnPockets: turnPockets.slice(0, 120),
+      turnPocketEdges: turnPocketEdges.slice(0, 240),
+      turnArrowStems: turnArrowStems.slice(0, 120),
+      turnArrowBends: turnArrowBends.slice(0, 120),
+      turnArrowHeads: turnArrowHeads.slice(0, 120),
+      yieldAreas: yieldAreas.slice(0, 120),
+      yieldChevrons: yieldChevrons.slice(0, 240),
+    }
   }, [mainHorizontal, mainVertical])
 
+  useEffect(() => {
+    exposeRenderingMetadata({
+      turnLaneMarkings: {
+        pocketMarkings: details.turnPockets.length,
+        pocketEdgeLines: details.turnPocketEdges.length,
+        turnArrowStems: details.turnArrowStems.length,
+        turnArrowBends: details.turnArrowBends.length,
+        turnArrowHeads: details.turnArrowHeads.length,
+        rightTurnYieldAreas: details.yieldAreas.length,
+        yieldChevrons: details.yieldChevrons.length,
+        stencilPolicy: 'painted left-turn pockets and right-turn yield areas mirror vehicle turnIntent and turnLaneRule telemetry',
+        source: 'road.laneModel turnLanePolicy / turnPocketLengthMeters / turnSignalDistanceMeters',
+      },
+    })
+  }, [details])
+
   useLayoutEffect(() => {
-    if (!reflectorRef.current || !arrowsRef.current) return
+    if (!reflectorRef.current || !arrowsRef.current || !turnPocketRef.current || !turnPocketEdgeRef.current || !turnArrowStemRef.current || !turnArrowBendRef.current || !turnArrowHeadRef.current || !yieldAreaRef.current || !yieldChevronRef.current) return
     const dummy = new THREE.Object3D()
     details.reflectors.forEach((item, i) => {
       setInstance(reflectorRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.205, item.z], [item.sx, 0.025, item.sz], item.yaw)
@@ -919,8 +1003,36 @@ function LaneReflectors({ roads }) {
     details.arrows.forEach((item, i) => {
       setInstance(arrowsRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.212, item.z], [item.sx, 0.028, item.sz], item.yaw)
     })
+    details.turnPockets.forEach((item, i) => {
+      setInstance(turnPocketRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.214, item.z], [item.sx, 0.018, item.sz], item.yaw)
+    })
+    details.turnPocketEdges.forEach((item, i) => {
+      setInstance(turnPocketEdgeRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.222, item.z], [item.sx, 0.024, item.sz], item.yaw)
+    })
+    details.turnArrowStems.forEach((item, i) => {
+      setInstance(turnArrowStemRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.236, item.z], [item.sx, 0.03, item.sz], item.yaw)
+    })
+    details.turnArrowBends.forEach((item, i) => {
+      setInstance(turnArrowBendRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.238, item.z], [item.sx, 0.03, item.sz], item.yaw)
+    })
+    details.turnArrowHeads.forEach((item, i) => {
+      setInstance(turnArrowHeadRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.242, item.z], [item.sx, 0.034, item.sz], item.yaw)
+    })
+    details.yieldAreas.forEach((item, i) => {
+      setInstance(yieldAreaRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.218, item.z], [item.sx, 0.018, item.sz], item.yaw)
+    })
+    details.yieldChevrons.forEach((item, i) => {
+      setInstance(yieldChevronRef.current, i, dummy, [item.x, CITY_BASE_Y + 0.246, item.z], [item.sx, 0.03, item.sz], item.yaw)
+    })
     reflectorRef.current.instanceMatrix.needsUpdate = true
     arrowsRef.current.instanceMatrix.needsUpdate = true
+    turnPocketRef.current.instanceMatrix.needsUpdate = true
+    turnPocketEdgeRef.current.instanceMatrix.needsUpdate = true
+    turnArrowStemRef.current.instanceMatrix.needsUpdate = true
+    turnArrowBendRef.current.instanceMatrix.needsUpdate = true
+    turnArrowHeadRef.current.instanceMatrix.needsUpdate = true
+    yieldAreaRef.current.instanceMatrix.needsUpdate = true
+    yieldChevronRef.current.instanceMatrix.needsUpdate = true
   }, [details])
 
   return (
@@ -932,6 +1044,34 @@ function LaneReflectors({ roads }) {
       <instancedMesh ref={arrowsRef} args={[undefined, undefined, details.arrows.length]} frustumCulled={false}>
         <coneGeometry args={[1, 1, 3]} />
         <meshStandardMaterial color="#e7ece9" emissive="#ffffff" emissiveIntensity={0.08} roughness={0.44} />
+      </instancedMesh>
+      <instancedMesh ref={turnPocketRef} args={[undefined, undefined, details.turnPockets.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ece8c7" emissive="#fff3ad" emissiveIntensity={0.05} roughness={0.48} transparent opacity={0.72} />
+      </instancedMesh>
+      <instancedMesh ref={turnPocketEdgeRef} args={[undefined, undefined, details.turnPocketEdges.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#fff7d6" emissive="#fff2a8" emissiveIntensity={0.18} roughness={0.36} />
+      </instancedMesh>
+      <instancedMesh ref={turnArrowStemRef} args={[undefined, undefined, details.turnArrowStems.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f8f5dc" emissive="#ffffff" emissiveIntensity={0.12} roughness={0.38} />
+      </instancedMesh>
+      <instancedMesh ref={turnArrowBendRef} args={[undefined, undefined, details.turnArrowBends.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f8f5dc" emissive="#ffffff" emissiveIntensity={0.12} roughness={0.38} />
+      </instancedMesh>
+      <instancedMesh ref={turnArrowHeadRef} args={[undefined, undefined, details.turnArrowHeads.length]} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 3]} />
+        <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.12} roughness={0.34} />
+      </instancedMesh>
+      <instancedMesh ref={yieldAreaRef} args={[undefined, undefined, details.yieldAreas.length]} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 3]} />
+        <meshStandardMaterial color="#f3ead1" emissive="#fff7c2" emissiveIntensity={0.08} roughness={0.46} transparent opacity={0.78} />
+      </instancedMesh>
+      <instancedMesh ref={yieldChevronRef} args={[undefined, undefined, details.yieldChevrons.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#fff6d0" emissive="#fff4a8" emissiveIntensity={0.16} roughness={0.38} />
       </instancedMesh>
     </>
   )

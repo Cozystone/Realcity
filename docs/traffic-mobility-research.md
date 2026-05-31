@@ -76,6 +76,10 @@ This note tracks the traffic-rule pass for RealCity.
   distance, and turn-pocket length. Vehicle runtime samples carry straight/
   left/right intent, chosen lane rule, turn decision distance, and amber signal
   side before intersections.
+- Main intersections now render those lane policies as physical paint:
+  elongated left-turn pocket blocks, pocket edge lines, hooked turn arrows,
+  right-turn yield triangles, and chevrons are generated from each road's
+  `laneModel` so vehicle turn intent is visible on the pavement.
 - NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
   gap-clear status, and nearest approaching vehicle when a conservative gap
   wait is triggered.
@@ -108,5 +112,5 @@ This note tracks the traffic-rule pass for RealCity.
 
 - Add visible dock lock/hand pose animation and conflict handling when another
   NPC takes a reserved return slot.
-- Render painted turn-pocket markings and per-lane arrow stencils that match
-  the new turn-intent telemetry.
+- Add per-intersection lane-choice conflict resolution so turning vehicles
+  slow/yield to pedestrians and crossing traffic differently from through cars.
