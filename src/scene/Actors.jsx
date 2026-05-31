@@ -5,7 +5,7 @@ import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalFo
 import { resolveBuildingCollision } from '../engine/collision'
 import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
-import { askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
+import { askLocalAutonomy, askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { makeProceduralTexture } from './proceduralTextures'
 
@@ -1381,6 +1381,7 @@ class Agent {
     this.taxiCooldown = 0
     this.needErrand = null
     this.needErrandCooldown = NEED_ERRAND_MIN_SECONDS + (hashValue(data.id) % 16)
+    this.llmAutonomy = null
     this.crosswalkWaitTimer = 0
     this.lastCrosswalkWaitAt = 0
     this.stuckTimer = 0
@@ -3176,6 +3177,9 @@ function NPCs({ city }) {
   const statsClock = useRef(0)
   const nearbyClock = useRef(0)
   const cityEventClock = useRef(0)
+  const autonomyLlmClock = useRef(16)
+  const autonomyLlmBusy = useRef(false)
+  const autonomyLlmLastAgent = useRef(null)
   const busy = useRef(false)
   const requestBusy = useRef(false)
   const textures = useMemo(() => ({
@@ -3186,6 +3190,76 @@ function NPCs({ city }) {
     metal: makeProceduralTexture('brushed-metal', { size: 128, seed: 705, repeatX: 1.8, repeatY: 0.9 }),
     glass: makeProceduralTexture('glass-smudge', { size: 128, seed: 706, repeatX: 1.2, repeatY: 1.2 }),
   }), [])
+
+  const runAutonomyLlm = async (agent, reason = 'ambient') => {
+    if (!agent || autonomyLlmBusy.current || typeof window === 'undefined') return null
+    if (window.location.hostname.endsWith('.vercel.app')) return null
+    autonomyLlmBusy.current = true
+    autonomyLlmLastAgent.current = agent.id
+    try {
+      const store = useCityStore.getState()
+      const snapshot = agent.snapshot(places)
+      const result = await askLocalAutonomy(snapshot, {
+        timeLabel: `Day ${store.day}, ${formatTime(store.timeMinutes)}`,
+        placeContext: `${agent.placeName || 'street'} / ${reason}`,
+      })
+      const runtime = window.__REALCITY_LLM__ || null
+      if (!result?.ok) return result
+      const thought = result.text || `${agent.name} keeps following the current routine.`
+      agent.currentIntent = thought
+      agent.llmAutonomy = {
+        thought,
+        source: result.source,
+        provider: result.provider,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        reason,
+        createdAt: Date.now(),
+      }
+      agent.remember('llm-autonomy', thought, agent.placeName, 0.76)
+      const event = {
+        id: `llm_autonomy_${agent.id}_${Date.now()}`,
+        kind: 'llm',
+        agentId: agent.id,
+        agentName: agent.name,
+        placeName: agent.placeName,
+        topic: 'npc autonomy',
+        text: `${agent.name} updates a local-LLM intention: ${thought}`.slice(0, 180),
+      }
+      store.addCityEvent(event)
+      const player = store.player || { x: 0, z: 0 }
+      if (Math.hypot(agent.pos.x - player.x, agent.pos.z - player.z) < 55) store.setPulse(event.text)
+      window.__REALCITY_LLM_AUTONOMY__ = {
+        agentId: agent.id,
+        agentName: agent.name,
+        reason,
+        thought,
+        source: result.source,
+        provider: result.provider,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        runtime,
+        createdAt: Date.now(),
+      }
+      const currentSamples = useCityStore.getState().pedestrianSamples || []
+      if (currentSamples.length) {
+        store.setPedestrianSamples(currentSamples.map(sample => sample.id === agent.id
+          ? {
+              ...sample,
+              currentIntent: thought,
+              llmAutonomyThought: thought,
+              llmAutonomySource: result.source,
+              llmAutonomyLatencyMs: result.latencyMs,
+              llmAutonomyReason: reason,
+              lastMemory: thought,
+            }
+          : sample))
+      }
+      return window.__REALCITY_LLM_AUTONOMY__
+    } finally {
+      autonomyLlmBusy.current = false
+    }
+  }
 
   useEffect(() => {
     const store = useCityStore.getState()
@@ -3551,6 +3625,7 @@ function NPCs({ city }) {
     statsClock.current += dt
     nearbyClock.current += dt
     cityEventClock.current += dt
+    autonomyLlmClock.current += dt
 
     if (socialClock.current > 0.8) {
       socialClock.current = 0
@@ -3577,6 +3652,23 @@ function NPCs({ city }) {
         agent.remember(event.kind, event.text, event.placeName, event.kind === 'need' ? 0.78 : 0.46)
         store.addCityEvent(event)
       }
+    }
+
+    if (
+      autonomyLlmClock.current > 85 &&
+      !autonomyLlmBusy.current &&
+      !requestBusy.current &&
+      typeof window !== 'undefined' &&
+      !window.location.hostname.endsWith('.vercel.app')
+    ) {
+      autonomyLlmClock.current = 0
+      const candidates = agents
+        .filter(agent => !agent.mission && !agent.selfTaxi && agent.talkTimer <= 0 && agent.fallTimer <= 0)
+        .map(agent => ({ agent, distance: agent.pos.distanceTo(player), pressure: Math.max(agent.needs?.hunger || 0, 1 - (agent.needs?.energy || 1), agent.needs?.social || 0) }))
+        .filter(item => item.distance < 80 || item.pressure > 0.82)
+        .sort((a, b) => (b.pressure - a.pressure) || (a.distance - b.distance))
+      const selected = candidates.find(item => item.agent.id !== autonomyLlmLastAgent.current)?.agent || candidates[0]?.agent
+      if (selected) void runAutonomyLlm(selected, 'ambient city autonomy')
     }
 
     if (statsClock.current > 1.25) {
@@ -3606,6 +3698,10 @@ function NPCs({ city }) {
           playerDistance: agent.playerDistance,
           facingPlayerAngle: agent.facingPlayerAngle,
           currentIntent: agent.currentIntent || null,
+          llmAutonomyThought: agent.llmAutonomy?.thought || null,
+          llmAutonomySource: agent.llmAutonomy?.source || null,
+          llmAutonomyLatencyMs: agent.llmAutonomy?.latencyMs ?? null,
+          llmAutonomyReason: agent.llmAutonomy?.reason || null,
           autonomyGoal: agent.autonomy?.dailyGoal || null,
           relationshipStyle: agent.autonomy?.relationshipStyle || null,
           relationshipCount: agent.relationshipCount || 0,
@@ -4146,17 +4242,33 @@ function NPCs({ city }) {
         topic: topic.label,
       }
     }
+    const debugLlmAutonomy = async (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const agent = agents.find(item => item.id === detail.id) ||
+        agents.find(item => !item.mission && !item.selfTaxi) ||
+        agents[0]
+      if (!agent) return false
+      return runAutonomyLlm(agent, detail.reason || 'debug forced autonomy')
+    }
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})
     const onDebugNeedErrand = event => debugNeedErrand(event.detail || {})
     const onDebugCrosswalkWait = event => debugCrosswalkWait(event.detail || {})
+    const onDebugLlmAutonomy = event => { void debugLlmAutonomy(event.detail || {}) }
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
-      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair, startNeedErrand: debugNeedErrand, startCrosswalkWait: debugCrosswalkWait }
+      window.__REALCITY_NPC_DEBUG__ = {
+        placeNpc: debugPlaceNpc,
+        startConversation: debugSocialPair,
+        startNeedErrand: debugNeedErrand,
+        startCrosswalkWait: debugCrosswalkWait,
+        runLlmAutonomy: debugLlmAutonomy,
+      }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
       window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)
       window.addEventListener('realcity:debug-need-errand', onDebugNeedErrand)
       window.addEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
+      window.addEventListener('realcity:debug-llm-autonomy', onDebugLlmAutonomy)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
@@ -4168,6 +4280,7 @@ function NPCs({ city }) {
         window.removeEventListener('realcity:debug-social-pair', onDebugSocialPair)
         window.removeEventListener('realcity:debug-need-errand', onDebugNeedErrand)
         window.removeEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
+        window.removeEventListener('realcity:debug-llm-autonomy', onDebugLlmAutonomy)
         if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
       }
       window.removeEventListener('keydown', onKey)

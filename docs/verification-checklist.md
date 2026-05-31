@@ -67,6 +67,9 @@ audit has a clear finish line.
   inspired memory stream, recency/importance/relevance retrieval, reflection,
   utility-scored policy selection, behavior-tree execution contract, and local
   LLM prompt context grounded in executable city affordances.
+- NPC autonomous LLM: when local Ollama is available, at least one NPC can run
+  a local `npc-autonomy` thought outside a direct player request, update its
+  current intent/memory, and publish a live city event with LLM telemetry.
 - Need-driven autonomy: NPC hunger, energy, and social need thresholds can
   trigger a short real detour to a suitable cafe, park, retail, or social place;
   the detour must appear in pedestrian samples, city events, nearby agent card,

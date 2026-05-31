@@ -239,6 +239,49 @@ export async function askLocalNPC(agent, context) {
   return styleNpcSpeech(agent, response.text)
 }
 
+export async function askLocalAutonomy(agent, context = {}) {
+  const needText = agent.needs
+    ? `energy ${Math.round(agent.needs.energy * 100)}, hunger ${Math.round(agent.needs.hunger * 100)}, social ${Math.round(agent.needs.social * 100)}`
+    : 'needs unknown'
+  const cognition = agent.cognition || {}
+  const policy = cognition.selectedPolicy?.label || cognition.selectedPolicy?.id || 'daily routine'
+  const memory = agent.memories?.[0]?.text || cognition.reflection?.text || agent.currentIntent || 'following routine'
+  const system = [
+    'You are the private thought layer for one autonomous NPC in RealCity.',
+    'Return one short Korean sentence only. No JSON, no markdown, no explanation.',
+    'The sentence should decide what this person will do or say in the next few city minutes.',
+    'Stay grounded in the NPC job, needs, memory, current place, and social norms.',
+  ].join(' ')
+  const user = [
+    `${agent.name}, ${agent.age}, ${agent.gender}, ${agent.job}.`,
+    `Personality: ${agent.personality}; speech: ${agent.speechStyle?.label || 'natural'}.`,
+    `Current place/activity: ${agent.placeName}, ${agent.activity}.`,
+    `Needs: ${needText}.`,
+    `Policy: ${policy}.`,
+    `Memory: ${String(memory).slice(0, 140)}.`,
+    `City context: ${context.timeLabel || 'unknown time'}, ${context.placeContext || 'normal city life'}.`,
+  ].join('\n')
+  const completion = await completeLocal({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    text: `${system}\n\n${user}`,
+  }, { temperature: 0.35, maxTokens: 38, purpose: 'npc-autonomy', agentName: agent.name, timeoutMs: 15000 })
+  const fallback = `${agent.name} keeps following ${agent.autonomy?.dailyGoal || agent.currentIntent || 'the daily routine'} near ${agent.placeName}.`
+  const line = cleanPlanText(completion.text, fallback, 150)
+  return {
+    ok: completion.ok,
+    text: styleNpcSpeech(agent, line),
+    source: completion.ok ? 'local-llm-autonomy' : `fallback:${completion.source}`,
+    provider,
+    model,
+    latencyMs: completion.latencyMs,
+    error: completion.error || null,
+    responsePreview: completion.text ? completion.text.slice(0, 180) : null,
+  }
+}
+
 function extractJson(text) {
   if (!text) return null
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)

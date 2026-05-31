@@ -1943,6 +1943,45 @@ async function inspectAgentAutonomy(page) {
   return result
 }
 
+async function inspectLocalLlmAutonomy(page) {
+  const localLlmStatus = collectOllamaStatus()
+  const localLlmExpected = localLlmStatus.ok && /dolphin3:latest/i.test(localLlmStatus.stdout || '')
+
+  const result = await page.evaluate(async () => {
+    const debug = window.__REALCITY_NPC_DEBUG__
+    const store = window.__REALCITY_STORE__?.getState()
+    const sample = (store?.pedestrianSamples || []).find(item => item.id && !item.taxiPhase) ||
+      (store?.pedestrianSamples || [])[0]
+    if (!debug?.runLlmAutonomy || !sample?.id) return { error: 'debug-autonomy-unavailable', sampleCount: store?.pedestrianSamples?.length || 0 }
+    const autonomy = await debug.runLlmAutonomy({ id: sample.id, reason: 'verification autonomous city life' })
+    await new Promise(resolve => setTimeout(resolve, 650))
+    const state = window.__REALCITY_STORE__?.getState()
+    const event = (state?.cityEvents || []).find(item => item.kind === 'llm' && item.agentId === sample.id && item.topic === 'npc autonomy')
+    const updated = (state?.pedestrianSamples || []).find(item => item.id === sample.id)
+    return {
+      sample: { id: sample.id, name: sample.name, beforeIntent: sample.currentIntent },
+      autonomy,
+      runtime: window.__REALCITY_LLM__ || null,
+      event,
+      updatedIntent: updated?.currentIntent || null,
+      updatedMemory: updated?.lastMemory || null,
+      updatedLlmAutonomyThought: updated?.llmAutonomyThought || null,
+      updatedLlmAutonomySource: updated?.llmAutonomySource || null,
+      updatedLlmAutonomyLatencyMs: updated?.llmAutonomyLatencyMs ?? null,
+    }
+  })
+
+  if (!localLlmExpected) {
+    return { ...result, skipped: true, localLlmStatus }
+  }
+
+  assert(result.autonomy?.source === 'local-llm-autonomy', `NPC autonomous LLM did not use Ollama: ${JSON.stringify({ result, localLlmStatus })}`)
+  assert(result.runtime?.lastPurpose === 'npc-autonomy' && result.runtime?.lastSource === 'local-llm' && result.runtime?.successes > 0, `NPC autonomous LLM runtime telemetry is incomplete: ${JSON.stringify(result.runtime)}`)
+  assert(result.event?.text && /local-LLM intention/i.test(result.event.text), `NPC autonomous LLM event was not recorded: ${JSON.stringify(result.event)}`)
+  assert(result.updatedLlmAutonomyThought && result.updatedLlmAutonomySource === 'local-llm-autonomy' && result.updatedLlmAutonomyLatencyMs > 0, `NPC autonomous LLM thought did not update agent telemetry: ${JSON.stringify(result)}`)
+  return { ...result, skipped: false, localLlmStatus }
+}
+
 async function inspectNeedDrivenErrand(page) {
   const setup = await page.evaluate(() => {
     const store = window.__REALCITY_STORE__?.getState()
@@ -2914,6 +2953,7 @@ async function main() {
     const playerVehicleImpact = await inspectPlayerVehicleImpact(page)
     const crosswalkSignalCompliance = await inspectCrosswalkSignalCompliance(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
+    const localLlmAutonomy = await inspectLocalLlmAutonomy(page)
     const needDrivenErrand = await inspectNeedDrivenErrand(page)
     const socialReaction = await inspectDeterministicSocialReaction(page)
     const dailyRoutine = await inspectDailyRoutineTimeShift(page)
@@ -3257,6 +3297,7 @@ async function main() {
       playerVehicleImpact,
       crosswalkSignalCompliance,
       agentAutonomy,
+      localLlmAutonomy,
       needDrivenErrand,
       socialReaction,
       dailyRoutine,
