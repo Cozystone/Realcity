@@ -297,6 +297,10 @@ function formatCoordinate(value) {
   return Math.abs(finiteNumber(value)).toFixed(5)
 }
 
+function headingToMinimapBearing(heading) {
+  return -((finiteNumber(heading, Math.PI) * 180) / Math.PI)
+}
+
 function nearestAddress(city, x, z) {
   const point = finitePoint({ x, z })
   let nearest = null
@@ -357,6 +361,7 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
   const map = useRef(null)
   const safePlayer = finitePoint(player, { x: 0, z: 40 })
   const viewHeading = finiteNumber(player.viewHeading ?? player.heading, Math.PI)
+  const minimapBearing = headingToMinimapBearing(viewHeading)
   const route = activeTaxiRoute(mission, ride, mapRoute)
   const mapData = useMemo(() => cityMapGeoJSON(city), [city])
   const buildingData = useMemo(() => buildingGeoJSON(city), [city])
@@ -515,13 +520,20 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
     try {
       map.current.jumpTo({
         center: safeLngLat(city, safePlayer.x, safePlayer.z),
-        bearing: finiteNumber((viewHeading * 180) / Math.PI, 0),
+        bearing: finiteNumber(minimapBearing, 0),
         zoom: 13.6,
       })
+      window.__REALCITY_MINIMAP__ = {
+        x: safePlayer.x,
+        z: safePlayer.z,
+        viewHeading,
+        bearing: minimapBearing,
+        gps: safeLngLat(city, safePlayer.x, safePlayer.z),
+      }
     } catch (error) {
       console.warn('Skipped minimap camera update because MapLibre rejected the GPS fix.', error)
     }
-  }, [city, safePlayer.x, safePlayer.z, viewHeading])
+  }, [city, safePlayer.x, safePlayer.z, viewHeading, minimapBearing])
 
   useEffect(() => {
     const source = map.current?.getSource('taxiRoute')
@@ -537,7 +549,7 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
   }, [city, pedestrianSamples, vehicleSamples])
 
   return (
-    <div className="minimap">
+    <div className="minimap" data-heading={viewHeading.toFixed(5)} data-bearing={minimapBearing.toFixed(2)}>
       <div ref={container} className="minimap-map" />
       <div ref={wheelShield} className="minimap-hit-shield" aria-hidden="true" />
       <div className="minimap-grid" />

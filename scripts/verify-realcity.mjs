@@ -35,8 +35,26 @@ function angleDiff(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b))
 }
 
+function degreeDiff(a, b) {
+  const radians = angleDiff((a * Math.PI) / 180, (b * Math.PI) / 180)
+  return (radians * 180) / Math.PI
+}
+
 function positionDistance(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z)
+}
+
+async function getMinimapTelemetry(page) {
+  return page.evaluate(() => {
+    const node = document.querySelector('.minimap')
+    const runtime = window.__REALCITY_MINIMAP__ || {}
+    return {
+      heading: Number(node?.getAttribute('data-heading')),
+      bearing: Number(node?.getAttribute('data-bearing')),
+      runtimeBearing: Number(runtime.bearing),
+      runtimeHeading: Number(runtime.viewHeading),
+    }
+  })
 }
 
 async function inspectBuildingAccess(page) {
@@ -3060,10 +3078,25 @@ async function main() {
     await page.locator('.full-map-panel').waitFor({ state: 'hidden', timeout: 10000 })
 
     const beforeTurn = await getPlayer(page)
+    const minimapBeforeTurn = await getMinimapTelemetry(page)
     await holdKey(page, 'KeyA', 900)
     const afterTurn = await getPlayer(page)
+    await page.waitForFunction(() => {
+      const node = document.querySelector('.minimap')
+      const storeHeading = window.__REALCITY_STORE__?.getState()?.player?.viewHeading
+      const mapHeading = Number(node?.getAttribute('data-heading'))
+      return Number.isFinite(storeHeading) && Number.isFinite(mapHeading) && Math.abs(storeHeading - mapHeading) < 0.05
+    }, null, { timeout: 5000 })
+    const minimapAfterTurn = await getMinimapTelemetry(page)
     assert(Math.abs(angleDiff(afterTurn.heading, beforeTurn.heading)) > 0.18, 'A key did not rotate avatar heading')
     assert(positionDistance(afterTurn, beforeTurn) < 1.2, 'A key moved the avatar instead of only rotating heading')
+    assert(Number.isFinite(minimapBeforeTurn.bearing) && Number.isFinite(minimapAfterTurn.bearing), `Minimap bearing telemetry is invalid: ${JSON.stringify({ minimapBeforeTurn, minimapAfterTurn })}`)
+    const beforeTurnViewHeading = beforeTurn.viewHeading ?? beforeTurn.heading
+    const afterTurnViewHeading = afterTurn.viewHeading ?? afterTurn.heading
+    const headingDeltaDegrees = (angleDiff(afterTurnViewHeading, beforeTurnViewHeading) * 180) / Math.PI
+    const minimapBearingDelta = degreeDiff(minimapAfterTurn.bearing, minimapBeforeTurn.bearing)
+    assert(headingDeltaDegrees * minimapBearingDelta < -0.01, `Minimap bearing followed the same direction as avatar heading instead of counter-rotating the map: ${JSON.stringify({ headingDeltaDegrees, minimapBearingDelta, minimapBeforeTurn, minimapAfterTurn })}`)
+    assert(Math.abs(minimapAfterTurn.bearing + (afterTurnViewHeading * 180) / Math.PI) < 1.5, `Minimap bearing is not the inverse of player view heading: ${JSON.stringify({ player: afterTurn, minimapAfterTurn })}`)
 
     const beforeLook = await getPlayer(page)
     await dispatchKey(page, 'ArrowLeft', 'keydown')
