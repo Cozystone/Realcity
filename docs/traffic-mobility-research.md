@@ -91,11 +91,15 @@ This note tracks the traffic-rule pass for RealCity.
   objects: painted dock pads, racks, bike/scooter props, kiosks, and colored
   curb-zone markings. NPC shared-bike/shared-scooter routes also attach visible
   ride props to the digital-human rig while the trip is active.
+- Shared mobility trips now reserve and mutate GBFS station status at runtime:
+  pickup inventory is decremented, a destination return slot is reserved, NPCs
+  walk to the dock, unlock the bike/scooter, ride with a visible prop, return it
+  into the reserved dock, and then continue on foot to the final destination.
 
 ## Next Traffic Targets
 
 - Add explicit turn lanes and turn intentions.
 - Use the new detector-like pressure to actually extend/shorten green splits
   in high-traffic areas.
-- Add dock pickup/return animation with inventory depletion and return-slot
-  reservation for `shared-bike`/`shared-scooter` routes.
+- Add visible dock lock/hand pose animation and conflict handling when another
+  NPC takes a reserved return slot.

@@ -90,7 +90,9 @@ audit has a clear finish line.
 - NPC mobility-aware LLM: the autonomy prompt must include live GBFS dock
   availability, SmartCities curb/geofence state, TrafficFlowObserved context,
   and GATSim disruption data; a forced verification run executes
-  `use_shared_bike` as a real `shared-bike` route with dock telemetry.
+  `use_shared_bike` as a real `shared-bike` route with dock telemetry, GBFS
+  pickup inventory depletion, return-slot reservation, visible ride prop
+  telemetry, and completed return inventory updates.
 - NPC-to-NPC local LLM: when local Ollama is available, two NPCs can generate a
   short social exchange through `npc-social-conversation`, store per-person
   dialogue lines and memories, update relationship state, and publish a

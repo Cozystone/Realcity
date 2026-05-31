@@ -240,10 +240,48 @@ function scheduleTargetForPlace(place, offset = { x: 0, z: 0 }, roads = []) {
   }
 }
 
+function isSharedMobilityMode(mode) {
+  return mode === 'shared-bike' || mode === 'shared-scooter'
+}
+
+function sharedMobilityTripPoint(trip, key, activity) {
+  const point = trip?.[key]
+  if (!point) return null
+  return {
+    x: point.x,
+    z: point.z,
+    y: point.y ?? terrainHeight(point.x, point.z),
+    name: point.name || (key === 'pickup' ? trip.pickupStationName : trip.returnStationName) || 'GBFS dock',
+    roadName: point.roadName,
+    roadId: point.roadId,
+    roadAxis: point.roadAxis,
+    activity,
+    entryRule: 'gbfs-dock-access',
+    sharedMobilityPhase: trip.phase,
+  }
+}
+
 function targetFor(agent, places, timeMinutes, roads = []) {
   if (agent.needErrand?.targetId) {
     const place = places.get(agent.needErrand.targetId)
     if (place) {
+      const trip = agent.needErrand.sharedMobilityTrip
+      if (isSharedMobilityMode(agent.needErrand.mobilityMode) && trip) {
+        if (trip.phase === 'walking-to-dock' || trip.phase === 'pickup') {
+          return sharedMobilityTripPoint(trip, 'pickup', `walking to ${agent.needErrand.mobilityMode} dock`) || {
+            ...scheduleTargetForPlace(place, agent.offset, roads),
+            activity: agent.needErrand.activity || agent.needErrand.label || 'need errand',
+            needErrand: agent.needErrand,
+          }
+        }
+        if (trip.phase === 'riding-to-return-dock' || trip.phase === 'return') {
+          return sharedMobilityTripPoint(trip, 'return', `${agent.needErrand.mobilityMode} ride to return dock`) || {
+            ...scheduleTargetForPlace(place, agent.offset, roads),
+            activity: agent.needErrand.activity || agent.needErrand.label || 'need errand',
+            needErrand: agent.needErrand,
+          }
+        }
+      }
       return {
         ...scheduleTargetForPlace(place, agent.offset, roads),
         activity: agent.needErrand.activity || agent.needErrand.label || 'need errand',
@@ -1624,6 +1662,8 @@ class Agent {
     }
 
     this.updateNeedErrand(timeMinutes, places, roads, scheduledTarget)
+    const sharedMobilityState = this.updateSharedMobilityTrip(delta, timeMinutes, places, city)
+    if (sharedMobilityState) return sharedMobilityState
     const target = targetFor(this, places, timeMinutes, roads)
     if (this.selfTaxi) {
       updateAutonomousNpcTaxi(this, target, delta, city)
@@ -1641,11 +1681,16 @@ class Agent {
       : this.intentFor(target, timeMinutes)
 
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
-    if (this.needErrand && distance < 4.2) this.applyNeedErrandRelief(delta)
+    const sharedMobilityPhase = this.needErrand?.sharedMobilityTrip?.phase || null
+    const finalNeedTargetReached = this.needErrand &&
+      (!sharedMobilityPhase || sharedMobilityPhase === 'walking-to-destination') &&
+      distance < 4.2
+    if (finalNeedTargetReached) this.applyNeedErrandRelief(delta)
     if (distance > 2.2) {
-      const mobilityMultiplier = this.needErrand?.mobilityMode === 'shared-scooter'
+      const ridingSharedMobility = sharedMobilityPhase === 'riding-to-return-dock'
+      const mobilityMultiplier = ridingSharedMobility && this.needErrand?.mobilityMode === 'shared-scooter'
         ? 2.25
-        : this.needErrand?.mobilityMode === 'shared-bike'
+        : ridingSharedMobility && this.needErrand?.mobilityMode === 'shared-bike'
           ? 1.95
           : 1
       const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace * mobilityMultiplier
@@ -1720,6 +1765,7 @@ class Agent {
       mobilityMode: detail.mobilityMode || 'walk',
       mobilitySource: detail.mobilitySource || null,
       mobilityDockName: detail.mobilityDockName || null,
+      sharedMobilityTrip: detail.sharedMobilityTrip || null,
     }
     this.walkRoute = null
     this.walkPlan = null
@@ -1745,6 +1791,11 @@ class Agent {
   updateNeedErrand(timeMinutes, places, roads = [], currentTarget = null) {
     if (this.needErrand) {
       if (this.selfTaxi) return
+      const sharedTrip = this.needErrand.sharedMobilityTrip
+      if (sharedTrip && isSharedMobilityMode(this.needErrand.mobilityMode) && sharedTrip.phase !== 'walking-to-destination') {
+        this.currentIntent = `${this.needErrand.label} at ${this.needErrand.targetName}; ${sharedTrip.phase.replaceAll('-', ' ')}`
+        return
+      }
       const remaining = errandMinutesRemaining(this.needErrand, timeMinutes)
       if (remaining > 0) {
         this.currentIntent = `${this.needErrand.label} at ${this.needErrand.targetName}; ${Math.ceil(remaining)} city min before returning to schedule`
@@ -1794,6 +1845,129 @@ class Agent {
     } else if (this.needErrand.reason === 'social') {
       this.needs.social = clampValue(this.needs.social + 0.017 * delta, 0, 1)
     }
+  }
+
+  updateSharedMobilityTrip(delta, timeMinutes, places, city) {
+    const trip = this.needErrand?.sharedMobilityTrip
+    if (!trip || !isSharedMobilityMode(this.needErrand?.mobilityMode)) return null
+    const store = useCityStore.getState()
+    const now = performance.now()
+    const pickupTarget = sharedMobilityTripPoint(trip, 'pickup', `walking to ${trip.mode} dock`)
+    const returnTarget = sharedMobilityTripPoint(trip, 'return', `${trip.mode} return dock`)
+
+    if (trip.phase === 'walking-to-dock' && pickupTarget) {
+      const distance = Math.hypot(this.pos.x - pickupTarget.x, this.pos.z - pickupTarget.z)
+      this.routeStatus = `walking to ${trip.pickupStationName} to unlock ${trip.mode}`
+      if (distance < 2.6) {
+        trip.phase = 'pickup'
+        trip.phaseStartedAt = now
+        trip.pickupAnimationProgress = 0
+        this.walkRoute = null
+        this.walkPlan = {
+          mode: 'gbfs-pickup',
+          targetName: trip.pickupStationName,
+          waypointName: pickupTarget.name,
+          stableRoute: true,
+          routePoints: 1,
+        }
+        store.addCityEvent({
+          id: `gbfs_pickup_${trip.id}_${Date.now()}`,
+          kind: 'mobility',
+          agentId: this.id,
+          agentName: this.name,
+          placeName: trip.pickupStationName,
+          topic: `${trip.mode}-pickup`,
+          text: `${this.name} starts unlocking a ${trip.mode} at ${trip.pickupStationName}; pickup inventory has already been decremented.`,
+        })
+        return 'unlocking-shared-mobility'
+      }
+      return null
+    }
+
+    if (trip.phase === 'pickup') {
+      const elapsed = (now - (trip.phaseStartedAt || now)) / Math.max(1, (trip.pickupAnimationSeconds || 2.2) * 1000)
+      trip.pickupAnimationProgress = Number(clampValue(elapsed, 0, 1).toFixed(3))
+      this.activity = `unlocking ${trip.mode}`
+      this.currentIntent = `unlocking ${trip.mode} at ${trip.pickupStationName}`
+      this.routeStatus = `unlocking ${trip.mode}: ${Math.round(trip.pickupAnimationProgress * 100)}%`
+      if (pickupTarget) {
+        this.pos.x += (pickupTarget.x - this.pos.x) * Math.min(1, delta * 4)
+        this.pos.z += (pickupTarget.z - this.pos.z) * Math.min(1, delta * 4)
+        this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+      }
+      if (trip.pickupAnimationProgress >= 1) {
+        trip.phase = 'riding-to-return-dock'
+        trip.phaseStartedAt = now
+        this.walkRoute = null
+        this.walkPlan = null
+        this.routeStatus = `riding ${trip.mode} to ${trip.returnStationName}`
+        store.addCityEvent({
+          id: `gbfs_ride_${trip.id}_${Date.now()}`,
+          kind: 'mobility',
+          agentId: this.id,
+          agentName: this.name,
+          placeName: trip.pickupStationName,
+          topic: `${trip.mode}-ride-start`,
+          text: `${this.name} leaves ${trip.pickupStationName} on a ${trip.mode}; ${trip.returnStationName} keeps a reserved return slot.`,
+        })
+        return null
+      }
+      return 'unlocking-shared-mobility'
+    }
+
+    if (trip.phase === 'riding-to-return-dock' && returnTarget) {
+      const distance = Math.hypot(this.pos.x - returnTarget.x, this.pos.z - returnTarget.z)
+      this.routeStatus = `riding ${trip.mode} to reserved return dock at ${trip.returnStationName}`
+      if (distance < 2.8) {
+        trip.phase = 'return'
+        trip.phaseStartedAt = now
+        trip.returnAnimationProgress = 0
+        this.walkRoute = null
+        this.walkPlan = {
+          mode: 'gbfs-return',
+          targetName: trip.returnStationName,
+          waypointName: returnTarget.name,
+          stableRoute: true,
+          routePoints: 1,
+        }
+        store.addCityEvent({
+          id: `gbfs_return_start_${trip.id}_${Date.now()}`,
+          kind: 'mobility',
+          agentId: this.id,
+          agentName: this.name,
+          placeName: trip.returnStationName,
+          topic: `${trip.mode}-return-start`,
+          text: `${this.name} reaches ${trip.returnStationName} and starts returning the ${trip.mode} into the reserved slot.`,
+        })
+        return 'returning-shared-mobility'
+      }
+      return null
+    }
+
+    if (trip.phase === 'return') {
+      const elapsed = (now - (trip.phaseStartedAt || now)) / Math.max(1, (trip.returnAnimationSeconds || 2) * 1000)
+      trip.returnAnimationProgress = Number(clampValue(elapsed, 0, 1).toFixed(3))
+      this.activity = `returning ${trip.mode}`
+      this.currentIntent = `returning ${trip.mode} at ${trip.returnStationName}`
+      this.routeStatus = `returning ${trip.mode}: ${Math.round(trip.returnAnimationProgress * 100)}%`
+      if (returnTarget) {
+        this.pos.x += (returnTarget.x - this.pos.x) * Math.min(1, delta * 4)
+        this.pos.z += (returnTarget.z - this.pos.z) * Math.min(1, delta * 4)
+        this.pos.y = terrainHeight(this.pos.x, this.pos.z) + 0.95
+      }
+      if (trip.returnAnimationProgress >= 1) {
+        finishSharedMobilityReturn(this, trip, city)
+        trip.phase = 'walking-to-destination'
+        trip.phaseStartedAt = now
+        this.walkRoute = null
+        this.walkPlan = null
+        const place = places.get(this.needErrand.targetId)
+        this.routeStatus = `returned ${trip.mode}; walking from ${trip.returnStationName} to ${place?.name || this.needErrand.targetName}`
+      }
+      return 'returning-shared-mobility'
+    }
+
+    return null
   }
 
   updateMission(delta, city) {
@@ -2169,6 +2343,16 @@ class Agent {
         mobilityMode: this.needErrand.mobilityMode || null,
         mobilitySource: this.needErrand.mobilitySource || null,
         mobilityDockName: this.needErrand.mobilityDockName || null,
+        sharedMobilityTrip: this.needErrand.sharedMobilityTrip ? {
+          id: this.needErrand.sharedMobilityTrip.id,
+          mode: this.needErrand.sharedMobilityTrip.mode,
+          phase: this.needErrand.sharedMobilityTrip.phase,
+          pickupStationName: this.needErrand.sharedMobilityTrip.pickupStationName,
+          returnStationName: this.needErrand.sharedMobilityTrip.returnStationName,
+          returnSlotReserved: this.needErrand.sharedMobilityTrip.returnSlotReserved,
+          pickupInventoryAfter: this.needErrand.sharedMobilityTrip.pickupInventoryAfter,
+          returnInventoryAfter: this.needErrand.sharedMobilityTrip.returnInventoryAfter,
+        } : null,
         remainingMinutes: errandMinutesRemaining(this.needErrand, useCityStore.getState().timeMinutes),
       } : null,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
@@ -2304,6 +2488,115 @@ function mobilityContextForAgent(agent, city, scheduledTarget, timeMinutes) {
   }
 }
 
+function stationInventorySnapshot(station) {
+  if (!station) return null
+  return {
+    bikes: station.numBikesAvailable || 0,
+    scooters: station.numScootersAvailable || 0,
+    docks: station.numDocksAvailable || 0,
+  }
+}
+
+function syncGbfsStationStatus(city, station) {
+  const status = city?.mobilitySystem?.gbfs?.stationStatus?.find(item => item.stationId === station?.id)
+  if (!status || !station) return
+  status.numBikesAvailable = station.numBikesAvailable || 0
+  status.numScootersAvailable = station.numScootersAvailable || 0
+  status.numDocksAvailable = station.numDocksAvailable || 0
+  status.lastReportedRuntimeMutation = Date.now()
+}
+
+function stationPoint(station, label = 'GBFS dock') {
+  if (!station) return null
+  return {
+    x: station.x,
+    z: station.z,
+    y: terrainHeight(station.x, station.z),
+    name: label,
+    roadId: station.roadId,
+    roadName: station.roadName,
+    roadAxis: station.roadAxis || null,
+  }
+}
+
+function reserveSharedMobilityTrip(agent, mobilityMode, city, targetPlace, mobilityContext = {}) {
+  const stations = city?.mobilitySystem?.gbfs?.stations || []
+  if (!isSharedMobilityMode(mobilityMode) || !stations.length || !targetPlace) return null
+  const vehicleField = mobilityMode === 'shared-scooter' ? 'numScootersAvailable' : 'numBikesAvailable'
+  const pickup = stations.find(station => station.id === mobilityContext.nearestDock?.id) ||
+    stations.find(station => station.name === mobilityContext.nearestDock?.name) ||
+    nearestByDistance(stations, agent.pos.x, agent.pos.z, station => (station[vehicleField] || 0) > 0)?.item ||
+    null
+  if (!pickup || (pickup[vehicleField] || 0) <= 0) return null
+
+  const returnStation = nearestByDistance(stations, targetPlace.x, targetPlace.z, station => (station.numDocksAvailable || 0) > 0)?.item || pickup
+  const pickupBefore = stationInventorySnapshot(pickup)
+  const returnBefore = stationInventorySnapshot(returnStation)
+  pickup[vehicleField] = Math.max(0, (pickup[vehicleField] || 0) - 1)
+  pickup.numDocksAvailable = Math.min(pickup.capacity || 99, (pickup.numDocksAvailable || 0) + 1)
+  const returnSlotReserved = (returnStation.numDocksAvailable || 0) > 0
+  if (returnSlotReserved) returnStation.numDocksAvailable = Math.max(0, (returnStation.numDocksAvailable || 0) - 1)
+  syncGbfsStationStatus(city, pickup)
+  if (returnStation !== pickup) syncGbfsStationStatus(city, returnStation)
+
+  const now = performance.now()
+  const trip = {
+    id: `${mobilityMode}_${agent.id}_${Date.now()}`,
+    mode: mobilityMode,
+    vehicleType: mobilityMode === 'shared-scooter' ? 'e_scooter' : 'pedal_bike',
+    phase: 'walking-to-dock',
+    phaseStartedAt: now,
+    pickupStationId: pickup.id,
+    pickupStationName: pickup.name,
+    returnStationId: returnStation.id,
+    returnStationName: returnStation.name,
+    pickup: stationPoint(pickup, `${pickup.name} pickup dock`),
+    return: stationPoint(returnStation, `${returnStation.name} return dock`),
+    pickupInventoryBefore: pickupBefore,
+    pickupInventoryAfter: stationInventorySnapshot(pickup),
+    returnInventoryBefore: returnBefore,
+    returnInventoryAfter: null,
+    returnSlotReserved,
+    inventorySource: 'GBFS station_status runtime mutation',
+    pickupAnimationSeconds: 2.2,
+    returnAnimationSeconds: 2.0,
+    pickupAnimationProgress: 0,
+    returnAnimationProgress: 0,
+  }
+
+  useCityStore.getState().addCityEvent({
+    id: `gbfs_reserve_${trip.id}`,
+    kind: 'mobility',
+    agentId: agent.id,
+    agentName: agent.name,
+    placeName: pickup.name,
+    topic: `${mobilityMode}-reservation`,
+    text: `${agent.name} reserves a ${mobilityMode} at ${pickup.name}; ${returnStation.name} holds a return slot from GBFS station_status.`,
+  })
+  return trip
+}
+
+function finishSharedMobilityReturn(agent, trip, city) {
+  const stations = city?.mobilitySystem?.gbfs?.stations || []
+  const returnStation = stations.find(station => station.id === trip?.returnStationId)
+  if (!returnStation || !trip) return
+  if (trip.mode === 'shared-scooter') returnStation.numScootersAvailable = (returnStation.numScootersAvailable || 0) + 1
+  else returnStation.numBikesAvailable = (returnStation.numBikesAvailable || 0) + 1
+  returnStation.numDocksAvailable = Math.max(0, returnStation.numDocksAvailable || 0)
+  trip.returnInventoryAfter = stationInventorySnapshot(returnStation)
+  trip.returnedAt = Date.now()
+  syncGbfsStationStatus(city, returnStation)
+  useCityStore.getState().addCityEvent({
+    id: `gbfs_return_${trip.id}_${Date.now()}`,
+    kind: 'mobility',
+    agentId: agent.id,
+    agentName: agent.name,
+    placeName: returnStation.name,
+    topic: `${trip.mode}-return`,
+    text: `${agent.name} returns the ${trip.mode} at ${returnStation.name}; GBFS station_status inventory updates in real time.`,
+  })
+}
+
 function executeAutonomyAction(agent, result, context) {
   const { agents, city, places, scheduledTarget, store, timeMinutes, reason } = context
   const action = result?.action || 'continue_schedule'
@@ -2370,7 +2663,8 @@ function executeAutonomyAction(agent, result, context) {
   } else if (action === 'use_shared_bike' || action === 'use_shared_scooter') {
     const mobilityMode = action === 'use_shared_scooter' ? 'shared-scooter' : 'shared-bike'
     const dockName = result?.mobilityContext?.nearestDock?.name || 'nearby GBFS dock'
-    if (targetPlace && agent.startLlmDirectedErrand(targetPlace, {
+    const sharedMobilityTrip = reserveSharedMobilityTrip(agent, mobilityMode, city, targetPlace, result?.mobilityContext || {})
+    if (targetPlace && sharedMobilityTrip && agent.startLlmDirectedErrand(targetPlace, {
       label: mobilityMode === 'shared-scooter' ? 'GBFS scooter trip' : 'GBFS bike trip',
       activity: `${mobilityMode} ride to ${targetPlace.name}`,
       thought: result.text,
@@ -2378,6 +2672,7 @@ function executeAutonomyAction(agent, result, context) {
       mobilityMode,
       mobilitySource: result.mobilitySource || 'GBFS station_status + SmartCities geofence',
       mobilityDockName: dockName,
+      sharedMobilityTrip,
     }, timeMinutes)) {
       executed = true
       outcome = mobilityMode === 'shared-scooter' ? 'gbfs-scooter-route' : 'gbfs-bike-route'
@@ -2419,8 +2714,8 @@ function executeAutonomyAction(agent, result, context) {
     targetPlaceId: targetPlace?.id || result?.targetPlaceId || '',
     targetName,
     reason: result?.reason || reason,
-    mobilityMode: result?.mobilityMode || null,
-    mobilitySource: result?.mobilitySource || null,
+    mobilityMode: result?.mobilityMode || (action === 'use_shared_bike' ? 'shared-bike' : action === 'use_shared_scooter' ? 'shared-scooter' : null),
+    mobilitySource: result?.mobilitySource || (action === 'use_shared_bike' || action === 'use_shared_scooter' ? 'GBFS station_status + SmartCities geofence' : null),
     createdAt: Date.now(),
   }
   agent.llmAutonomy = {
@@ -3852,6 +4147,19 @@ function NPCs({ city }) {
               llmAutonomyMobilityMode: result.mobilityMode || execution.mobilityMode || null,
               llmAutonomyMobilitySource: result.mobilitySource || execution.mobilitySource || null,
               llmAutonomyNearestDock: mobilityContext.nearestDock?.name || null,
+              needErrandMobilityMode: agent.needErrand?.mobilityMode || null,
+              needErrandMobilitySource: agent.needErrand?.mobilitySource || null,
+              needErrandMobilityDockName: agent.needErrand?.mobilityDockName || null,
+              sharedMobilityPhase: agent.needErrand?.sharedMobilityTrip?.phase || null,
+              sharedMobilityPickupDockName: agent.needErrand?.sharedMobilityTrip?.pickupStationName || null,
+              sharedMobilityReturnDockName: agent.needErrand?.sharedMobilityTrip?.returnStationName || null,
+              sharedMobilityReturnSlotReserved: agent.needErrand?.sharedMobilityTrip?.returnSlotReserved ?? null,
+              sharedMobilityPickupInventoryAfter: agent.needErrand?.sharedMobilityTrip?.pickupInventoryAfter || null,
+              sharedMobilityReturnInventoryAfter: agent.needErrand?.sharedMobilityTrip?.returnInventoryAfter || null,
+              sharedMobilityPickupProgress: agent.needErrand?.sharedMobilityTrip?.pickupAnimationProgress ?? null,
+              sharedMobilityReturnProgress: agent.needErrand?.sharedMobilityTrip?.returnAnimationProgress ?? null,
+              sharedMobilityRideProp: agent.needErrand?.sharedMobilityTrip?.phase === 'riding-to-return-dock' && isSharedMobilityMode(agent.needErrand?.mobilityMode) ? `${agent.needErrand.mobilityMode}-visible-prop` : null,
+              sharedMobilityVisualSource: agent.needErrand?.mobilitySource || null,
               lastMemory: thought,
             }
           : sample))
@@ -4263,7 +4571,8 @@ function NPCs({ city }) {
       const pupilY = Math.sin(state.clock.elapsedTime * 0.9 + i * 0.47) * 0.002
       const phoneVisible = talking && gestureKind === 'checks-phone' && !fallen
       const talkCueVisible = talking && !fallen
-      const sharedMobilityMode = agent.needErrand?.mobilityMode || null
+      const sharedMobilityPhase = agent.needErrand?.sharedMobilityTrip?.phase || null
+      const sharedMobilityMode = sharedMobilityPhase === 'riding-to-return-dock' ? agent.needErrand?.mobilityMode || null : null
       const ridingSharedBike = sharedMobilityMode === 'shared-bike' && !fallen
       const ridingSharedScooter = sharedMobilityMode === 'shared-scooter' && !fallen
       const sharedMobilityVisible = ridingSharedBike || ridingSharedScooter
@@ -4480,7 +4789,15 @@ function NPCs({ city }) {
           needErrandMobilityMode: agent.needErrand?.mobilityMode || null,
           needErrandMobilitySource: agent.needErrand?.mobilitySource || null,
           needErrandMobilityDockName: agent.needErrand?.mobilityDockName || null,
-          sharedMobilityRideProp: ['shared-bike', 'shared-scooter'].includes(agent.needErrand?.mobilityMode) ? `${agent.needErrand.mobilityMode}-visible-prop` : null,
+          sharedMobilityPhase: agent.needErrand?.sharedMobilityTrip?.phase || null,
+          sharedMobilityPickupDockName: agent.needErrand?.sharedMobilityTrip?.pickupStationName || null,
+          sharedMobilityReturnDockName: agent.needErrand?.sharedMobilityTrip?.returnStationName || null,
+          sharedMobilityReturnSlotReserved: agent.needErrand?.sharedMobilityTrip?.returnSlotReserved ?? null,
+          sharedMobilityPickupInventoryAfter: agent.needErrand?.sharedMobilityTrip?.pickupInventoryAfter || null,
+          sharedMobilityReturnInventoryAfter: agent.needErrand?.sharedMobilityTrip?.returnInventoryAfter || null,
+          sharedMobilityPickupProgress: agent.needErrand?.sharedMobilityTrip?.pickupAnimationProgress ?? null,
+          sharedMobilityReturnProgress: agent.needErrand?.sharedMobilityTrip?.returnAnimationProgress ?? null,
+          sharedMobilityRideProp: agent.needErrand?.sharedMobilityTrip?.phase === 'riding-to-return-dock' && isSharedMobilityMode(agent.needErrand?.mobilityMode) ? `${agent.needErrand.mobilityMode}-visible-prop` : null,
           sharedMobilityVisualSource: agent.needErrand?.mobilitySource || null,
           needErrandRemainingMinutes: agent.needErrand ? Number(errandMinutesRemaining(agent.needErrand, time).toFixed(1)) : null,
           targetName: agent.walkPlan?.targetName || agent.placeName || null,
@@ -5042,6 +5359,48 @@ function NPCs({ city }) {
         forceTargetKind: detail.forceTargetKind,
       })
     }
+
+    const debugAdvanceSharedMobility = (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const store = useCityStore.getState()
+      const agent = agents.find(item => item.id === detail.id) || agents.find(item => item.needErrand?.sharedMobilityTrip)
+      const trip = agent?.needErrand?.sharedMobilityTrip
+      if (!agent || !trip) return false
+      let ridePropDuringRide = trip.phase === 'riding-to-return-dock' ? `${trip.mode}-visible-prop` : null
+      const pickup = sharedMobilityTripPoint(trip, 'pickup', 'debug pickup')
+      const returnDock = sharedMobilityTripPoint(trip, 'return', 'debug return')
+      if (pickup && trip.phase === 'walking-to-dock') {
+        agent.pos.set(pickup.x, terrainHeight(pickup.x, pickup.z) + 0.95, pickup.z)
+        agent.updateSharedMobilityTrip(0.2, store.timeMinutes, places, city)
+      }
+      if (trip.phase === 'pickup') {
+        trip.phaseStartedAt = performance.now() - (trip.pickupAnimationSeconds + 0.2) * 1000
+        agent.updateSharedMobilityTrip(0.2, store.timeMinutes, places, city)
+        if (trip.phase === 'riding-to-return-dock') ridePropDuringRide = `${trip.mode}-visible-prop`
+      }
+      if (returnDock && trip.phase === 'riding-to-return-dock') {
+        agent.pos.set(returnDock.x, terrainHeight(returnDock.x, returnDock.z) + 0.95, returnDock.z)
+        agent.updateSharedMobilityTrip(0.2, store.timeMinutes, places, city)
+      }
+      if (trip.phase === 'return') {
+        trip.phaseStartedAt = performance.now() - (trip.returnAnimationSeconds + 0.2) * 1000
+        agent.updateSharedMobilityTrip(0.2, store.timeMinutes, places, city)
+      }
+      return {
+        agentId: agent.id,
+        agentName: agent.name,
+        mode: trip.mode,
+        phase: trip.phase,
+        pickupStationName: trip.pickupStationName,
+        returnStationName: trip.returnStationName,
+        returnSlotReserved: trip.returnSlotReserved,
+        pickupInventoryAfter: trip.pickupInventoryAfter,
+        returnInventoryAfter: trip.returnInventoryAfter,
+        pickupAnimationProgress: trip.pickupAnimationProgress,
+        returnAnimationProgress: trip.returnAnimationProgress,
+        ridePropDuringRide,
+      }
+    }
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})
     const onDebugNeedErrand = event => debugNeedErrand(event.detail || {})
@@ -5057,6 +5416,7 @@ function NPCs({ city }) {
         startCrosswalkWait: debugCrosswalkWait,
         runLlmConversation: debugLlmSocialPair,
         runLlmAutonomy: debugLlmAutonomy,
+        advanceSharedMobilityTrip: debugAdvanceSharedMobility,
       }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
       window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)

@@ -2077,6 +2077,7 @@ async function inspectLocalLlmAutonomy(page) {
     const state = window.__REALCITY_STORE__?.getState()
     const event = (state?.cityEvents || []).find(item => item.kind === 'llm' && item.agentId === sample.id && item.topic === 'npc autonomy')
     const updated = (state?.pedestrianSamples || []).find(item => item.id === sample.id)
+    const advancedSharedMobility = debug.advanceSharedMobilityTrip?.({ id: sample.id }) || null
     return {
       sample: { id: sample.id, name: sample.name, beforeIntent: sample.currentIntent },
       autonomy,
@@ -2096,8 +2097,14 @@ async function inspectLocalLlmAutonomy(page) {
       updatedLlmAutonomyNearestDock: updated?.llmAutonomyNearestDock || null,
       updatedNeedErrandMobilityMode: updated?.needErrandMobilityMode || null,
       updatedNeedErrandMobilityDockName: updated?.needErrandMobilityDockName || null,
+      updatedSharedMobilityPhase: updated?.sharedMobilityPhase || null,
+      updatedSharedMobilityPickupDockName: updated?.sharedMobilityPickupDockName || null,
+      updatedSharedMobilityReturnDockName: updated?.sharedMobilityReturnDockName || null,
+      updatedSharedMobilityReturnSlotReserved: updated?.sharedMobilityReturnSlotReserved ?? null,
+      updatedSharedMobilityPickupInventoryAfter: updated?.sharedMobilityPickupInventoryAfter || null,
       updatedSharedMobilityRideProp: updated?.sharedMobilityRideProp || null,
       updatedSharedMobilityVisualSource: updated?.sharedMobilityVisualSource || null,
+      advancedSharedMobility,
     }
   })
 
@@ -2115,7 +2122,9 @@ async function inspectLocalLlmAutonomy(page) {
   assert(result.autonomy?.action === 'use_shared_bike' && result.autonomy?.mobilityContext?.nearestDock?.numBikesAvailable > 0, `NPC autonomous LLM did not receive executable GBFS mobility context: ${JSON.stringify(result.autonomy)}`)
   assert(result.autonomy?.execution?.outcome === 'gbfs-bike-route' && result.autonomy?.execution?.mobilityMode === 'shared-bike', `NPC autonomous LLM did not execute a GBFS bike route: ${JSON.stringify(result.autonomy?.execution)}`)
   assert(result.updatedLlmAutonomyMobilityMode === 'shared-bike' && result.updatedLlmAutonomyNearestDock, `NPC mobility telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
-  assert(result.updatedNeedErrandMobilityMode === 'shared-bike' && /shared-bike-visible-prop/i.test(result.updatedSharedMobilityRideProp || '') && result.updatedSharedMobilityVisualSource, `NPC shared-bike visual prop telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
+  assert(result.updatedNeedErrandMobilityMode === 'shared-bike' && result.updatedSharedMobilityPhase && result.updatedSharedMobilityPickupDockName && result.updatedSharedMobilityReturnDockName && result.updatedSharedMobilityReturnSlotReserved === true, `NPC shared-bike dock reservation telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
+  assert(result.updatedSharedMobilityPickupInventoryAfter?.bikes === result.autonomy.mobilityContext.nearestDock.numBikesAvailable - 1, `GBFS pickup inventory did not decrement after reservation: ${JSON.stringify(result)}`)
+  assert(result.advancedSharedMobility?.phase === 'walking-to-destination' && /shared-bike-visible-prop/i.test(result.advancedSharedMobility?.ridePropDuringRide || '') && result.advancedSharedMobility?.returnInventoryAfter?.bikes >= 1, `NPC shared-bike pickup/return animation did not complete with visible prop and returned inventory: ${JSON.stringify(result.advancedSharedMobility)}`)
   return { ...result, skipped: false, localLlmStatus }
 }
 
