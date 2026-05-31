@@ -836,6 +836,7 @@ async function inspectActorRendering(page) {
       actor.bodyParts?.includes('eyelids') &&
       actor.bodyParts?.includes('faceMarks') &&
       actor.bodyParts?.includes('lapels') &&
+      actor.bodyParts?.includes('sharedMobilityDeck') &&
       actor.socialVisualCues?.speechCueInstances === actor.variation?.count &&
       actor.variation?.count > 100
   }, null, { timeout: 15000 })
@@ -851,6 +852,8 @@ async function inspectActorRendering(page) {
   assert(actor.rigScale?.legCapsuleTotalHeight === 0.65, 'NPC leg capsule proportions do not match the player avatar')
   assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'eyeWhites', 'pupils', 'eyelids', 'brows', 'nose', 'mouth', 'faceMarks', 'cheeks', 'arms', 'hands', 'legs', 'shoes', 'collar', 'lapels', 'badge', 'cuffs'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
   assert(['speechCue', 'phoneProp', 'gestureCue'].every(part => actor.bodyParts.includes(part)), `NPC social rendering cues are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(['sharedMobilityDeck', 'sharedMobilityWheels', 'sharedMobilityHandlebar'].every(part => actor.bodyParts.includes(part)), `NPC shared mobility ride props are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(actor.sharedMobilityVisualCues?.propInstances === actor.variation.count && actor.sharedMobilityVisualCues?.supportedModes?.includes('shared-bike') && /GBFS/i.test(actor.sharedMobilityVisualCues?.source || ''), `NPC shared mobility visual metadata is incomplete: ${JSON.stringify(actor.sharedMobilityVisualCues)}`)
   assert(actor.socialVisualCues?.speechCueInstances === actor.variation.count && actor.socialVisualCues?.phonePropInstances === actor.variation.count, `NPC social cue instances do not match actor count: ${JSON.stringify(actor.socialVisualCues)}`)
   assert(actor.socialVisualCues?.gestureStyleVariants >= 8 && actor.socialVisualCues?.partnerFacingRule, `NPC social gesture metadata is incomplete: ${JSON.stringify(actor.socialVisualCues)}`)
   assert(actor.facialAnimation?.perAgentSeeded && /eye-white|eye whites/i.test(actor.facialAnimation.sharedWithPlayer || '') && /pupil/i.test(actor.facialAnimation.pupilRule || '') && /eyelid|blink/i.test(actor.facialAnimation.blinkRule || ''), `NPC facial animation metadata is incomplete: ${JSON.stringify(actor.facialAnimation)}`)
@@ -2093,6 +2096,8 @@ async function inspectLocalLlmAutonomy(page) {
       updatedLlmAutonomyNearestDock: updated?.llmAutonomyNearestDock || null,
       updatedNeedErrandMobilityMode: updated?.needErrandMobilityMode || null,
       updatedNeedErrandMobilityDockName: updated?.needErrandMobilityDockName || null,
+      updatedSharedMobilityRideProp: updated?.sharedMobilityRideProp || null,
+      updatedSharedMobilityVisualSource: updated?.sharedMobilityVisualSource || null,
     }
   })
 
@@ -2110,6 +2115,7 @@ async function inspectLocalLlmAutonomy(page) {
   assert(result.autonomy?.action === 'use_shared_bike' && result.autonomy?.mobilityContext?.nearestDock?.numBikesAvailable > 0, `NPC autonomous LLM did not receive executable GBFS mobility context: ${JSON.stringify(result.autonomy)}`)
   assert(result.autonomy?.execution?.outcome === 'gbfs-bike-route' && result.autonomy?.execution?.mobilityMode === 'shared-bike', `NPC autonomous LLM did not execute a GBFS bike route: ${JSON.stringify(result.autonomy?.execution)}`)
   assert(result.updatedLlmAutonomyMobilityMode === 'shared-bike' && result.updatedLlmAutonomyNearestDock, `NPC mobility telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
+  assert(result.updatedNeedErrandMobilityMode === 'shared-bike' && /shared-bike-visible-prop/i.test(result.updatedSharedMobilityRideProp || '') && result.updatedSharedMobilityVisualSource, `NPC shared-bike visual prop telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
   return { ...result, skipped: false, localLlmStatus }
 }
 
@@ -2456,6 +2462,7 @@ async function inspectStreetRendering(page) {
       rendering?.crosswalks?.zebraStripes > 0 &&
       rendering?.trafficSignals?.heads > 0 &&
       rendering?.pedestrianSignals?.heads > 0 &&
+      rendering?.sharedMobility?.gbfsStationModels > 0 &&
       rendering?.facades?.proceduralWindowTexture
   }, null, { timeout: 15000 })
 
@@ -2483,6 +2490,9 @@ async function inspectStreetRendering(page) {
   assert(result.pedestrianSignals?.labeledHeads >= 20 && /curb-side/i.test(result.pedestrianSignals?.placement || ''), `Pedestrian signal placement metadata is incomplete: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0, `Pedestrian signals are not exposing simultaneous WALK/WAIT states: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(/protected-walk/i.test(result.pedestrianSignals?.liveSignalCoupling || '') || /yellow\/all-red are clearance/i.test(result.pedestrianSignals?.rule || ''), `Pedestrian signal rule is not coupled to traffic lights: ${JSON.stringify(result.pedestrianSignals)}`)
+  assert(result.sharedMobility?.gbfsStationModels >= 9 && result.sharedMobility?.dockPads >= 9, `Shared mobility docks are not physically rendered: ${JSON.stringify(result.sharedMobility)}`)
+  assert(result.sharedMobility?.racks >= 40 && result.sharedMobility?.parkedBikeProps >= 20 && result.sharedMobility?.parkedScooterProps >= 10, `Shared bike/scooter props are too sparse: ${JSON.stringify(result.sharedMobility)}`)
+  assert(result.sharedMobility?.curbZoneMarkings >= 20 && result.sharedMobility?.curbZonePurposes?.length >= 4 && /SmartCities ParkingSpot/i.test(result.sharedMobility?.standard || ''), `SmartCities curb-zone markings are incomplete: ${JSON.stringify(result.sharedMobility)}`)
   assert(result.facades?.proceduralWindowTexture && result.facades?.hasMullions && result.facades?.hasLitWindows, 'Facade texture/window system is incomplete')
   assert(result.facades.wallPalettes?.length >= 4, 'Facade wall palettes are not diverse enough')
   assert(result.facadeDetails?.physicalMullions >= 1000 && result.facadeDetails?.windowSills >= 1000, `Facade physical window detail is too sparse: ${JSON.stringify(result.facadeDetails)}`)

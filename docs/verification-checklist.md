@@ -57,6 +57,10 @@ audit has a clear finish line.
   information/status, vehicle types, geofencing zones, SmartCities-style curb
   and traffic-flow data models, and GATSim-style disruption policies that can
   influence agent route/mode choices.
+- Shared mobility rendering: GBFS docks and SmartCities curb zones must appear
+  as physical painted pads/racks/kiosks/bike/scooter props, and NPC
+  `shared-bike`/`shared-scooter` routes must expose visible ride props on the
+  digital-human rig.
 - Procedural 3D Tiles: the city exposes a 3D Tiles 1.1-style tileset root,
   child bounding volumes, procedural content URIs, terrain/road/building content
   metadata schema, and runtime near/mid/far LOD telemetry for visible city tiles.

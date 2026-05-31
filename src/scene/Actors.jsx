@@ -3715,6 +3715,9 @@ function NPCs({ city }) {
   const speechCueRef = useRef()
   const phoneRef = useRef()
   const gestureCueRef = useRef()
+  const mobilityDeckRef = useRef()
+  const mobilityWheelRef = useRef()
+  const mobilityHandleRef = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
   const colorsReady = useRef(false)
@@ -4018,6 +4021,9 @@ function NPCs({ city }) {
         'speechCue',
         'phoneProp',
         'gestureCue',
+        'sharedMobilityDeck',
+        'sharedMobilityWheels',
+        'sharedMobilityHandlebar',
       ],
       socialVisualCues: {
         speechCueInstances: agents.length,
@@ -4026,6 +4032,13 @@ function NPCs({ city }) {
         partnerFacingRule: 'active conversation partners rotate toward each other within social radius',
         gestureStyleVariants: unique(agent => agent.gestureStyle),
         cueKinds: ['speechCue', 'checks-phone', 'points-while-speaking', 'small-wave', 'formal-bow', 'quick-nod'],
+      },
+      sharedMobilityVisualCues: {
+        propInstances: agents.length,
+        wheelInstances: agents.length * 2,
+        supportedModes: ['shared-bike', 'shared-scooter'],
+        dockRule: 'props appear only when an LLM/need route executes a GBFS shared-bike or shared-scooter trip',
+        source: 'GBFS station_status + SmartCities geofence mobility mode',
       },
       facialAnimation: {
         blinkRule: 'per-agent asynchronous eyelid closure over visible eye whites',
@@ -4070,7 +4083,7 @@ function NPCs({ city }) {
   }, [agents])
 
   useFrame((state, delta) => {
-    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !pupilRef.current || !eyelidRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current || !speechCueRef.current || !phoneRef.current || !gestureCueRef.current) return
+    if (!hipsRef.current || !torsoRef.current || !neckRef.current || !headRef.current || !hairBackRef.current || !faceMarkRef.current || !cheekRef.current || !legRef.current || !armRef.current || !sleeveRef.current || !hairRef.current || !eyeRef.current || !pupilRef.current || !eyelidRef.current || !browRef.current || !noseRef.current || !mouthRef.current || !shoeRef.current || !chestRef.current || !collarRef.current || !lapelRef.current || !badgeRef.current || !beltRef.current || !cuffRef.current || !bagRef.current || !handRef.current || !earRef.current || !hatRef.current || !skirtRef.current || !glassesRef.current || !scarfRef.current || !speechCueRef.current || !phoneRef.current || !gestureCueRef.current || !mobilityDeckRef.current || !mobilityWheelRef.current || !mobilityHandleRef.current) return
     const dt = Math.min(delta, 0.05)
     const store = useCityStore.getState()
     const time = store.timeMinutes
@@ -4250,6 +4263,14 @@ function NPCs({ city }) {
       const pupilY = Math.sin(state.clock.elapsedTime * 0.9 + i * 0.47) * 0.002
       const phoneVisible = talking && gestureKind === 'checks-phone' && !fallen
       const talkCueVisible = talking && !fallen
+      const sharedMobilityMode = agent.needErrand?.mobilityMode || null
+      const ridingSharedBike = sharedMobilityMode === 'shared-bike' && !fallen
+      const ridingSharedScooter = sharedMobilityMode === 'shared-scooter' && !fallen
+      const sharedMobilityVisible = ridingSharedBike || ridingSharedScooter
+      const rideFront = ridingSharedBike ? 0.46 : 0.36
+      const rideRear = ridingSharedBike ? -0.46 : -0.31
+      const wheelRadius = ridingSharedBike ? 0.18 : 0.1
+      const rideBob = sharedMobilityVisible ? Math.sin(state.clock.elapsedTime * 8.6 + i) * 0.012 : 0
       const handTalkLift = talkCueVisible
         ? gestureKind === 'folds-arms'
           ? 0.14
@@ -4320,6 +4341,10 @@ function NPCs({ city }) {
       setLocalPart(speechCueRef.current, i, dummy, base, agent.heading, [0, 1.47 * height + Math.max(0, gesturePulse) * 0.035, 0.08], talkCueVisible ? [0.13, 0.1, 0.13] : [0.001, 0.001, 0.001])
       setLocalPart(phoneRef.current, i, dummy, base, agent.heading, [0.34 * shoulder, 0.38 * height + rightHandLift, 0.2 * torsoDepth], phoneVisible ? [0.055, 0.105, 0.012] : [0.001, 0.001, 0.001])
       setLocalPart(gestureCueRef.current, i, dummy, base, agent.heading, [0.38 * shoulder, 0.56 * height + rightHandLift * 0.52, 0.18 * torsoDepth], talkCueVisible && !phoneVisible ? [0.045 + Math.max(0, gesturePulse) * 0.018, 0.045, 0.045] : [0.001, 0.001, 0.001])
+      setLocalPart(mobilityDeckRef.current, i, dummy, base, agent.heading, [0, -0.7 * height + rideBob, 0.02], sharedMobilityVisible ? (ridingSharedBike ? [0.22, 0.035, 0.98] : [0.18, 0.035, 0.72]) : [0.001, 0.001, 0.001])
+      setLocalPart(mobilityWheelRef.current, i * 2, dummy, base, agent.heading, [0, -0.73 * height + rideBob, rideFront], sharedMobilityVisible ? [wheelRadius, 0.045, wheelRadius] : [0.001, 0.001, 0.001], 0, Math.PI / 2)
+      setLocalPart(mobilityWheelRef.current, i * 2 + 1, dummy, base, agent.heading, [0, -0.73 * height + rideBob, rideRear], sharedMobilityVisible ? [wheelRadius, 0.045, wheelRadius] : [0.001, 0.001, 0.001], 0, Math.PI / 2)
+      setLocalPart(mobilityHandleRef.current, i, dummy, base, agent.heading, [0, -0.24 * height + rideBob, rideFront + 0.08], sharedMobilityVisible ? (ridingSharedBike ? [0.54, 0.035, 0.055] : [0.38, 0.035, 0.05]) : [0.001, 0.001, 0.001])
     }
 
     socialClock.current += dt
@@ -4455,6 +4480,8 @@ function NPCs({ city }) {
           needErrandMobilityMode: agent.needErrand?.mobilityMode || null,
           needErrandMobilitySource: agent.needErrand?.mobilitySource || null,
           needErrandMobilityDockName: agent.needErrand?.mobilityDockName || null,
+          sharedMobilityRideProp: ['shared-bike', 'shared-scooter'].includes(agent.needErrand?.mobilityMode) ? `${agent.needErrand.mobilityMode}-visible-prop` : null,
+          sharedMobilityVisualSource: agent.needErrand?.mobilitySource || null,
           needErrandRemainingMinutes: agent.needErrand ? Number(errandMinutesRemaining(agent.needErrand, time).toFixed(1)) : null,
           targetName: agent.walkPlan?.targetName || agent.placeName || null,
           travelMode: agent.selfTaxi ? 'taxi' : agent.needErrand?.mobilityMode || 'walk',
@@ -4562,6 +4589,9 @@ function NPCs({ city }) {
     speechCueRef.current.instanceMatrix.needsUpdate = true
     phoneRef.current.instanceMatrix.needsUpdate = true
     gestureCueRef.current.instanceMatrix.needsUpdate = true
+    mobilityDeckRef.current.instanceMatrix.needsUpdate = true
+    mobilityWheelRef.current.instanceMatrix.needsUpdate = true
+    mobilityHandleRef.current.instanceMatrix.needsUpdate = true
     legRef.current.instanceMatrix.needsUpdate = true
     armRef.current.instanceMatrix.needsUpdate = true
     sleeveRef.current.instanceMatrix.needsUpdate = true
@@ -5193,6 +5223,18 @@ function NPCs({ city }) {
       <instancedMesh ref={gestureCueRef} args={[undefined, undefined, agents.length]} frustumCulled={false} renderOrder={8}>
         <sphereGeometry args={[1, 10, 8]} />
         <meshStandardMaterial color="#4aadff" emissive="#1f7fd1" emissiveIntensity={0.55} roughness={0.48} />
+      </instancedMesh>
+      <instancedMesh ref={mobilityDeckRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.metal} color="#0f766e" roughness={0.42} metalness={0.34} />
+      </instancedMesh>
+      <instancedMesh ref={mobilityWheelRef} args={[undefined, undefined, agents.length * 2]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 14]} />
+        <meshStandardMaterial map={textures.rubber} color="#0b1016" roughness={0.84} metalness={0.04} />
+      </instancedMesh>
+      <instancedMesh ref={mobilityHandleRef} args={[undefined, undefined, agents.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={textures.metal} color="#d9f99d" roughness={0.32} metalness={0.48} />
       </instancedMesh>
     </>
   )

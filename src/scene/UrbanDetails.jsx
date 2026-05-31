@@ -596,6 +596,200 @@ function TransitAndTaxiStops({ roads }) {
   )
 }
 
+function orientedOffset(item, along = 0, outward = 0) {
+  return {
+    x: item.x + Math.cos(item.yaw) * along + Math.sin(item.yaw) * outward,
+    z: item.z - Math.sin(item.yaw) * along + Math.cos(item.yaw) * outward,
+  }
+}
+
+function SharedMobilityDocks({ roads, mobilitySystem }) {
+  const padRef = useRef()
+  const kioskRef = useRef()
+  const rackRef = useRef()
+  const bikeFrameRef = useRef()
+  const bikeWheelRef = useRef()
+  const bikeHandleRef = useRef()
+  const scooterDeckRef = useRef()
+  const scooterStemRef = useRef()
+  const scooterWheelRef = useRef()
+  const curbMarkRef = useRef()
+  const curbSignRef = useRef()
+
+  const details = useMemo(() => {
+    const roadById = new Map(roads.map(road => [road.id, road]))
+    const stations = (mobilitySystem?.gbfs?.stations || []).map((station, index) => {
+      const road = roadById.get(station.roadId) || roads[0]
+      const yaw = road?.axis === 'z' ? Math.PI / 2 : 0
+      return { ...station, index, road, yaw }
+    })
+    const racks = []
+    const bikes = []
+    const scooters = []
+    stations.forEach(station => {
+      const rackCount = Math.min(8, Math.max(4, Math.round(station.capacity / 2)))
+      for (let slot = 0; slot < rackCount; slot += 1) {
+        const along = (slot - (rackCount - 1) / 2) * 0.72
+        racks.push({ ...orientedOffset(station, along, -0.42), yaw: station.yaw, stationId: station.id })
+      }
+      const bikeCount = Math.min(5, station.numBikesAvailable || 0)
+      for (let slot = 0; slot < bikeCount; slot += 1) {
+        const along = (slot - (bikeCount - 1) / 2) * 0.82
+        bikes.push({ ...orientedOffset(station, along, 0.08), yaw: station.yaw, stationId: station.id })
+      }
+      const scooterCount = Math.min(3, station.numScootersAvailable || 0)
+      for (let slot = 0; slot < scooterCount; slot += 1) {
+        const along = 2.5 + slot * 0.58
+        scooters.push({ ...orientedOffset(station, along, 0.18), yaw: station.yaw, stationId: station.id })
+      }
+    })
+
+    const curbZones = (mobilitySystem?.smartCity?.curbZones || []).map((zone, index) => {
+      const road = roadById.get(zone.roadId) || roads[0]
+      return {
+        ...zone,
+        index,
+        yaw: road?.axis === 'z' ? Math.PI / 2 : 0,
+      }
+    })
+
+    return { stations, racks, bikes, scooters, curbZones }
+  }, [roads, mobilitySystem])
+
+  useEffect(() => {
+    exposeRenderingMetadata({
+      sharedMobility: {
+        gbfsStationModels: details.stations.length,
+        dockPads: details.stations.length,
+        racks: details.racks.length,
+        parkedBikeProps: details.bikes.length,
+        parkedScooterProps: details.scooters.length,
+        curbZoneMarkings: details.curbZones.length,
+        curbZonePurposes: [...new Set(details.curbZones.map(zone => zone.purpose))],
+        standard: 'GBFS station_information/station_status + SmartCities ParkingSpot curb policy',
+        placementRule: 'docks and scooters stay on curb-adjacent painted boxes with sidewalk clearance',
+      },
+    })
+  }, [details])
+
+  useLayoutEffect(() => {
+    if (!padRef.current || !kioskRef.current || !rackRef.current || !bikeFrameRef.current || !bikeWheelRef.current || !bikeHandleRef.current || !scooterDeckRef.current || !scooterStemRef.current || !scooterWheelRef.current || !curbMarkRef.current || !curbSignRef.current) return
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    const purposeColor = {
+      'taxi-stand': '#f6c445',
+      'delivery-loading': '#60a5fa',
+      'bus-stop': '#34d399',
+      'short-stay-parking': '#c4b5fd',
+    }
+
+    details.stations.forEach((station, i) => {
+      setInstance(padRef.current, i, dummy, [station.x, CITY_BASE_Y + 0.245, station.z], [5.7, 0.035, 2.35], station.yaw)
+      const kiosk = orientedOffset(station, -2.85, -0.92)
+      setInstance(kioskRef.current, i, dummy, [kiosk.x, CITY_BASE_Y + 0.92, kiosk.z], [0.42, 1.72, 0.34], station.yaw)
+    })
+
+    details.racks.forEach((rack, i) => {
+      setInstance(rackRef.current, i, dummy, [rack.x, CITY_BASE_Y + 0.52, rack.z], [0.05, 1.0, 0.36], rack.yaw)
+    })
+
+    details.bikes.forEach((bike, i) => {
+      const wheelA = orientedOffset(bike, -0.27, 0)
+      const wheelB = orientedOffset(bike, 0.27, 0)
+      setInstance(bikeFrameRef.current, i, dummy, [bike.x, CITY_BASE_Y + 0.72, bike.z], [0.56, 0.08, 0.42], bike.yaw)
+      setInstance(bikeHandleRef.current, i, dummy, [bike.x + Math.cos(bike.yaw) * 0.42, CITY_BASE_Y + 0.98, bike.z - Math.sin(bike.yaw) * 0.42], [0.56, 0.045, 0.05], bike.yaw)
+      setInstance(bikeWheelRef.current, i * 2, dummy, [wheelA.x, CITY_BASE_Y + 0.47, wheelA.z], [0.22, 0.055, 0.22], bike.yaw + Math.PI / 2)
+      setInstance(bikeWheelRef.current, i * 2 + 1, dummy, [wheelB.x, CITY_BASE_Y + 0.47, wheelB.z], [0.22, 0.055, 0.22], bike.yaw + Math.PI / 2)
+    })
+
+    details.scooters.forEach((scooter, i) => {
+      const front = orientedOffset(scooter, 0.28, 0)
+      const rear = orientedOffset(scooter, -0.24, 0)
+      setInstance(scooterDeckRef.current, i, dummy, [scooter.x, CITY_BASE_Y + 0.38, scooter.z], [0.18, 0.055, 0.68], scooter.yaw)
+      setInstance(scooterStemRef.current, i, dummy, [front.x, CITY_BASE_Y + 0.82, front.z], [0.05, 0.82, 0.05], scooter.yaw)
+      setInstance(scooterWheelRef.current, i * 2, dummy, [front.x, CITY_BASE_Y + 0.32, front.z], [0.11, 0.04, 0.11], scooter.yaw + Math.PI / 2)
+      setInstance(scooterWheelRef.current, i * 2 + 1, dummy, [rear.x, CITY_BASE_Y + 0.32, rear.z], [0.11, 0.04, 0.11], scooter.yaw + Math.PI / 2)
+    })
+
+    details.curbZones.forEach((zone, i) => {
+      setInstance(curbMarkRef.current, i, dummy, [zone.x, CITY_BASE_Y + 0.258, zone.z], [6.2, 0.032, 1.05], zone.yaw)
+      setInstance(curbSignRef.current, i, dummy, [zone.x, CITY_BASE_Y + 1.28, zone.z], [0.48, 1.1, 0.08], zone.yaw)
+      curbMarkRef.current.setColorAt(i, color.set(purposeColor[zone.purpose] || '#93c5fd'))
+      curbSignRef.current.setColorAt(i, color.set(purposeColor[zone.purpose] || '#93c5fd'))
+    })
+
+    padRef.current.instanceMatrix.needsUpdate = true
+    kioskRef.current.instanceMatrix.needsUpdate = true
+    rackRef.current.instanceMatrix.needsUpdate = true
+    bikeFrameRef.current.instanceMatrix.needsUpdate = true
+    bikeWheelRef.current.instanceMatrix.needsUpdate = true
+    bikeHandleRef.current.instanceMatrix.needsUpdate = true
+    scooterDeckRef.current.instanceMatrix.needsUpdate = true
+    scooterStemRef.current.instanceMatrix.needsUpdate = true
+    scooterWheelRef.current.instanceMatrix.needsUpdate = true
+    curbMarkRef.current.instanceMatrix.needsUpdate = true
+    curbSignRef.current.instanceMatrix.needsUpdate = true
+    if (curbMarkRef.current.instanceColor) curbMarkRef.current.instanceColor.needsUpdate = true
+    if (curbSignRef.current.instanceColor) curbSignRef.current.instanceColor.needsUpdate = true
+  }, [details])
+
+  return (
+    <>
+      <instancedMesh ref={padRef} args={[undefined, undefined, details.stations.length]} receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#123841" emissive="#0b6b78" emissiveIntensity={0.1} roughness={0.54} metalness={0.1} />
+      </instancedMesh>
+      <instancedMesh ref={kioskRef} args={[undefined, undefined, details.stations.length]} castShadow receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#d9f99d" emissive="#5eead4" emissiveIntensity={0.18} roughness={0.38} metalness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={rackRef} args={[undefined, undefined, details.racks.length]} castShadow frustumCulled={false}>
+        <torusGeometry args={[1, 0.06, 6, 12, Math.PI]} />
+        <meshStandardMaterial color="#b8c4c7" roughness={0.34} metalness={0.62} />
+      </instancedMesh>
+      <instancedMesh ref={bikeFrameRef} args={[undefined, undefined, details.bikes.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#38bdf8" roughness={0.36} metalness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={bikeWheelRef} args={[undefined, undefined, details.bikes.length * 2]} castShadow frustumCulled={false}>
+        <torusGeometry args={[1, 0.18, 8, 14]} />
+        <meshStandardMaterial color="#111827" roughness={0.82} metalness={0.05} />
+      </instancedMesh>
+      <instancedMesh ref={bikeHandleRef} args={[undefined, undefined, details.bikes.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#e5e7eb" roughness={0.34} metalness={0.48} />
+      </instancedMesh>
+      <instancedMesh ref={scooterDeckRef} args={[undefined, undefined, details.scooters.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#f97316" roughness={0.4} metalness={0.24} />
+      </instancedMesh>
+      <instancedMesh ref={scooterStemRef} args={[undefined, undefined, details.scooters.length]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 8]} />
+        <meshStandardMaterial color="#e5e7eb" roughness={0.32} metalness={0.56} />
+      </instancedMesh>
+      <instancedMesh ref={scooterWheelRef} args={[undefined, undefined, details.scooters.length * 2]} castShadow frustumCulled={false}>
+        <torusGeometry args={[1, 0.22, 8, 12]} />
+        <meshStandardMaterial color="#111827" roughness={0.84} metalness={0.04} />
+      </instancedMesh>
+      <instancedMesh ref={curbMarkRef} args={[undefined, undefined, details.curbZones.length]} receiveShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" vertexColors transparent opacity={0.72} roughness={0.5} metalness={0.08} />
+      </instancedMesh>
+      <instancedMesh ref={curbSignRef} args={[undefined, undefined, details.curbZones.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" vertexColors emissive="#0f172a" emissiveIntensity={0.1} roughness={0.34} metalness={0.22} />
+      </instancedMesh>
+      {details.stations.slice(0, 10).map(station => (
+        <Billboard key={`mobility-label-${station.id}`} position={[station.x, CITY_BASE_Y + 2.15, station.z]}>
+          <Text fontSize={0.24} maxWidth={5.2} textAlign="center" color="#e0fffb" outlineWidth={0.025} outlineColor="#062025">
+            GBFS DOCK
+          </Text>
+        </Billboard>
+      ))}
+    </>
+  )
+}
+
 function PlantersAndBenches({ roads }) {
   const planterRef = useRef()
   const shrubRef = useRef()
@@ -1413,6 +1607,7 @@ export default function UrbanDetails({ city }) {
       <LaneReflectors roads={city.roads} />
       <RoadNameSigns roads={city.roads} />
       <TransitAndTaxiStops roads={city.roads} />
+      <SharedMobilityDocks roads={city.roads} mobilitySystem={city.mobilitySystem} />
       <Bollards roads={city.roads} />
       <StreetFurniture roads={city.roads} />
       <ParkedCars roads={city.roads} />

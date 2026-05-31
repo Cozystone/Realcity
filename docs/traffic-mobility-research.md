@@ -87,13 +87,15 @@ This note tracks the traffic-rule pass for RealCity.
   set includes `use_shared_bike` and `use_shared_scooter`, and those choices
   become simulator routes with `shared-bike` or `shared-scooter` telemetry
   instead of staying as prompt-only flavor text.
+- GBFS stations and SmartCities curb zones now render as physical street
+  objects: painted dock pads, racks, bike/scooter props, kiosks, and colored
+  curb-zone markings. NPC shared-bike/shared-scooter routes also attach visible
+  ride props to the digital-human rig while the trip is active.
 
 ## Next Traffic Targets
 
 - Add explicit turn lanes and turn intentions.
 - Use the new detector-like pressure to actually extend/shorten green splits
   in high-traffic areas.
-- Add visible dock pickup/return poses and bike/scooter props for the
-  `shared-bike`/`shared-scooter` routes.
-- Render the shared mobility docks and curb-zone markings as physical street
-  objects, not only map/HUD telemetry.
+- Add dock pickup/return animation with inventory depletion and return-slot
+  reservation for `shared-bike`/`shared-scooter` routes.
