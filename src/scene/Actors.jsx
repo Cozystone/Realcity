@@ -1527,7 +1527,12 @@ class Agent {
     const distance = Math.hypot(target.x - this.pos.x, target.z - this.pos.z)
     if (this.needErrand && distance < 4.2) this.applyNeedErrandRelief(delta)
     if (distance > 2.2) {
-      const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace
+      const mobilityMultiplier = this.needErrand?.mobilityMode === 'shared-scooter'
+        ? 2.25
+        : this.needErrand?.mobilityMode === 'shared-bike'
+          ? 1.95
+          : 1
+      const speed = (this.activity === 'commuting' ? 1.65 : 1.05) * this.pace * mobilityMultiplier
       moveAgentToward(this, target, delta, speed, city)
       return 'walking'
     }
@@ -1596,14 +1601,19 @@ class Agent {
       forced: true,
       cognitiveReason: detail.reason || detail.thought || 'local LLM selected this executable city action',
       cognitionPolicy: 'local-llm-autonomy',
+      mobilityMode: detail.mobilityMode || 'walk',
+      mobilitySource: detail.mobilitySource || null,
+      mobilityDockName: detail.mobilityDockName || null,
     }
     this.walkRoute = null
     this.walkPlan = null
     this.selfTaxi = null
     this.boardingTaxi = null
-    this.routeStatus = `local LLM directed errand to ${place.name}`
+    this.routeStatus = detail.mobilityMode
+      ? `local LLM directed ${detail.mobilityMode} route to ${place.name}`
+      : `local LLM directed errand to ${place.name}`
     this.currentIntent = `${label} at ${place.name}`
-    this.remember('llm-action', `${detail.thought || this.currentIntent} Target: ${place.name}.`, this.placeName, 0.82)
+    this.remember('llm-action', `${detail.thought || this.currentIntent} Target: ${place.name}.${detail.mobilityMode ? ` Mode: ${detail.mobilityMode}.` : ''}`, this.placeName, 0.82)
     useCityStore.getState().addCityEvent({
       id: `llm_errand_${this.id}_${place.id}_${Date.now()}`,
       kind: 'llm',
@@ -2040,6 +2050,9 @@ class Agent {
         activity: this.needErrand.activity,
         cognitiveReason: this.needErrand.cognitiveReason,
         cognitionPolicy: this.needErrand.cognitionPolicy,
+        mobilityMode: this.needErrand.mobilityMode || null,
+        mobilitySource: this.needErrand.mobilitySource || null,
+        mobilityDockName: this.needErrand.mobilityDockName || null,
         remainingMinutes: errandMinutesRemaining(this.needErrand, useCityStore.getState().timeMinutes),
       } : null,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
@@ -2078,6 +2091,101 @@ function nearestConversationPartner(agent, agents) {
     .map(item => ({ item, distance: agent.pos.distanceTo(item.pos) }))
     .filter(({ distance }) => distance <= 8.5)
     .sort((a, b) => a.distance - b.distance)[0]?.item || null
+}
+
+function nearestByDistance(items = [], x = 0, z = 0, filter = null) {
+  return items
+    .filter(item => !filter || filter(item))
+    .map(item => ({
+      item,
+      distanceMeters: Math.hypot((item.x || 0) - x, (item.z || 0) - z),
+    }))
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)[0] || null
+}
+
+function timeWindowActive(timeMinutes = 0, windowText = '') {
+  const match = String(windowText).match(/(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/)
+  if (!match) return false
+  const start = Number(match[1]) * 60 + Number(match[2])
+  const end = Number(match[3]) * 60 + Number(match[4])
+  const minute = ((timeMinutes % 1440) + 1440) % 1440
+  return start <= end ? minute >= start && minute <= end : minute >= start || minute <= end
+}
+
+function roadDistanceToPoint(road, x, z) {
+  if (!road) return Infinity
+  if (road.axis === 'x') {
+    const clampedX = clampValue(x, road.from, road.to)
+    return Math.hypot(x - clampedX, z - road.z)
+  }
+  const clampedZ = clampValue(z, road.from, road.to)
+  return Math.hypot(x - road.x, z - clampedZ)
+}
+
+function mobilityContextForAgent(agent, city, scheduledTarget, timeMinutes) {
+  const mobility = city.mobilitySystem || {}
+  const stations = mobility.gbfs?.stations || []
+  const curbZones = mobility.smartCity?.curbZones || []
+  const flows = mobility.smartCity?.trafficFlowObserved || []
+  const geofences = mobility.gbfs?.geofencingZones || []
+  const x = agent?.pos?.x || 0
+  const z = agent?.pos?.z || 0
+  const nearestDock = nearestByDistance(stations, x, z, station => station.status === 'active') || null
+  const nearestCurbZone = nearestByDistance(curbZones, x, z) || null
+  const nearestRoad = (city.roads || [])
+    .map(road => ({ road, distance: roadDistanceToPoint(road, x, z) }))
+    .sort((a, b) => a.distance - b.distance)[0]?.road || null
+  const trafficFlow = flows.find(flow => flow.roadId === nearestRoad?.id) || flows[0] || null
+  const geofence = geofences
+    .map(zone => ({
+      zone,
+      distance: Math.hypot((zone.center?.x || 0) - x, (zone.center?.z || 0) - z),
+    }))
+    .filter(({ zone, distance }) => distance <= (zone.radius || 0))
+    .sort((a, b) => a.distance - b.distance)[0]?.zone || null
+  const activeDisruption = (mobility.gatsim?.disruptionEvents || [])
+    .find(event => timeWindowActive(timeMinutes, event.timeWindow) || event.affectedPlace === scheduledTarget?.id) || null
+
+  return {
+    standard: 'GBFS + SmartCities + GATSim',
+    nearestDock: nearestDock ? {
+      id: nearestDock.item.id,
+      name: nearestDock.item.name,
+      roadName: nearestDock.item.roadName,
+      distanceMeters: Number(nearestDock.distanceMeters.toFixed(1)),
+      numBikesAvailable: nearestDock.item.numBikesAvailable,
+      numScootersAvailable: nearestDock.item.numScootersAvailable,
+      numDocksAvailable: nearestDock.item.numDocksAvailable,
+      parkingRule: nearestDock.item.parkingRule,
+    } : null,
+    nearestCurbZone: nearestCurbZone ? {
+      id: nearestCurbZone.item.id,
+      purpose: nearestCurbZone.item.purpose,
+      roadName: nearestCurbZone.item.roadName,
+      distanceMeters: Number(nearestCurbZone.distanceMeters.toFixed(1)),
+      enforcement: nearestCurbZone.item.enforcement,
+    } : null,
+    trafficFlow: trafficFlow ? {
+      roadId: trafficFlow.roadId,
+      roadName: trafficFlow.roadName,
+      congestionLevel: trafficFlow.congestionLevel,
+      averageVehicleSpeedKph: trafficFlow.averageVehicleSpeedKph,
+      intensity: trafficFlow.intensity,
+    } : null,
+    geofence: geofence ? {
+      id: geofence.id,
+      rideAllowed: geofence.rideAllowed,
+      parkingAllowed: geofence.parkingAllowed,
+      maxSpeedKph: geofence.maxSpeedKph,
+      rule: geofence.rule,
+    } : null,
+    activeDisruption: activeDisruption ? {
+      id: activeDisruption.id,
+      timeWindow: activeDisruption.timeWindow,
+      affectedPlace: activeDisruption.affectedPlace,
+      policy: activeDisruption.policy,
+    } : null,
+  }
 }
 
 function executeAutonomyAction(agent, result, context) {
@@ -2143,6 +2251,33 @@ function executeAutonomyAction(agent, result, context) {
     } else {
       outcome = 'taxi-unavailable-or-too-close'
     }
+  } else if (action === 'use_shared_bike' || action === 'use_shared_scooter') {
+    const mobilityMode = action === 'use_shared_scooter' ? 'shared-scooter' : 'shared-bike'
+    const dockName = result?.mobilityContext?.nearestDock?.name || 'nearby GBFS dock'
+    if (targetPlace && agent.startLlmDirectedErrand(targetPlace, {
+      label: mobilityMode === 'shared-scooter' ? 'GBFS scooter trip' : 'GBFS bike trip',
+      activity: `${mobilityMode} ride to ${targetPlace.name}`,
+      thought: result.text,
+      reason: result.reason,
+      mobilityMode,
+      mobilitySource: result.mobilitySource || 'GBFS station_status + SmartCities geofence',
+      mobilityDockName: dockName,
+    }, timeMinutes)) {
+      executed = true
+      outcome = mobilityMode === 'shared-scooter' ? 'gbfs-scooter-route' : 'gbfs-bike-route'
+      targetName = targetPlace.name
+      store.addCityEvent({
+        id: `llm_micromobility_${agent.id}_${Date.now()}`,
+        kind: 'mobility',
+        agentId: agent.id,
+        agentName: agent.name,
+        placeName: targetPlace.name,
+        topic: mobilityMode,
+        text: `${agent.name} chooses a ${mobilityMode} from ${dockName} using GBFS availability and SmartCities geofence rules.`,
+      })
+    } else {
+      outcome = 'shared-mobility-target-unavailable'
+    }
   } else if (action === 'replan_route') {
     agent.walkRoute = null
     agent.walkPlan = null
@@ -2168,6 +2303,8 @@ function executeAutonomyAction(agent, result, context) {
     targetPlaceId: targetPlace?.id || result?.targetPlaceId || '',
     targetName,
     reason: result?.reason || reason,
+    mobilityMode: result?.mobilityMode || null,
+    mobilitySource: result?.mobilitySource || null,
     createdAt: Date.now(),
   }
   agent.llmAutonomy = {
@@ -2177,7 +2314,7 @@ function executeAutonomyAction(agent, result, context) {
     targetName,
     execution,
   }
-  if (executed && !['need-errand', 'directed-errand', 'directed-place-route', 'self-called-taxi'].includes(outcome)) {
+  if (executed && !['need-errand', 'directed-errand', 'directed-place-route', 'self-called-taxi', 'gbfs-bike-route', 'gbfs-scooter-route'].includes(outcome)) {
     store.addCityEvent({
       id: `llm_action_${agent.id}_${Date.now()}`,
       kind: 'llm',
@@ -3484,7 +3621,7 @@ function NPCs({ city }) {
     glass: makeProceduralTexture('glass-smudge', { size: 128, seed: 706, repeatX: 1.2, repeatY: 1.2 }),
   }), [])
 
-  const runAutonomyLlm = async (agent, reason = 'ambient') => {
+  const runAutonomyLlm = async (agent, reason = 'ambient', options = {}) => {
     if (!agent || autonomyLlmBusy.current || typeof window === 'undefined') return null
     if (window.location.hostname.endsWith('.vercel.app')) return null
     autonomyLlmBusy.current = true
@@ -3493,6 +3630,7 @@ function NPCs({ city }) {
       const store = useCityStore.getState()
       const scheduledTarget = targetFor(agent, places, store.timeMinutes, city.roads)
       const targetDistance = Math.hypot(scheduledTarget.x - agent.pos.x, scheduledTarget.z - agent.pos.z)
+      const mobilityContext = mobilityContextForAgent(agent, city, scheduledTarget, store.timeMinutes)
       const placeCandidates = [...places.values()].slice(0, 12).map(place => ({
         id: place.id,
         name: place.name,
@@ -3507,9 +3645,12 @@ function NPCs({ city }) {
         scheduledTargetName: scheduledTarget.name || '',
         scheduledTargetKind: scheduledTarget.kind || '',
         targetDistance,
+        mobilityContext,
         placeCandidates,
-        forceAction: reason === 'verification autonomous city life' ? 'visit_place' : undefined,
-        forceTargetPlaceId: reason === 'verification autonomous city life' ? 'river_cafe' : undefined,
+        forceAction: options.forceAction || (reason === 'verification autonomous city life' ? 'visit_place' : undefined),
+        forceTargetPlaceId: options.forceTargetPlaceId || (reason === 'verification autonomous city life' ? 'river_cafe' : undefined),
+        forceTargetPlaceName: options.forceTargetPlaceName,
+        forceTargetKind: options.forceTargetKind,
       })
       const runtime = window.__REALCITY_LLM__ || null
       if (!result?.ok) return result
@@ -3535,6 +3676,9 @@ function NPCs({ city }) {
         action: result.action,
         targetPlaceId: result.targetPlaceId || execution.targetPlaceId,
         targetName: result.targetPlaceName || execution.targetName,
+        mobilityMode: result.mobilityMode || execution.mobilityMode || null,
+        mobilitySource: result.mobilitySource || execution.mobilitySource || null,
+        mobilityContext,
         execution,
         parsed: result.parsed,
         createdAt: Date.now(),
@@ -3564,6 +3708,9 @@ function NPCs({ city }) {
         action: result.action,
         targetPlaceId: result.targetPlaceId || execution.targetPlaceId,
         targetName: result.targetPlaceName || execution.targetName,
+        mobilityMode: result.mobilityMode || execution.mobilityMode || null,
+        mobilitySource: result.mobilitySource || execution.mobilitySource || null,
+        mobilityContext,
         execution,
         parsed: result.parsed,
         runtime,
@@ -3583,6 +3730,9 @@ function NPCs({ city }) {
               llmAutonomyExecuted: execution.executed,
               llmAutonomyOutcome: execution.outcome,
               llmAutonomyTargetName: execution.targetName,
+              llmAutonomyMobilityMode: result.mobilityMode || execution.mobilityMode || null,
+              llmAutonomyMobilitySource: result.mobilitySource || execution.mobilitySource || null,
+              llmAutonomyNearestDock: mobilityContext.nearestDock?.name || null,
               lastMemory: thought,
             }
           : sample))
@@ -4143,6 +4293,9 @@ function NPCs({ city }) {
           llmAutonomyExecuted: agent.llmAutonomy?.execution?.executed ?? null,
           llmAutonomyOutcome: agent.llmAutonomy?.execution?.outcome || null,
           llmAutonomyTargetName: agent.llmAutonomy?.execution?.targetName || agent.llmAutonomy?.targetName || null,
+          llmAutonomyMobilityMode: agent.llmAutonomy?.mobilityMode || agent.llmAutonomy?.execution?.mobilityMode || null,
+          llmAutonomyMobilitySource: agent.llmAutonomy?.mobilitySource || agent.llmAutonomy?.execution?.mobilitySource || null,
+          llmAutonomyNearestDock: agent.llmAutonomy?.mobilityContext?.nearestDock?.name || null,
           autonomyGoal: agent.autonomy?.dailyGoal || null,
           relationshipStyle: agent.autonomy?.relationshipStyle || null,
           relationshipCount: agent.relationshipCount || 0,
@@ -4183,9 +4336,12 @@ function NPCs({ city }) {
           needErrandTargetName: agent.needErrand?.targetName || null,
           needErrandCognitiveReason: agent.needErrand?.cognitiveReason || null,
           needErrandCognitionPolicy: agent.needErrand?.cognitionPolicy || null,
+          needErrandMobilityMode: agent.needErrand?.mobilityMode || null,
+          needErrandMobilitySource: agent.needErrand?.mobilitySource || null,
+          needErrandMobilityDockName: agent.needErrand?.mobilityDockName || null,
           needErrandRemainingMinutes: agent.needErrand ? Number(errandMinutesRemaining(agent.needErrand, time).toFixed(1)) : null,
           targetName: agent.walkPlan?.targetName || agent.placeName || null,
-          travelMode: agent.selfTaxi ? 'taxi' : 'walk',
+          travelMode: agent.selfTaxi ? 'taxi' : agent.needErrand?.mobilityMode || 'walk',
           taxiPhase: agent.selfTaxi?.phase || null,
           taxiDriverName: agent.selfTaxi?.driverName || null,
           taxiTargetName: agent.selfTaxi?.targetName || null,
@@ -4724,7 +4880,12 @@ function NPCs({ city }) {
         agents.find(item => !item.mission && !item.selfTaxi) ||
         agents[0]
       if (!agent) return false
-      return runAutonomyLlm(agent, detail.reason || 'debug forced autonomy')
+      return runAutonomyLlm(agent, detail.reason || 'debug forced autonomy', {
+        forceAction: detail.forceAction,
+        forceTargetPlaceId: detail.forceTargetPlaceId,
+        forceTargetPlaceName: detail.forceTargetPlaceName,
+        forceTargetKind: detail.forceTargetKind,
+      })
     }
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})

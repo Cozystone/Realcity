@@ -65,15 +65,19 @@ This note tracks the traffic-rule pass for RealCity.
   disruption events such as school release, station peak, and depot loading
   publish the decision signals and adaptive behaviors NPC mobility planners
   can use in later LLM prompts.
+- NPC local-LLM autonomy now receives a live mobility context from those same
+  layers: nearest GBFS dock availability, nearest legal curb zone, observed
+  traffic flow, active geofence, and active GATSim event. The executable action
+  set includes `use_shared_bike` and `use_shared_scooter`, and those choices
+  become simulator routes with `shared-bike` or `shared-scooter` telemetry
+  instead of staying as prompt-only flavor text.
 
 ## Next Traffic Targets
 
 - Add explicit turn lanes and turn intentions.
 - Add queue length and detector-like pressure so green splits can become
   actuated in high-traffic areas.
-- Use the GBFS/SmartCities/GATSim layers as live inputs in the local LLM
-  autonomy prompt for choosing bike/scooter/taxi/walk mode.
+- Add visible dock pickup/return poses and bike/scooter props for the
+  `shared-bike`/`shared-scooter` routes.
 - Render the shared mobility docks and curb-zone markings as physical street
   objects, not only map/HUD telemetry.
-- Add queue length and detector-like pressure so green splits can become
-  actuated in high-traffic areas.

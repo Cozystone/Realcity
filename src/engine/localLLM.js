@@ -343,6 +343,8 @@ const AUTONOMY_ACTIONS = [
   'visit_place',
   'social_check_in',
   'hail_taxi',
+  'use_shared_bike',
+  'use_shared_scooter',
   'replan_route',
   'pause_observe',
 ]
@@ -362,16 +364,91 @@ function placeByKind(places, kinds) {
   return places.find(place => kinds.includes(place.kind)) || null
 }
 
+function mobilityChoiceFromContext(context = {}) {
+  const mobility = context.mobilityContext || {}
+  const dock = mobility.nearestDock || null
+  const targetDistance = Number(context.targetDistance || 0)
+  const dockDistance = Number(dock?.distanceMeters ?? Infinity)
+  const bikes = Number(dock?.numBikesAvailable || 0)
+  const scooters = Number(dock?.numScootersAvailable || 0)
+  const rideAllowed = mobility.geofence?.rideAllowed !== false
+  const disrupted = /station_peak|school_release/i.test(mobility.activeDisruption?.id || '')
+  if (!dock || !rideAllowed || dockDistance > 95 || targetDistance < 260 || targetDistance > 1200) return null
+  if (disrupted && scooters > 0) {
+    return {
+      action: 'use_shared_scooter',
+      targetPlaceId: context.scheduledTargetId || '',
+      targetPlaceName: context.scheduledTargetName || '',
+      targetKind: context.scheduledTargetKind || '',
+      reason: `${dock.name} has scooters available and the current mobility context favours a short dock-to-dock ride`,
+      mobilityMode: 'shared-scooter',
+      mobilitySource: 'GBFS station_status + SmartCities geofence',
+    }
+  }
+  if (bikes > 0) {
+    return {
+      action: 'use_shared_bike',
+      targetPlaceId: context.scheduledTargetId || '',
+      targetPlaceName: context.scheduledTargetName || '',
+      targetKind: context.scheduledTargetKind || '',
+      reason: `${dock.name} has bikes available within ${Math.round(dockDistance)}m, so a docked bike is more believable than wandering on foot`,
+      mobilityMode: 'shared-bike',
+      mobilitySource: 'GBFS station_status + SmartCities geofence',
+    }
+  }
+  if (scooters > 0) {
+    return {
+      action: 'use_shared_scooter',
+      targetPlaceId: context.scheduledTargetId || '',
+      targetPlaceName: context.scheduledTargetName || '',
+      targetKind: context.scheduledTargetKind || '',
+      reason: `${dock.name} has scooters available and the geofence allows riding`,
+      mobilityMode: 'shared-scooter',
+      mobilitySource: 'GBFS station_status + SmartCities geofence',
+    }
+  }
+  return null
+}
+
+function mobilityContextText(context = {}) {
+  const mobility = context.mobilityContext || {}
+  const dock = mobility.nearestDock
+  const curb = mobility.nearestCurbZone
+  const flow = mobility.trafficFlow
+  const geofence = mobility.geofence
+  const disruption = mobility.activeDisruption
+  return [
+    dock
+      ? `nearest GBFS dock ${dock.name}, ${Math.round(dock.distanceMeters)}m away, bikes ${dock.numBikesAvailable}, scooters ${dock.numScootersAvailable}`
+      : 'no nearby GBFS dock',
+    curb
+      ? `nearest SmartCities curb ${curb.purpose} on ${curb.roadName}, ${Math.round(curb.distanceMeters)}m away`
+      : 'no nearby curb rule',
+    flow
+      ? `TrafficFlowObserved ${flow.roadName}: ${flow.congestionLevel}, ${flow.averageVehicleSpeedKph} kph`
+      : 'traffic flow unknown',
+    geofence
+      ? `geofence ${geofence.id}: rideAllowed=${geofence.rideAllowed}, max ${geofence.maxSpeedKph} kph`
+      : 'no active geofence',
+    disruption
+      ? `GATSim event ${disruption.id}: ${disruption.policy}`
+      : 'no active GATSim event',
+  ].join('; ')
+}
+
 function fallbackAutonomyChoice(agent, context = {}) {
   const places = autonomyPlaceCandidates(context)
   const forcedAction = normalizeAutonomyAction(context.forceAction, '')
   const forcedPlace = places.find(place => place.id === context.forceTargetPlaceId) || null
+  const mobilityChoice = mobilityChoiceFromContext(context)
   if (forcedAction) {
     return {
       action: forcedAction,
       targetPlaceId: forcedPlace?.id || context.forceTargetPlaceId || context.scheduledTargetId || '',
       targetPlaceName: forcedPlace?.name || context.forceTargetPlaceName || context.scheduledTargetName || '',
       targetKind: forcedPlace?.kind || context.forceTargetKind || context.scheduledTargetKind || '',
+      mobilityMode: forcedAction === 'use_shared_bike' ? 'shared-bike' : forcedAction === 'use_shared_scooter' ? 'shared-scooter' : mobilityChoice?.mobilityMode || '',
+      mobilitySource: mobilityChoice?.mobilitySource || 'debug scenario selected mobility action',
       reason: 'debug scenario selected a concrete executable affordance',
     }
   }
@@ -406,6 +483,7 @@ function fallbackAutonomyChoice(agent, context = {}) {
       reason: 'social need is low enough to look for a conversation',
     }
   }
+  if (mobilityChoice) return mobilityChoice
   if (Number(context.targetDistance) > 520) {
     return {
       action: 'hail_taxi',
@@ -451,13 +529,16 @@ export async function askLocalAutonomy(agent, context = {}) {
     action: AUTONOMY_ACTIONS.join(' | '),
     targetPlaceId: 'one listed place id or empty string',
     targetKind: 'place kind or empty string',
+    mobilityMode: 'walk | taxi | shared-bike | shared-scooter | empty string',
     reason: 'short reason grounded in needs, memory, schedule, or social norms',
   }
   const system = [
     'You are the private thought layer for one autonomous NPC in RealCity.',
     'Return one-line JSON only. No markdown.',
     'Choose exactly one executable action the simulator can run in the next few city minutes.',
-    'Stay grounded in the NPC job, needs, memory, current place, schedule, traffic, and social norms.',
+    'Stay grounded in the NPC job, needs, memory, current place, schedule, traffic, GBFS dock availability, SmartCities curb/geofence rules, and social norms.',
+    'Use shared-bike or shared-scooter only when the listed GBFS dock has available vehicles and the geofence allows riding.',
+    'Use hail_taxi only from a legal curb or taxi-stand context when the destination is too far for walking or micromobility.',
     `JSON schema: ${JSON.stringify(schema)}`,
   ].join('\n')
   const user = [
@@ -469,8 +550,9 @@ export async function askLocalAutonomy(agent, context = {}) {
     `Memory: ${String(memory).slice(0, 140)}.`,
     `Scheduled destination: ${context.scheduledTargetName || 'unknown'} (${Math.round(Number(context.targetDistance) || 0)}m).`,
     `City context: ${context.timeLabel || 'unknown time'}, ${context.placeContext || 'normal city life'}.`,
+    `Mobility context: ${mobilityContextText(context)}.`,
     `Candidate places:\n${placeList}`,
-    `Simulator fallback affordance: ${fallbackChoice.action} / ${fallbackChoice.targetPlaceName || fallbackChoice.targetKind || 'no target'} / ${fallbackChoice.reason}.`,
+    `Simulator fallback affordance: ${fallbackChoice.action} / ${fallbackChoice.targetPlaceName || fallbackChoice.targetKind || 'no target'} / ${fallbackChoice.mobilityMode || 'no mobility mode'} / ${fallbackChoice.reason}.`,
   ].join('\n')
   const completion = await completeLocal({
     messages: [
@@ -478,7 +560,7 @@ export async function askLocalAutonomy(agent, context = {}) {
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
-  }, { temperature: 0.2, maxTokens: 110, purpose: 'npc-autonomy', agentName: agent.name, json: true, timeoutMs: 17000 })
+  }, { temperature: 0.2, maxTokens: 110, purpose: 'npc-autonomy', agentName: agent.name, json: true, timeoutMs: 42000 })
   const parsed = extractJson(completion.text)
   const fallback = `${agent.name} keeps following ${agent.autonomy?.dailyGoal || agent.currentIntent || 'the daily routine'} near ${agent.placeName}.`
   const thought = cleanPlanText(parsed?.thought || completion.text, fallback, 150)
@@ -497,6 +579,9 @@ export async function askLocalAutonomy(agent, context = {}) {
     targetPlaceId: target?.id || fallbackChoice.targetPlaceId || '',
     targetPlaceName: target?.name || fallbackChoice.targetPlaceName || parsed?.targetPlaceName || '',
     targetKind: target?.kind || parsed?.targetKind || fallbackChoice.targetKind || '',
+    mobilityMode: cleanPlanText(parsed?.mobilityMode, fallbackChoice.mobilityMode || '', 48),
+    mobilitySource: fallbackChoice.mobilitySource || (context.mobilityContext ? 'runtime mobility context' : ''),
+    mobilityContext: context.mobilityContext || null,
     reason: cleanPlanText(parsed?.reason, fallbackChoice.reason, 150),
     parsed: !!parsed,
     parsedAction: normalizeAutonomyAction(parsed?.action, ''),

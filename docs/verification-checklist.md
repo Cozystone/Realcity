@@ -79,6 +79,10 @@ audit has a clear finish line.
   current intent/memory, choose an executable city action, run that action
   through the simulator, and publish live city/pedestrian telemetry for the
   thought, action, outcome, target, latency, provider, and model.
+- NPC mobility-aware LLM: the autonomy prompt must include live GBFS dock
+  availability, SmartCities curb/geofence state, TrafficFlowObserved context,
+  and GATSim disruption data; a forced verification run executes
+  `use_shared_bike` as a real `shared-bike` route with dock telemetry.
 - NPC-to-NPC local LLM: when local Ollama is available, two NPCs can generate a
   short social exchange through `npc-social-conversation`, store per-person
   dialogue lines and memories, update relationship state, and publish a

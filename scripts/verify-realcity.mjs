@@ -2037,7 +2037,12 @@ async function inspectLocalLlmAutonomy(page) {
     const sample = (store?.pedestrianSamples || []).find(item => item.id && !item.taxiPhase) ||
       (store?.pedestrianSamples || [])[0]
     if (!debug?.runLlmAutonomy || !sample?.id) return { error: 'debug-autonomy-unavailable', sampleCount: store?.pedestrianSamples?.length || 0 }
-    const autonomy = await debug.runLlmAutonomy({ id: sample.id, reason: 'verification autonomous city life' })
+    const autonomy = await debug.runLlmAutonomy({
+      id: sample.id,
+      reason: 'verification autonomous city life',
+      forceAction: 'use_shared_bike',
+      forceTargetPlaceId: 'river_cafe',
+    })
     await new Promise(resolve => setTimeout(resolve, 650))
     const state = window.__REALCITY_STORE__?.getState()
     const event = (state?.cityEvents || []).find(item => item.kind === 'llm' && item.agentId === sample.id && item.topic === 'npc autonomy')
@@ -2056,6 +2061,11 @@ async function inspectLocalLlmAutonomy(page) {
       updatedLlmAutonomyExecuted: updated?.llmAutonomyExecuted ?? null,
       updatedLlmAutonomyOutcome: updated?.llmAutonomyOutcome || null,
       updatedLlmAutonomyTargetName: updated?.llmAutonomyTargetName || null,
+      updatedLlmAutonomyMobilityMode: updated?.llmAutonomyMobilityMode || null,
+      updatedLlmAutonomyMobilitySource: updated?.llmAutonomyMobilitySource || null,
+      updatedLlmAutonomyNearestDock: updated?.llmAutonomyNearestDock || null,
+      updatedNeedErrandMobilityMode: updated?.needErrandMobilityMode || null,
+      updatedNeedErrandMobilityDockName: updated?.needErrandMobilityDockName || null,
     }
   })
 
@@ -2070,6 +2080,9 @@ async function inspectLocalLlmAutonomy(page) {
   assert(result.autonomy?.action && result.autonomy?.execution?.action === result.autonomy.action, `NPC autonomous LLM did not expose an executable action: ${JSON.stringify(result.autonomy)}`)
   assert(result.autonomy?.execution?.executed === true && result.updatedLlmAutonomyExecuted === true, `NPC autonomous LLM action did not execute through the simulator: ${JSON.stringify(result)}`)
   assert(result.updatedLlmAutonomyAction === result.autonomy.action && result.updatedLlmAutonomyOutcome, `NPC autonomous LLM action telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
+  assert(result.autonomy?.action === 'use_shared_bike' && result.autonomy?.mobilityContext?.nearestDock?.numBikesAvailable > 0, `NPC autonomous LLM did not receive executable GBFS mobility context: ${JSON.stringify(result.autonomy)}`)
+  assert(result.autonomy?.execution?.outcome === 'gbfs-bike-route' && result.autonomy?.execution?.mobilityMode === 'shared-bike', `NPC autonomous LLM did not execute a GBFS bike route: ${JSON.stringify(result.autonomy?.execution)}`)
+  assert(result.updatedLlmAutonomyMobilityMode === 'shared-bike' && result.updatedLlmAutonomyNearestDock, `NPC mobility telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
   return { ...result, skipped: false, localLlmStatus }
 }
 
