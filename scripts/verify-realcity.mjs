@@ -2034,6 +2034,69 @@ async function inspectLocalLlmAutonomy(page) {
   return { ...result, skipped: false, localLlmStatus }
 }
 
+async function inspectLocalLlmSocialConversation(page) {
+  const localLlmStatus = collectOllamaStatus()
+  const localLlmExpected = localLlmStatus.ok && /dolphin3:latest/i.test(localLlmStatus.stdout || '')
+
+  const result = await page.evaluate(async () => {
+    const debug = window.__REALCITY_NPC_DEBUG__
+    const store = window.__REALCITY_STORE__?.getState()
+    const player = store?.player || { x: 0, z: 40 }
+    if (!debug?.runLlmConversation) {
+      return { error: 'debug-llm-social-unavailable', sampleCount: store?.pedestrianSamples?.length || 0 }
+    }
+    const social = await debug.runLlmConversation({
+      x: player.x + 5.2,
+      z: player.z + 10.5,
+      spacing: 2.8,
+      seconds: 12,
+      reason: 'verification local LLM NPC-to-NPC social conversation',
+    })
+    await new Promise(resolve => setTimeout(resolve, 650))
+    const state = window.__REALCITY_STORE__?.getState()
+    const record = window.__REALCITY_LLM_SOCIAL__ || social || null
+    const pairIds = new Set((record?.pair || []).map(item => item.id))
+    const samples = (state?.pedestrianSamples || [])
+      .filter(sample => pairIds.has(sample.id) || sample.talkSource === 'local-llm-social' || sample.llmSocialSource === 'local-llm-social')
+      .slice(0, 4)
+      .map(sample => ({
+        id: sample.id,
+        name: sample.name,
+        partner: sample.talkPartnerName,
+        topic: sample.talkTopicLabel,
+        talkLine: sample.talkLine,
+        talkSource: sample.talkSource,
+        lastInteractionSource: sample.lastInteractionSource,
+        lastInteractionLine: sample.lastInteractionLine,
+        llmSocialSource: sample.llmSocialSource,
+        llmSocialLine: sample.llmSocialLine,
+        llmSocialPartnerName: sample.llmSocialPartnerName,
+        llmSocialLatencyMs: sample.llmSocialLatencyMs,
+        memory: sample.lastMemory,
+        relationships: sample.relationshipCount,
+      }))
+    const event = (state?.cityEvents || []).find(item => item.kind === 'conversation' && item.source === 'local-llm-social')
+    return {
+      social: record,
+      runtime: window.__REALCITY_LLM__ || null,
+      event,
+      samples,
+      cityEvents: state?.cityEvents?.length || 0,
+    }
+  })
+
+  if (!localLlmExpected) {
+    return { ...result, skipped: true, localLlmStatus }
+  }
+
+  assert(result.social?.source === 'local-llm-social', `NPC-to-NPC social LLM did not use Ollama: ${JSON.stringify({ result, localLlmStatus })}`)
+  assert(result.runtime?.lastPurpose === 'npc-social-conversation' && result.runtime?.lastSource === 'local-llm' && result.runtime?.successes > 0, `NPC social LLM runtime telemetry is incomplete: ${JSON.stringify(result.runtime)}`)
+  assert(result.event?.source === 'local-llm-social' && result.event.lineA && result.event.lineB && result.event.llmLatencyMs > 0, `NPC social LLM event was not recorded with dialogue lines: ${JSON.stringify(result.event)}`)
+  assert(result.samples.length >= 2 && result.samples.every(sample => sample.talkSource === 'local-llm-social' && sample.talkLine && sample.llmSocialSource === 'local-llm-social'), `NPC social LLM did not update both agent samples: ${JSON.stringify(result.samples)}`)
+  assert(result.samples.every(sample => sample.memory && sample.relationships > 0), `NPC social LLM did not leave memory/relationship traces: ${JSON.stringify(result.samples)}`)
+  return { ...result, skipped: false, localLlmStatus }
+}
+
 async function inspectNeedDrivenErrand(page) {
   const setup = await page.evaluate(() => {
     const store = window.__REALCITY_STORE__?.getState()
@@ -3006,6 +3069,7 @@ async function main() {
     const crosswalkSignalCompliance = await inspectCrosswalkSignalCompliance(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
     const localLlmAutonomy = await inspectLocalLlmAutonomy(page)
+    const localLlmSocial = await inspectLocalLlmSocialConversation(page)
     const needDrivenErrand = await inspectNeedDrivenErrand(page)
     const socialReaction = await inspectDeterministicSocialReaction(page)
     const dailyRoutine = await inspectDailyRoutineTimeShift(page)
@@ -3365,6 +3429,7 @@ async function main() {
       crosswalkSignalCompliance,
       agentAutonomy,
       localLlmAutonomy,
+      localLlmSocial,
       needDrivenErrand,
       socialReaction,
       dailyRoutine,

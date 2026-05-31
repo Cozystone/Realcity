@@ -72,6 +72,10 @@ audit has a clear finish line.
   current intent/memory, choose an executable city action, run that action
   through the simulator, and publish live city/pedestrian telemetry for the
   thought, action, outcome, target, latency, provider, and model.
+- NPC-to-NPC local LLM: when local Ollama is available, two NPCs can generate a
+  short social exchange through `npc-social-conversation`, store per-person
+  dialogue lines and memories, update relationship state, and publish a
+  `local-llm-social` city event with latency/model telemetry.
 - Need-driven autonomy: NPC hunger, energy, and social need thresholds can
   trigger a short real detour to a suitable cafe, park, retail, or social place;
   the detour must appear in pedestrian samples, city events, nearby agent card,

@@ -5,7 +5,7 @@ import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalFo
 import { resolveBuildingCollision } from '../engine/collision'
 import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
-import { askLocalAutonomy, askLocalNPC, fallbackLine, includesPlaceCandidate, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
+import { askLocalAutonomy, askLocalNPC, askLocalNPCConversation, fallbackLine, includesPlaceCandidate, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { DIGITAL_HUMAN_SOURCE, makeHumanStyleRig } from './digitalHumanRig'
 import { makeProceduralTexture } from './proceduralTextures'
@@ -1407,6 +1407,8 @@ class Agent {
     this.talkPartnerId = null
     this.talkPartnerName = null
     this.talkTopicLabel = null
+    this.talkLine = null
+    this.talkSource = null
     this.talkStartedAt = 0
     this.visualGesture = null
     this.renderFacingPartner = false
@@ -1423,6 +1425,7 @@ class Agent {
     this.needErrand = null
     this.needErrandCooldown = NEED_ERRAND_MIN_SECONDS + (hashValue(data.id) % 16)
     this.llmAutonomy = null
+    this.lastLlmConversation = null
     this.crosswalkWaitTimer = 0
     this.lastCrosswalkWaitAt = 0
     this.stuckTimer = 0
@@ -1477,6 +1480,8 @@ class Agent {
       this.talkPartnerId = null
       this.talkPartnerName = null
       this.talkTopicLabel = null
+      this.talkLine = null
+      this.talkSource = null
       this.visualGesture = null
       this.renderFacingPartner = false
       this.facingPartnerAngle = null
@@ -1899,9 +1904,13 @@ class Agent {
     this.talkPartnerId = partner?.id || null
     this.talkPartnerName = partner?.name || null
     this.talkTopicLabel = topic?.label || (partner ? 'sidewalk conversation' : 'player interaction')
+    this.talkLine = null
+    this.talkSource = null
     if (partner) {
       const conversation = topic || conversationTopicFor(this, partner, timeMinutes)
       this.talkTopicLabel = conversation.label
+      this.talkSource = conversation.source || 'simulated-social'
+      this.talkLine = conversation.lineFor?.(this, partner) || conversation.lines?.[this.id] || null
       const existing = this.relationships[partner.id] || {
         agentId: partner.id,
         name: partner.name,
@@ -1929,14 +1938,28 @@ class Agent {
         partnerJob: partner.job,
         topicId: conversation.id,
         topic: conversation.label,
+        line: this.talkLine,
+        source: this.talkSource,
         placeName: this.placeName,
         trust: Number(next.trust.toFixed(2)),
         delta: Number(delta.toFixed(3)),
         talks: next.talks,
         at: performance.now(),
       }
+      if (conversation.source === 'local-llm-social') {
+        this.lastLlmConversation = {
+          partnerId: partner.id,
+          partnerName: partner.name,
+          topicId: conversation.id,
+          topic: conversation.label,
+          line: this.talkLine,
+          source: conversation.source,
+          latencyMs: conversation.llmLatencyMs ?? null,
+          at: performance.now(),
+        }
+      }
       this.currentIntent = `talking with ${partner.name} about ${conversation.label}`
-      this.remember('social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
+      this.remember(conversation.source === 'local-llm-social' ? 'llm-social' : 'social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
       this.refreshCognition({
         trigger: 'conversation',
         timeMinutes,
@@ -1990,6 +2013,9 @@ class Agent {
       talkPartnerId: this.talkPartnerId,
       talkPartnerName: this.talkPartnerName,
       talkTopicLabel: this.talkTopicLabel,
+      talkLine: this.talkLine,
+      talkSource: this.talkSource,
+      lastLlmConversation: this.lastLlmConversation,
       visualGesture: this.visualGesture,
       renderFacingPartner: this.renderFacingPartner,
       facingPartnerAngle: this.facingPartnerAngle,
@@ -2263,6 +2289,35 @@ function conversationTopicFor(a, b, timeMinutes = 0) {
   return topics[index]
 }
 
+function llmConversationTopicFor(a, b, fallbackTopic, result) {
+  const generated = result?.topic || {}
+  const lineA = generated.lineA || null
+  const lineB = generated.lineB || null
+  const fallbackMemory = (self, partner) => typeof fallbackTopic?.memoryFor === 'function'
+    ? fallbackTopic.memoryFor(self, partner)
+    : `Talked with ${partner?.name || 'a neighbor'} about ${fallbackTopic?.label || 'the block'}.`
+  const id = generated.id || fallbackTopic?.id || 'llm-social'
+
+  return {
+    id,
+    label: generated.label || fallbackTopic?.label || 'local LLM sidewalk conversation',
+    event: generated.event || fallbackTopic?.event || `${a.name} and ${b.name} have a short local-LLM conversation on the sidewalk.`,
+    source: result?.source || 'fallback:local-llm-social',
+    llmLatencyMs: result?.latencyMs ?? null,
+    llm: result?.llm || null,
+    lines: {
+      [a.id]: lineA,
+      [b.id]: lineB,
+    },
+    lineFor: self => self?.id === a.id ? lineA : self?.id === b.id ? lineB : null,
+    memoryFor: (self, partner) => {
+      if (self?.id === a.id) return generated.memoryA || fallbackMemory(self, partner)
+      if (self?.id === b.id) return generated.memoryB || fallbackMemory(self, partner)
+      return fallbackMemory(self, partner)
+    },
+  }
+}
+
 function relationshipDeltaFor(a, b, topic) {
   const styleMatch = a.autonomy?.relationshipStyle && a.autonomy.relationshipStyle === b.autonomy?.relationshipStyle ? 0.012 : 0
   const sharedPlace = a.placeName && a.placeName === b.placeName ? 0.014 : 0
@@ -2274,8 +2329,13 @@ function relationshipDeltaFor(a, b, topic) {
 
 function conversationEventFor(a, b, topic, timeMinutes, prefix = 'talk') {
   const interaction = a.lastInteraction?.partnerId === b.id ? a.lastInteraction : null
+  const lineA = topic.lineFor?.(a, b) || topic.lines?.[a.id] || null
+  const lineB = topic.lineFor?.(b, a) || topic.lines?.[b.id] || null
+  const text = lineA && lineB
+    ? `${topic.event} ${a.name}: "${lineA}" ${b.name}: "${lineB}"`
+    : topic.event
   return {
-    id: `${prefix}_${a.id}_${b.id}_${topic.id}_${Math.floor((timeMinutes || 0) * 10)}`,
+    id: `${prefix}_${a.id}_${b.id}_${topic.id || 'conversation'}_${Math.floor((timeMinutes || 0) * 10)}`,
     kind: 'conversation',
     agentId: a.id,
     agentName: a.name,
@@ -2283,9 +2343,13 @@ function conversationEventFor(a, b, topic, timeMinutes, prefix = 'talk') {
     partnerName: b.name,
     placeName: a.placeName,
     topic: topic.label,
+    source: topic.source || 'simulated-social',
+    lineA,
+    lineB,
+    llmLatencyMs: topic.llmLatencyMs ?? null,
     relationshipTrust: interaction?.trust ?? null,
     relationshipDelta: interaction?.delta ?? null,
-    text: topic.event,
+    text: String(text || '').slice(0, 260),
   }
 }
 
@@ -3389,6 +3453,7 @@ function NPCs({ city }) {
   const autonomyLlmClock = useRef(16)
   const autonomyLlmBusy = useRef(false)
   const autonomyLlmLastAgent = useRef(null)
+  const socialLlmBusy = useRef(false)
   const busy = useRef(false)
   const requestBusy = useRef(false)
   const textures = useMemo(() => ({
@@ -3506,6 +3571,86 @@ function NPCs({ city }) {
       return window.__REALCITY_LLM_AUTONOMY__
     } finally {
       autonomyLlmBusy.current = false
+    }
+  }
+
+  const runLlmSocialConversation = async (a, b, reason = 'debug local LLM NPC social conversation', seconds = 10) => {
+    if (!a || !b || a === b || socialLlmBusy.current || typeof window === 'undefined') return null
+    if (window.location.hostname.endsWith('.vercel.app')) return null
+    socialLlmBusy.current = true
+    try {
+      const store = useCityStore.getState()
+      const fallbackTopic = conversationTopicFor(a, b, store.timeMinutes)
+      const result = await askLocalNPCConversation(a.snapshot(places), b.snapshot(places), {
+        topic: fallbackTopic,
+        timeLabel: `Day ${store.day}, ${formatTime(store.timeMinutes)}`,
+        placeName: a.placeName || b.placeName || 'sidewalk',
+        streetContext: `${reason}; keep pedestrians on sidewalks, respect traffic, remember useful personal details, and make each NPC sound distinct.`,
+      })
+      const topic = llmConversationTopicFor(a, b, fallbackTopic, result)
+      const duration = clampValue(Number(seconds) || 10, 3, 22)
+      a.debugSocialConversation = true
+      b.debugSocialConversation = true
+      a.talk(duration, b, topic, store.timeMinutes)
+      b.talk(duration, a, topic, store.timeMinutes)
+      const event = conversationEventFor(a, b, topic, store.timeMinutes, `llm_social_${Date.now()}`)
+      store.addCityEvent(event)
+      const player = store.player || { x: 0, z: 0 }
+      if (Math.min(
+        Math.hypot(a.pos.x - player.x, a.pos.z - player.z),
+        Math.hypot(b.pos.x - player.x, b.pos.z - player.z),
+      ) < 55) {
+        store.setPulse(event.text)
+      }
+
+      const socialRecord = {
+        pair: [
+          { id: a.id, name: a.name, line: a.talkLine },
+          { id: b.id, name: b.name, line: b.talkLine },
+        ],
+        reason,
+        source: result?.source || topic.source,
+        ok: !!result?.ok,
+        latencyMs: result?.latencyMs ?? null,
+        topic: topic.label,
+        event,
+        llm: result?.llm || null,
+        runtime: window.__REALCITY_LLM__ || null,
+        createdAt: Date.now(),
+      }
+      window.__REALCITY_LLM_SOCIAL__ = socialRecord
+
+      const currentSamples = useCityStore.getState().pedestrianSamples || []
+      if (currentSamples.length) {
+        store.setPedestrianSamples(currentSamples.map(sample => {
+          if (sample.id !== a.id && sample.id !== b.id) return sample
+          const agent = sample.id === a.id ? a : b
+          return {
+            ...sample,
+            currentIntent: agent.currentIntent,
+            talkPartnerId: agent.talkPartnerId,
+            talkPartnerName: agent.talkPartnerName,
+            talkTopicLabel: agent.talkTopicLabel,
+            talkLine: agent.talkLine,
+            talkSource: agent.talkSource,
+            lastInteractionPartner: agent.lastInteraction?.partnerName || null,
+            lastInteractionTopic: agent.lastInteraction?.topic || null,
+            lastInteractionSource: agent.lastInteraction?.source || null,
+            lastInteractionLine: agent.lastInteraction?.line || null,
+            llmSocialSource: agent.lastLlmConversation?.source || null,
+            llmSocialLine: agent.lastLlmConversation?.line || null,
+            llmSocialPartnerName: agent.lastLlmConversation?.partnerName || null,
+            llmSocialLatencyMs: agent.lastLlmConversation?.latencyMs ?? null,
+            lastMemory: agent.memories?.[0]?.text || sample.lastMemory,
+            memoryCount: agent.memories?.length || sample.memoryCount,
+            relationshipCount: agent.relationshipCount || sample.relationshipCount,
+          }
+        }))
+      }
+
+      return socialRecord
+    } finally {
+      socialLlmBusy.current = false
     }
   }
 
@@ -3984,7 +4129,13 @@ function NPCs({ city }) {
           relationshipCount: agent.relationshipCount || 0,
           lastInteractionPartner: agent.lastInteraction?.partnerName || null,
           lastInteractionTopic: agent.lastInteraction?.topic || null,
+          lastInteractionSource: agent.lastInteraction?.source || null,
+          lastInteractionLine: agent.lastInteraction?.line || null,
           lastInteractionTrust: agent.lastInteraction?.trust ?? null,
+          llmSocialSource: agent.lastLlmConversation?.source || null,
+          llmSocialLine: agent.lastLlmConversation?.line || null,
+          llmSocialPartnerName: agent.lastLlmConversation?.partnerName || null,
+          llmSocialLatencyMs: agent.lastLlmConversation?.latencyMs ?? null,
           knownContacts: Object.values(agent.relationships || {}).slice(0, 3).map(contact => ({
             id: contact.agentId,
             name: contact.name,
@@ -4044,6 +4195,8 @@ function NPCs({ city }) {
           talkPartnerId: agent.talkPartnerId || null,
           talkPartnerName: agent.talkPartnerName || null,
           talkTopicLabel: agent.talkTopicLabel || null,
+          talkLine: agent.talkLine || null,
+          talkSource: agent.talkSource || null,
           visualGesture: agent.visualGesture || null,
           renderFacingPartner: !!agent.renderFacingPartner,
           facingPartnerAngle: agent.facingPartnerAngle,
@@ -4334,6 +4487,8 @@ function NPCs({ city }) {
       agent.talkPartnerId = null
       agent.talkPartnerName = null
       agent.talkTopicLabel = null
+      agent.talkLine = null
+      agent.talkSource = null
       agent.visualGesture = agent.talkTimer > 0 ? socialGestureKind(agent) : null
       agent.renderFacingPartner = false
       agent.facingPartnerAngle = null
@@ -4443,6 +4598,8 @@ function NPCs({ city }) {
       agent.talkPartnerId = null
       agent.talkPartnerName = null
       agent.talkTopicLabel = null
+      agent.talkLine = null
+      agent.talkSource = null
       agent.visualGesture = null
       agent.renderFacingPartner = false
       agent.facingPartnerAngle = null
@@ -4519,6 +4676,25 @@ function NPCs({ city }) {
         topic: topic.label,
       }
     }
+
+    const debugLlmSocialPair = async (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const setup = debugSocialPair({
+        ...detail,
+        seconds: Number.isFinite(Number(detail.seconds)) ? detail.seconds : 12,
+      })
+      if (!setup) return false
+      const first = agentsById.get(setup.aId)
+      const second = agentsById.get(setup.bId)
+      if (!first || !second) return false
+      return runLlmSocialConversation(
+        first,
+        second,
+        detail.reason || 'debug local LLM NPC social conversation',
+        Number.isFinite(Number(detail.seconds)) ? Number(detail.seconds) : 12,
+      )
+    }
+
     const debugLlmAutonomy = async (detail = {}) => {
       if (!import.meta.env.DEV) return false
       const agent = agents.find(item => item.id === detail.id) ||
@@ -4531,6 +4707,7 @@ function NPCs({ city }) {
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})
     const onDebugNeedErrand = event => debugNeedErrand(event.detail || {})
     const onDebugCrosswalkWait = event => debugCrosswalkWait(event.detail || {})
+    const onDebugLlmSocial = event => { void debugLlmSocialPair(event.detail || {}) }
     const onDebugLlmAutonomy = event => { void debugLlmAutonomy(event.detail || {}) }
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
@@ -4539,12 +4716,14 @@ function NPCs({ city }) {
         startConversation: debugSocialPair,
         startNeedErrand: debugNeedErrand,
         startCrosswalkWait: debugCrosswalkWait,
+        runLlmConversation: debugLlmSocialPair,
         runLlmAutonomy: debugLlmAutonomy,
       }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
       window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)
       window.addEventListener('realcity:debug-need-errand', onDebugNeedErrand)
       window.addEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
+      window.addEventListener('realcity:debug-llm-social', onDebugLlmSocial)
       window.addEventListener('realcity:debug-llm-autonomy', onDebugLlmAutonomy)
     }
     window.addEventListener('keydown', onKey)
@@ -4557,6 +4736,7 @@ function NPCs({ city }) {
         window.removeEventListener('realcity:debug-social-pair', onDebugSocialPair)
         window.removeEventListener('realcity:debug-need-errand', onDebugNeedErrand)
         window.removeEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
+        window.removeEventListener('realcity:debug-llm-social', onDebugLlmSocial)
         window.removeEventListener('realcity:debug-llm-autonomy', onDebugLlmAutonomy)
         if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
       }

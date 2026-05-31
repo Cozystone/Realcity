@@ -239,6 +239,104 @@ export async function askLocalNPC(agent, context) {
   return styleNpcSpeech(agent, response.text)
 }
 
+export async function askLocalNPCConversation(a, b, context = {}) {
+  const fallbackTopic = context.topic || {}
+  const fallbackLabel = fallbackTopic.label || `${a?.name || 'Someone'} and ${b?.name || 'someone'} sidewalk conversation`
+  const fallbackEvent = fallbackTopic.event ||
+    `${a?.name || 'One NPC'} and ${b?.name || 'another NPC'} talk briefly near ${a?.placeName || b?.placeName || 'the street'}.`
+  const fallbackMemoryA = typeof fallbackTopic.memoryFor === 'function'
+    ? fallbackTopic.memoryFor(a, b)
+    : `Talked with ${b?.name || 'a neighbor'} about ${fallbackLabel}.`
+  const fallbackMemoryB = typeof fallbackTopic.memoryFor === 'function'
+    ? fallbackTopic.memoryFor(b, a)
+    : `Talked with ${a?.name || 'a neighbor'} about ${fallbackLabel}.`
+
+  const schema = {
+    topicId: 'short id like route, work, needs, schedule',
+    label: 'short topic label',
+    lineA: 'one natural Korean sentence from NPC A',
+    lineB: 'one natural Korean sentence from NPC B',
+    event: 'one sentence summary of what changed in the city',
+  }
+
+  const brief = agent => [
+    `${agent.name}: ${agent.age} ${agent.gender}, ${agent.job}, ${agent.personality}`,
+    `Speech: ${agent.speechStyle?.label || 'natural'}, ${agent.voice || 'neutral'}, gesture ${agent.gestureStyle || 'small nod'}`,
+    `Now: ${agent.activity} near ${agent.placeName}`,
+    `Intent: ${agent.currentIntent || agent.autonomy?.dailyGoal || 'daily routine'}`,
+    `Needs: hunger ${Number(agent.needs?.hunger || 0).toFixed(2)}, energy ${Number(agent.needs?.energy || 0).toFixed(2)}, social ${Number(agent.needs?.social || 0).toFixed(2)}, urgency ${Number(agent.needs?.urgency || 0).toFixed(2)}`,
+    agent.lastInteraction?.partnerName ? `Recent social memory: ${agent.lastInteraction.partnerName}, ${agent.lastInteraction.topic}` : null,
+    agent.memories?.[0]?.text ? `Latest memory: ${String(agent.memories[0].text).slice(0, 120)}` : null,
+  ].filter(Boolean).join('\n')
+
+  const system = [
+    'Return JSON only. No markdown.',
+    'You are the local LLM social layer for two autonomous RealCity NPCs.',
+    'Create a believable two-person micro-conversation that can be executed by the simulator.',
+    'The conversation must be grounded in schedule, job, street safety, needs, memory, or relationship context.',
+    'Use Korean for lineA, lineB, and event.',
+    'Keep lineA and lineB short enough to show in a HUD bubble.',
+    'Return compact JSON with only these keys:',
+    JSON.stringify(schema),
+  ].join('\n')
+
+  const user = [
+    `Time: ${context.timeLabel || 'unknown'}`,
+    `Place: ${context.placeName || a?.placeName || b?.placeName || 'street'}`,
+    `Fallback topic: ${fallbackLabel}`,
+    `Street context: ${context.streetContext || 'sidewalk social norms; avoid road lanes; use crossings and curb space.'}`,
+    'NPC A',
+    brief(a),
+    'NPC B',
+    brief(b),
+  ].join('\n')
+
+  const completion = await completeLocal({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    text: `${system}\n\n${user}`,
+  }, { temperature: 0.42, maxTokens: 120, purpose: 'npc-social-conversation', agentName: `${a?.name || 'A'} + ${b?.name || 'B'}`, json: true, timeoutMs: 52000 })
+
+  const parsed = extractJson(completion.text)
+  const topicId = cleanPlanText(parsed?.topicId, fallbackTopic.id || 'llm-social', 48)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'llm-social'
+  const label = cleanPlanText(parsed?.label, fallbackLabel, 96)
+  const lineA = cleanPlanSpeech(a, parsed?.lineA, `${b?.name || 'Excuse me'}, let's compare notes about ${fallbackLabel}.`)
+  const lineB = cleanPlanSpeech(b, parsed?.lineB, `Good idea. I can adjust my next stop around ${fallbackLabel}.`)
+  const event = cleanPlanText(parsed?.event, fallbackEvent, 180)
+
+  return {
+    ok: completion.ok && !!parsed,
+    source: completion.ok && parsed ? 'local-llm-social' : `fallback:${completion.source}`,
+    latencyMs: completion.latencyMs,
+    error: completion.error || null,
+    topic: {
+      id: topicId,
+      label,
+      lineA,
+      lineB,
+      event,
+      memoryA: cleanPlanText(parsed?.memoryA, `${fallbackMemoryA} ${b?.name || 'They'} said: ${lineB}`, 150),
+      memoryB: cleanPlanText(parsed?.memoryB, `${fallbackMemoryB} ${a?.name || 'They'} said: ${lineA}`, 150),
+    },
+    llm: {
+      provider,
+      model,
+      endpoint,
+      ok: completion.ok,
+      parsed: !!parsed,
+      source: completion.source,
+      latencyMs: completion.latencyMs,
+      error: completion.error || null,
+      responsePreview: completion.text ? completion.text.slice(0, 180) : null,
+    },
+  }
+}
+
 const AUTONOMY_ACTIONS = [
   'continue_schedule',
   'start_need_errand',

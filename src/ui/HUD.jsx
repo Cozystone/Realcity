@@ -672,6 +672,13 @@ function AgentCard({ agent, stats, pulse, llmRuntime }) {
             <small>{agent.llmAutonomy.execution?.outcome || agent.llmAutonomy.targetName || 'queued'}</small>
           </div>
         ) : null}
+        {agent.lastLlmConversation?.line ? (
+          <div className="agent-llm-action" data-llm-action="social-conversation">
+            <span>LLM social</span>
+            <strong>{agent.lastLlmConversation.partnerName}</strong>
+            <small>{agent.lastLlmConversation.line}</small>
+          </div>
+        ) : null}
         {agent.socialReaction ? <small>{agent.socialReaction.replaceAll('-', ' ')}</small> : null}
         {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
         {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}
