@@ -2439,6 +2439,26 @@ button.key-prompt {
   background: #7bd389;
 }
 
+.vitals .impact i {
+  background: #ffd447;
+  transition: width 120ms ease;
+}
+
+.vitals .impact.active span {
+  color: #ffd447;
+}
+
+.impact-note {
+  overflow: hidden;
+  min-width: 0;
+  color: rgba(255, 239, 176, 0.72);
+  font-size: 10px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .compass {
     top: 122px;

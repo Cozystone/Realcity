@@ -128,6 +128,13 @@ export const useCityStore = create((set, get) => ({
     tiles: 0,
     llm: 'ollama',
   },
+  playerPhysics: {
+    health: 1,
+    stability: 1,
+    impactFlash: 0,
+    collisions: 0,
+    lastImpact: null,
+  },
   focusedAgent: null,
   nearbyAgent: null,
   dialogue: null,
@@ -156,16 +163,24 @@ export const useCityStore = create((set, get) => ({
     pedestrianRadius: 0.82,
     vehiclePadding: 0.78,
     solidObjects: ['buildings', 'landmarks', 'pedestrians', 'vehicles'],
-    reactions: ['push-away', 'stumble', 'fall', 'driver-brake', 'following-distance', 'brake-lights', 'amber-caution-signal'],
+    reactions: ['push-away', 'stumble', 'fall', 'driver-brake', 'following-distance', 'brake-lights', 'amber-caution-signal', 'player-stability-loss', 'impact-camera-shake'],
   },
   pulse: 'Morning traffic is building around Central Station.',
 
   tick(delta) {
     const state = get()
     const next = state.timeMinutes + delta * 1.25
+    const physics = state.playerPhysics || {}
+    const nextStability = Math.min(1, finiteNumber(physics.stability, 1) + delta * 0.16)
+    const nextImpactFlash = Math.max(0, finiteNumber(physics.impactFlash, 0) - delta * 0.85)
     set({
       timeMinutes: next % DAY_MINUTES,
       day: state.day + (next >= DAY_MINUTES ? 1 : 0),
+      playerPhysics: {
+        ...physics,
+        stability: nextStability,
+        impactFlash: nextImpactFlash,
+      },
     })
   },
 
@@ -300,6 +315,58 @@ export const useCityStore = create((set, get) => ({
 
   setPulse(pulse) {
     set({ pulse })
+  },
+
+  registerPlayerImpact(impact) {
+    if (!impact) return
+    set(state => {
+      const now = Date.now()
+      const intensity = Math.max(0.05, Math.min(1.8, finiteNumber(impact.intensity, 0.2)))
+      const kind = impact.kind || 'contact'
+      const previous = state.playerPhysics || {}
+      const healthLoss = kind === 'vehicle' ? intensity * 0.028 : intensity * 0.008
+      const text = String(impact.text || `${kind} impact`).slice(0, 160)
+      const entry = {
+        id: `impact_${now}_${previous.collisions || 0}`,
+        kind,
+        sourceId: impact.sourceId || null,
+        sourceName: impact.sourceName || null,
+        intensity: Number(intensity.toFixed(3)),
+        x: finiteNumber(impact.x, state.player.x),
+        z: finiteNumber(impact.z, state.player.z),
+        nx: finiteNumber(impact.nx, 0),
+        nz: finiteNumber(impact.nz, 0),
+        text,
+        createdAt: now,
+        timeMinutes: state.timeMinutes,
+      }
+      return {
+        playerPhysics: {
+          health: Math.max(0.08, finiteNumber(previous.health, 1) - healthLoss),
+          stability: Math.max(0, finiteNumber(previous.stability, 1) - intensity * (kind === 'vehicle' ? 0.34 : 0.16)),
+          impactFlash: Math.min(1, finiteNumber(previous.impactFlash, 0) + intensity * 0.55),
+          collisions: (previous.collisions || 0) + 1,
+          lastImpact: entry,
+        },
+        pulse: text,
+        cityEvents: [{
+          id: entry.id,
+          timeMinutes: state.timeMinutes,
+          day: state.day,
+          createdAt: now,
+          kind: 'collision',
+          agentId: 'player',
+          agentName: 'Player',
+          partnerId: entry.sourceId,
+          partnerName: entry.sourceName,
+          placeName: state.player.placeName || state.player.district || null,
+          topic: `${kind} impact`,
+          relationshipTrust: null,
+          relationshipDelta: null,
+          text,
+        }, ...state.cityEvents].slice(0, 24),
+      }
+    })
   },
 
   setMapRoute(route) {

@@ -1545,6 +1545,7 @@ export default function HUD({ city }) {
   const timeMinutes = useCityStore(state => state.timeMinutes)
   const day = useCityStore(state => state.day)
   const player = useCityStore(state => state.player)
+  const playerPhysics = useCityStore(state => state.playerPhysics)
   const weather = useCityStore(state => state.weather)
   const stats = useCityStore(state => state.stats)
   const pulse = useCityStore(state => state.pulse)
@@ -1635,9 +1636,18 @@ export default function HUD({ city }) {
       ) : null}
       <VirtualPhone city={city} player={player} focusedAgent={focusedAgent} timeMinutes={timeMinutes} />
 
-      <div className="vitals">
-        <div><span>HP</span><i style={{ width: '100%' }} /></div>
-        <div><span>ST</span><i style={{ width: `${Math.max(35, 100 - player.speed * 4)}%` }} /></div>
+      <div className="vitals" data-player-impact={playerPhysics?.lastImpact?.kind || 'none'}>
+        <div><span>HP</span><i style={{ width: `${Math.round((playerPhysics?.health ?? 1) * 100)}%` }} /></div>
+        <div><span>ST</span><i style={{ width: `${Math.max(12, Math.round((playerPhysics?.stability ?? 1) * 100))}%` }} /></div>
+        <div className={playerPhysics?.impactFlash > 0.05 ? 'impact active' : 'impact'}>
+          <span>IM</span>
+          <i style={{ width: `${Math.round((playerPhysics?.impactFlash || 0) * 100)}%` }} />
+        </div>
+        {playerPhysics?.lastImpact ? (
+          <small className="impact-note">
+            {playerPhysics.lastImpact.kind} / {playerPhysics.lastImpact.sourceName || 'street body'} / {Math.round(playerPhysics.lastImpact.intensity * 100)}%
+          </small>
+        ) : null}
       </div>
     </div>
   )

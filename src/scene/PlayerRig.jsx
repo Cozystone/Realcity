@@ -241,6 +241,17 @@ function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, c
     pz = result.z
     const impulse = Math.min(1.6, (isRunning ? 1.05 : 0.58) + movement * 5 + result.penetration * 0.7)
     emitCollisionOnce(cooldowns, `npc:${pedestrian.id}`, 520, () => {
+      store.registerPlayerImpact?.({
+        kind: 'pedestrian',
+        sourceId: pedestrian.id,
+        sourceName: pedestrian.name,
+        intensity: impulse,
+        x: px,
+        z: pz,
+        nx: result.nx,
+        nz: result.nz,
+        text: `${pedestrian.name || 'A pedestrian'} is pushed back as you collide on the sidewalk.`,
+      })
       window.dispatchEvent(new CustomEvent('realcity:player-hit-npc', {
         detail: {
           id: pedestrian.id,
@@ -273,7 +284,18 @@ function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, c
     px = result.x
     pz = result.z
     emitCollisionOnce(cooldowns, `vehicle:${vehicle.id}`, 900, () => {
-      store.setPulse(`${vehicle.kind === 'taxi' ? 'The taxi' : 'The car'} brakes and you are pushed clear of its body.`)
+      const intensity = Math.min(1.8, 0.72 + result.penetration * 0.44 + movement * 6 + (vehicle.speed || 0) * 0.025)
+      store.registerPlayerImpact?.({
+        kind: 'vehicle',
+        sourceId: vehicle.id,
+        sourceName: vehicle.driverName || (vehicle.kind === 'taxi' ? 'taxi driver' : 'driver'),
+        intensity,
+        x: px,
+        z: pz,
+        nx: result.nx,
+        nz: result.nz,
+        text: `${vehicle.kind === 'taxi' ? 'The taxi' : 'The car'} brakes and pushes you clear of its solid body.`,
+      })
     })
   }
 
@@ -686,6 +708,12 @@ export default function PlayerRig({ city }) {
       pos.current.y + CAMERA_HEIGHT + CAMERA_DISTANCE * Math.sin(cameraElevation),
       pos.current.z + CAMERA_DISTANCE * Math.cos(cameraOrbit) * ce,
     )
+    const impactShake = rideCamera ? 0 : Math.min(0.32, (store.playerPhysics?.impactFlash || 0) * 0.24)
+    if (impactShake > 0.001) {
+      camTarget.x += Math.sin(state.clock.elapsedTime * 34.7) * impactShake
+      camTarget.y += Math.sin(state.clock.elapsedTime * 42.1 + 0.8) * impactShake * 0.42
+      camTarget.z += Math.cos(state.clock.elapsedTime * 31.3) * impactShake
+    }
     const cameraPlace = currentInterior(city, pos.current.x, pos.current.z)
     const cameraSafety = !cameraPlace || rideCamera
       ? resolveCameraTarget(city, pos.current, camTarget, rideCamera ? 2.4 : 1.35)

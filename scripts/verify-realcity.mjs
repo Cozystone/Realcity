@@ -1501,6 +1501,7 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.rules?.solidObjects?.includes('pedestrians') && result.rules?.solidObjects?.includes('vehicles'), 'Dynamic pedestrian/vehicle collision rules are missing')
   assert(result.rules?.solidObjects?.includes('buildings') && result.rules?.solidObjects?.includes('landmarks'), 'Static building/landmark collision rules are missing')
   assert(result.rules?.reactions?.includes('push-away') && result.rules?.reactions?.includes('fall') && result.rules?.reactions?.includes('driver-brake'), 'Collision reaction metadata is incomplete')
+  assert(result.rules?.reactions?.includes('player-stability-loss') && result.rules?.reactions?.includes('impact-camera-shake'), 'Player impact feedback rules are missing')
   assert(result.pedestrianSamples > 100, `Pedestrian collision samples are too sparse: ${result.pedestrianSamples}`)
   assert(result.pedestrianPurposeSamples === result.pedestrianSamples, `Pedestrian route purpose metadata is incomplete: ${result.pedestrianPurposeSamples}/${result.pedestrianSamples}`)
   assert(result.pedestrianRouteModes.includes('direct') || result.pedestrianWaypointSamples > 0, `Pedestrian route modes were not exposed: ${result.pedestrianRouteModes.join(', ')}`)
@@ -1530,6 +1531,95 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.clouds.hasFlattenedUndersides && result.clouds.maxVerticalAspect < 0.55, 'Clouds are still vertically stretched or lack flattened undersides')
   assert(result.textures?.procedural && result.textures.classes?.length >= 8, 'Procedural texture catalog was not exposed')
   assert(['cloud-vapor', 'city-fabric', 'skin-pores', 'vehicle-paint', 'rubber-tread', 'glass-smudge'].every(key => result.textures.classes.includes(key)), 'Core object texture classes are missing')
+  return result
+}
+
+async function inspectPlayerVehicleImpact(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace &&
+    (window.__REALCITY_STORE__?.getState()?.vehicleSamples || []).some(sample => sample.width > 0 && sample.length > 0),
+  null, { timeout: 12000 })
+
+  const setup = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const samples = store?.vehicleSamples || []
+    const player = store?.player || { x: 0, z: 40 }
+    const vehicle = samples
+      .filter(sample => sample.width > 0 && sample.length > 0 && Number.isFinite(sample.x) && Number.isFinite(sample.z))
+      .sort((a, b) => Math.hypot(a.x - player.x, a.z - player.z) - Math.hypot(b.x - player.x, b.z - player.z))[0]
+    if (!vehicle || !window.__REALCITY_PLAYER_RIG__?.debugPlace) return null
+    const before = store.playerPhysics || {}
+    const originalPlayer = { ...player }
+    window.__REALCITY_PLAYER_RIG__.debugPlace({
+      x: vehicle.x,
+      z: vehicle.z,
+      heading: vehicle.yaw || 0,
+      pulse: 'Verification: stepping into a vehicle body to test solid collision feedback.',
+    })
+    return {
+      originalPlayer,
+      beforeCollisions: before.collisions || 0,
+      vehicle: {
+        id: vehicle.id,
+        kind: vehicle.kind,
+        driverName: vehicle.driverName,
+        x: vehicle.x,
+        z: vehicle.z,
+        width: vehicle.width,
+        length: vehicle.length,
+      },
+    }
+  })
+
+  assert(setup?.vehicle?.id, `Could not set up player vehicle impact verification: ${JSON.stringify(setup)}`)
+
+  await page.waitForFunction((setup) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const physics = state?.playerPhysics
+    return physics?.lastImpact?.kind === 'vehicle' &&
+      physics.collisions > setup.beforeCollisions &&
+      physics.impactFlash > 0 &&
+      physics.stability < 1 &&
+      /pushes you clear|brakes/i.test(physics.lastImpact.text || '')
+  }, setup, { timeout: 7000 })
+
+  const result = await page.evaluate((setup) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const player = state?.player || {}
+    const physics = state?.playerPhysics || {}
+    const distanceFromVehicle = Math.hypot((player.x || 0) - setup.vehicle.x, (player.z || 0) - setup.vehicle.z)
+    const hudText = document.querySelector('.vitals')?.innerText || ''
+    const impactAttr = document.querySelector('.vitals')?.getAttribute('data-player-impact') || null
+    const collisionEvent = (state?.cityEvents || []).find(event => event.kind === 'collision' && event.agentName === 'Player')
+    return {
+      lastImpact: physics.lastImpact,
+      health: physics.health,
+      stability: physics.stability,
+      impactFlash: physics.impactFlash,
+      collisions: physics.collisions,
+      pulse: state?.pulse || '',
+      distanceFromVehicle,
+      expectedClearance: Math.min(setup.vehicle.length, setup.vehicle.width) / 2 + 0.7,
+      hudText,
+      impactAttr,
+      collisionEventText: collisionEvent?.text || null,
+    }
+  }, setup)
+
+  assert(result.lastImpact?.kind === 'vehicle', `Player vehicle impact state was not recorded: ${JSON.stringify(result)}`)
+  assert(result.distanceFromVehicle >= result.expectedClearance, `Player was not pushed clear of the vehicle body: ${JSON.stringify(result)}`)
+  assert(result.impactAttr === 'vehicle' && /HP|ST|IM/i.test(result.hudText), `HUD did not expose impact vitals: ${JSON.stringify(result)}`)
+  assert(result.collisionEventText && /brakes|pushes you clear/i.test(result.collisionEventText), `Collision city event was not recorded: ${JSON.stringify(result)}`)
+
+  await page.evaluate((originalPlayer) => {
+    window.__REALCITY_PLAYER_RIG__?.debugPlace?.({
+      x: originalPlayer.x,
+      z: originalPlayer.z,
+      y: originalPlayer.y,
+      heading: originalPlayer.heading,
+    })
+  }, setup.originalPlayer)
+
   return result
 }
 
@@ -2540,6 +2630,7 @@ async function main() {
     const skyState = await page.evaluate(() => window.__REALCITY_STORE__?.getState().sky || null)
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
+    const playerVehicleImpact = await inspectPlayerVehicleImpact(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
     const needDrivenErrand = await inspectNeedDrivenErrand(page)
     const socialReaction = await inspectDeterministicSocialReaction(page)
@@ -2871,6 +2962,7 @@ async function main() {
       mapCoordinateResilience,
       skyState,
       collisionAndMaterials,
+      playerVehicleImpact,
       agentAutonomy,
       needDrivenErrand,
       socialReaction,

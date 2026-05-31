@@ -81,8 +81,10 @@ audit has a clear finish line.
   elevator/stair/escalator wayfinding, concierge desks, queue rails, and
   readable central-city directory labels.
 - Player physics: the harness jumps with Space and confirms an arc plus gravity
-  return, then drives the avatar into a blocked building side wall and confirms
-  the player cannot clip into the solid footprint.
+  return, drives the avatar into a blocked building side wall and confirms the
+  player cannot clip into the solid footprint, then forces a vehicle-body
+  contact and verifies the avatar is pushed clear while HUD impact/stability
+  feedback and a collision city event are recorded.
 - Responsive performance: the harness opens a mobile-like viewport, checks the
   WebGL canvas pixel sample, verifies core HUD controls stay inside the viewport,
   and confirms key UI text does not overflow or overlap.
