@@ -542,9 +542,14 @@ async function inspectCityNorms(page) {
     const smartCity = mobility.smartCity || {}
     const gatsim = mobility.gatsim || {}
     const signalDetectorCount = intersectionControllers.reduce((sum, controller) => sum + (controller.detectors?.length || 0), 0)
-    const actuatedReadyControllers = intersectionControllers.filter(controller =>
-      controller.actuationPolicy?.mode === 'static-now-detector-ready' &&
+    const actuatedControllers = intersectionControllers.filter(controller =>
+      controller.actuationPolicy?.mode === 'actuated-detector-pressure' &&
       controller.actuationPolicy?.pressureSignals?.includes('averageHeadwayTime') &&
+      controller.actuationPolicy?.pressureSignals?.includes('averageGapDistance') &&
+      typeof controller.actuationPolicy?.actuatedGreenSeconds?.x === 'number' &&
+      typeof controller.actuationPolicy?.actuatedGreenSeconds?.z === 'number' &&
+      controller.actuationPolicy?.detectorPressure?.x &&
+      controller.actuationPolicy?.detectorPressure?.z &&
       (controller.detectors?.length || 0) >= 4
     )
     const roadPedestrianPolicies = city.roads.filter(road =>
@@ -560,6 +565,18 @@ async function inspectCityNorms(page) {
       typeof flow.averageGapDistance === 'number' &&
       typeof flow.occupancy === 'number'
     )
+    const turnLaneRoads = city.roads.filter(road =>
+      road.laneModel?.turnLanePolicy &&
+      typeof road.laneModel?.turnSignalDistanceMeters === 'number' &&
+      typeof road.laneModel?.turnPocketLengthMeters === 'number'
+    )
+    const vehicleTurnIntentPlans = city.cars.filter(car =>
+      ['straight', 'left', 'right'].includes(car.turnIntent) &&
+      car.turnLaneRule &&
+      typeof car.turnSignalDistanceMeters === 'number'
+    )
+    const actuatedProgramDurations = signalProgram.map(phase => phase.duration)
+    const greenDurations = signalProgram.filter(phase => phase.kind === 'green').map(phase => phase.duration)
     return {
       roads: city.roads.length,
       buildingCount: city.buildings.length,
@@ -626,13 +643,17 @@ async function inspectCityNorms(page) {
       trafficRules: city.trafficRules,
       proceduralSources: city.proceduralSources,
       signalProgramLength: signalProgram.length,
-      signalProgramDurations: signalProgram.map(phase => phase.duration),
+      signalProgramDurations: actuatedProgramDurations,
       signalProgramStates: signalProgram.map(phase => phase.sumoState),
       signalProgramPedestrianLinks: signalProgram.filter(phase => phase.pedestrianLinks?.crossX || phase.pedestrianLinks?.crossZ).length,
+      signalProgramActuatedGreens: signalProgram.filter(phase => phase.actuationPolicy?.mode === 'actuated-detector-pressure' && phase.detectorPressure).length,
+      signalProgramGreenDurations: greenDurations,
       intersectionControllers: intersectionControllers.length,
       controllerPhaseCoverage: intersectionControllers.filter(controller => controller.phases?.length === signalProgram.length && controller.stopBars?.length === 4 && controller.pedestrianCrossings?.length === 2).length,
       signalDetectorCount,
-      actuatedReadyControllers: actuatedReadyControllers.length,
+      actuatedControllers: actuatedControllers.length,
+      turnLaneRoads: turnLaneRoads.length,
+      vehicleTurnIntentPlans: vehicleTurnIntentPlans.length,
       roadPedestrianPolicies: roadPedestrianPolicies.length,
       gbfsStations: gbfs.stations?.length || 0,
       gbfsStationInfo: gbfs.stationInformation?.length || 0,
@@ -680,7 +701,7 @@ async function inspectCityNorms(page) {
   assert(norms.laneViolations === 0, `${norms.laneViolations} cars violate right-hand lane placement`)
   assert(
     norms.trafficRules?.drivingSide === 'right-hand' &&
-    norms.trafficRules?.signalModel === 'SUMO-inspired static tlLogic' &&
+    norms.trafficRules?.signalModel === 'SUMO-inspired actuated tlLogic' &&
     norms.trafficRules?.signalPhases?.some(phase => /all-red-clearance/.test(phase)) &&
     norms.trafficRules?.allRedSeconds > 0 &&
     /stop bars/i.test(norms.trafficRules?.yielding || '') &&
@@ -689,9 +710,11 @@ async function inspectCityNorms(page) {
     'Traffic rule metadata is incomplete',
   )
   assert(norms.signalProgramLength === 6 && norms.signalProgramStates.includes('GGrr') && norms.signalProgramStates.includes('rrGG') && norms.signalProgramStates.includes('rrrr'), `SUMO tlLogic program is incomplete: ${JSON.stringify(norms.signalProgramStates)}`)
+  assert(norms.signalProgramActuatedGreens === 2 && norms.signalProgramGreenDurations.some(duration => duration !== 20) && norms.trafficRules?.actuatedPressureByAxis?.x && norms.trafficRules?.actuatedPressureByAxis?.z, `SUMO actuated green timing is not driven by detector pressure: ${JSON.stringify({ durations: norms.signalProgramGreenDurations, pressure: norms.trafficRules?.actuatedPressureByAxis })}`)
   assert(norms.signalProgramPedestrianLinks === norms.signalProgramLength && norms.trafficRules?.linkOrder?.includes('ped_cross_x') && norms.trafficRules?.linkOrder?.includes('ped_cross_z'), `Pedestrian links are not explicit in the signal program: ${JSON.stringify(norms.trafficRules)}`)
   assert(norms.intersectionControllers >= 20 && norms.controllerPhaseCoverage === norms.intersectionControllers, `Intersection controllers are missing SUMO phase/stop-bar/crossing data: ${norms.controllerPhaseCoverage}/${norms.intersectionControllers}`)
-  assert(norms.signalDetectorCount >= norms.intersectionControllers * 4 && norms.actuatedReadyControllers === norms.intersectionControllers, `SUMO detector/actuation-ready metadata is incomplete: ${JSON.stringify({ detectors: norms.signalDetectorCount, controllers: norms.intersectionControllers, ready: norms.actuatedReadyControllers })}`)
+  assert(norms.signalDetectorCount >= norms.intersectionControllers * 4 && norms.actuatedControllers === norms.intersectionControllers, `SUMO detector/actuated metadata is incomplete: ${JSON.stringify({ detectors: norms.signalDetectorCount, controllers: norms.intersectionControllers, actuated: norms.actuatedControllers })}`)
+  assert(norms.turnLaneRoads === norms.roads && norms.vehicleTurnIntentPlans === 120 && /turn/i.test(norms.trafficRules?.turnLanePolicy || ''), `Turn-lane/turn-intent metadata is incomplete: ${JSON.stringify({ roads: norms.turnLaneRoads, vehicles: norms.vehicleTurnIntentPlans, rule: norms.trafficRules?.turnLanePolicy })}`)
   assert(norms.roadPedestrianPolicies === norms.roads && /gap/i.test(norms.trafficRules?.pedestrianGapAcceptance || ''), `Road pedestrian policy/gap acceptance rules are incomplete: ${JSON.stringify({ roads: norms.roads, policies: norms.roadPedestrianPolicies, rule: norms.trafficRules?.pedestrianGapAcceptance })}`)
   assert(norms.gbfsStations >= 9 && norms.gbfsStationInfo === norms.gbfsStations && norms.gbfsStationStatus === norms.gbfsStations && norms.gbfsVehicleTypes >= 2 && norms.gbfsGeofences >= 2, `GBFS mobility feed shape is incomplete: ${JSON.stringify({ stations: norms.gbfsStations, info: norms.gbfsStationInfo, status: norms.gbfsStationStatus, types: norms.gbfsVehicleTypes, geofences: norms.gbfsGeofences })}`)
   assert(norms.smartCurbZones >= 20 && norms.smartTrafficFlows >= 12 && norms.smartDataModels.includes('TrafficFlowObserved') && norms.smartDataModels.includes('ParkingSpot'), `SmartCities transport data model coverage is incomplete: ${JSON.stringify(norms.smartDataModels)}`)
@@ -1353,7 +1376,7 @@ async function inspectWalkingEscort(page) {
       heading,
       activity: 'available for walking directions',
       placeName: `${target.road.name} sidewalk`,
-      speedScale: 4.2,
+      speedScale: 5.8,
     })
     window.__REALCITY_PLAYER_RIG__?.debugPlace?.({
       x: target.start.x + Math.sin(heading + Math.PI / 2) * 6.2,
@@ -1446,7 +1469,7 @@ async function inspectWalkingEscort(page) {
 
   const progress = []
   const started = Date.now()
-  while (Date.now() - started < 110000) {
+  while (Date.now() - started < 180000) {
     const state = await page.evaluate(({ agentId }) => {
       const store = window.__REALCITY_STORE__?.getState()
       const mission = store?.mission || null
@@ -1543,6 +1566,39 @@ async function inspectCollisionAndMaterials(page) {
     const state = window.__REALCITY_STORE__?.getState()
     return state?.pedestrianSamples?.length > 80 && state?.vehicleSamples?.length > 80
   }, null, { timeout: 15000 })
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_PLAYER_RIG__?.debugPlace &&
+    !!window.__REALCITY_NPC_DEBUG__?.placeNpc
+  , null, { timeout: 10000 })
+
+  const socialSetup = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const sample = (store?.pedestrianSamples || [])
+      .find(item => item.id && !/taxi|riding|fallen|stumbling|boarding/i.test(item.state || ''))
+    if (!sample?.id || !window.__REALCITY_PLAYER_RIG__?.debugPlace || !window.__REALCITY_NPC_DEBUG__?.placeNpc) return null
+    const player = { x: 0, z: 40, heading: Math.PI }
+    window.__REALCITY_PLAYER_RIG__.debugPlace(player)
+    window.__REALCITY_NPC_DEBUG__.placeNpc({
+      id: sample.id,
+      x: player.x + 5.4,
+      z: player.z + 1.2,
+      heading: -Math.PI / 2,
+      activity: 'standing and noticing the player',
+      placeName: 'Central Core plaza',
+      talkSeconds: 5,
+      speedScale: 1,
+    })
+    return { agentId: sample.id }
+  })
+  if (socialSetup?.agentId) {
+    await page.waitForFunction(agentId => {
+      const sample = (window.__REALCITY_STORE__?.getState()?.pedestrianSamples || []).find(item => item.id === agentId)
+      return sample &&
+        sample.playerDistance < 8 &&
+        ['glancing-at-player', 'turning-toward-player'].includes(sample.socialReaction) &&
+        typeof sample.facingPlayerAngle === 'number'
+    }, socialSetup.agentId, { timeout: 10000 }).catch(() => {})
+  }
 
   const result = await page.evaluate(() => {
     const state = window.__REALCITY_STORE__?.getState()
@@ -1557,7 +1613,7 @@ async function inspectCollisionAndMaterials(page) {
     }
     const pedestrianRoadViolations = city
       ? samples.filter(sample => {
-          if (['fallen', 'stumbling', 'boarding taxi', 'riding with player'].includes(sample.state)) return false
+          if (/taxi|riding|boarding/i.test(sample.state || '') || ['fallen', 'stumbling'].includes(sample.state)) return false
           return (city.roads || []).some(road => {
             if (road.axis === 'x') {
               if (sample.x < road.from || sample.x > road.to) return false
@@ -1627,10 +1683,14 @@ async function inspectCollisionAndMaterials(page) {
       vehicleSignalIntentSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.driverReaction).length,
       vehicleStopBarSamples: (state?.vehicleSamples || []).filter(sample => sample.signalStopRule && typeof sample.stopBarDistance === 'number' && sample.stopBarDistance <= 36).length,
       vehicleSignalPhaseSamples: (state?.vehicleSamples || []).filter(sample => ['green', 'yellow', 'all-red'].includes(sample.signalPhase)).length,
+      vehicleActuatedSignalSamples: (state?.vehicleSamples || []).filter(sample => sample.signalModel === 'SUMO-inspired actuated tlLogic' && typeof sample.signalCycleSeconds === 'number').length,
+      vehicleActuatedGreenSamples: (state?.vehicleSamples || []).filter(sample => typeof sample.actuatedGreenSeconds === 'number' && sample.detectorPressure).length,
       vehicleSumoLinkSamples: (state?.vehicleSamples || []).filter(sample => sample.sumoState && sample.sumoVehicleLinkState && sample.signalPhaseId).length,
       vehicleRightOfWaySamples: (state?.vehicleSamples || []).filter(sample => sample.rightOfWay && Array.isArray(sample.gatsimDecisionSignals) && sample.gatsimDecisionSignals.includes('traffic flow observed')).length,
       vehicleSmartCurbSamples: (state?.vehicleSamples || []).filter(sample => sample.smartCityCurbRule && sample.gbfsNearbyDockCount >= 9).length,
       vehicleSignalSideSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.signalSide && typeof sample.signalLampCount === 'number').length,
+      vehicleTurnIntentSamples: (state?.vehicleSamples || []).filter(sample => ['straight', 'left', 'right'].includes(sample.turnIntent) && sample.turnLaneRule && sample.laneRule && typeof sample.turnSignalDistanceMeters === 'number').length,
+      vehicleActiveTurnSignalSamples: (state?.vehicleSamples || []).filter(sample => sample.turnSignalActive && ['turn-left', 'turn-right'].includes(sample.signalIntent)).length,
       vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
       vehicleDriverCabinSamples: (state?.vehicleSamples || []).filter(sample => sample.driverCabinCue === 'visible-driver-hands-wheel' && ['hands-on-wheel', 'braking-forward-lean', 'checking-curb-mirror'].includes(sample.driverPose)).length,
       trafficRendering: window.__REALCITY_TRAFFIC_RENDERING__ || null,
@@ -1661,15 +1721,18 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleSignalIntentSamples >= 1, `No vehicles expose turn/hazard signal intent: ${result.vehicleSignalIntentSamples}`)
   assert(result.vehicleStopBarSamples >= 1, `No vehicles expose SUMO-style stop-bar signal stopping: ${result.vehicleStopBarSamples}`)
   assert(result.vehicleSignalPhaseSamples === result.vehicleSamples, `Vehicle signal phase metadata is incomplete: ${result.vehicleSignalPhaseSamples}/${result.vehicleSamples}`)
+  assert(result.vehicleActuatedSignalSamples === result.vehicleSamples && result.vehicleActuatedGreenSamples >= 1, `Vehicle actuated signal telemetry is incomplete: ${JSON.stringify({ all: result.vehicleActuatedSignalSamples, green: result.vehicleActuatedGreenSamples, samples: result.vehicleSamples })}`)
   assert(result.vehicleSumoLinkSamples === result.vehicleSamples, `Vehicle SUMO link-state metadata is incomplete: ${result.vehicleSumoLinkSamples}/${result.vehicleSamples}`)
   assert(result.vehicleRightOfWaySamples === result.vehicleSamples, `Vehicle GATSim decision signal metadata is incomplete: ${result.vehicleRightOfWaySamples}/${result.vehicleSamples}`)
   assert(result.vehicleSmartCurbSamples === result.vehicleSamples, `Vehicle SmartCity curb/GBFS context is incomplete: ${result.vehicleSmartCurbSamples}/${result.vehicleSamples}`)
   assert(result.vehicleSignalSideSamples >= result.vehicleSignalIntentSamples, `Vehicle signal side/lamp metadata is incomplete: ${result.vehicleSignalSideSamples}/${result.vehicleSignalIntentSamples}`)
+  assert(result.vehicleTurnIntentSamples === result.vehicleSamples && result.vehicleActiveTurnSignalSamples >= 1, `Vehicle turn-intent/lane telemetry is incomplete: ${JSON.stringify({ turn: result.vehicleTurnIntentSamples, active: result.vehicleActiveTurnSignalSamples, samples: result.vehicleSamples })}`)
   assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleDriverCabinSamples === result.vehicleSamples, `Visible driver cabin metadata is incomplete: ${result.vehicleDriverCabinSamples}/${result.vehicleSamples}`)
   assert(result.trafficRendering?.vehicleBase === 'procedural-driver-visible-traffic', `Traffic rendering metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
   assert(['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'].every(part => result.trafficRendering?.cabinParts?.includes(part)), `Traffic driver cabin parts are incomplete: ${JSON.stringify(result.trafficRendering)}`)
-  assert(['hazard-all', 'right-side-pull-over', 'rear-caution'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['hazard-all', 'right-side-pull-over', 'rear-caution', 'left-side-turn', 'right-side-turn'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(/actuat/i.test(result.trafficRendering?.signalActuation || '') && /turn/i.test(result.trafficRendering?.turnIntentRendering || ''), `Traffic rendering did not expose actuated signals and turn intents: ${JSON.stringify(result.trafficRendering)}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
@@ -1898,7 +1961,7 @@ async function inspectCrosswalkSignalCompliance(page) {
   }
 
   assert(waiting.sample?.crosswalkWaiting && waiting.eventText, `NPC did not wait for vehicle green at the curb: ${JSON.stringify(waiting)}`)
-  assert(waiting.sample.crosswalkNoStart === true && waiting.sample.crosswalkProgram === 'SUMO_TL_LOGIC' && typeof waiting.sample.crosswalkCountdown === 'number', `NPC crosswalk wait did not expose SUMO no-start/countdown metadata: ${JSON.stringify(waiting.sample)}`)
+  assert(waiting.sample.crosswalkNoStart === true && ['SUMO_TL_LOGIC', 'SUMO_ACTUATED_TL_LOGIC'].includes(waiting.sample.crosswalkProgram) && typeof waiting.sample.crosswalkCountdown === 'number', `NPC crosswalk wait did not expose SUMO no-start/countdown metadata: ${JSON.stringify(waiting.sample)}`)
   assert(waiting.sample.crosswalkControl === 'traffic-light' && /SUMO tlLogic/i.test(waiting.sample.crosswalkPriorityRule || ''), `NPC crosswalk sample did not expose crossing control rules: ${JSON.stringify(waiting.sample)}`)
   assert(crossing.sample && !crossing.sample.crosswalkWaiting, `NPC did not leave the curb when the crossed vehicle axis turned red: ${JSON.stringify(crossing)}`)
   return {

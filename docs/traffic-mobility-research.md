@@ -10,9 +10,9 @@ This note tracks the traffic-rule pass for RealCity.
     optional all-red clearance before the next green phase.
   - Adopted: signal states as whole-intersection phases, not isolated lamp
     toggles.
-  - Adopted: detector-ready controllers. Each main intersection now exposes
-    induction-loop-style detector records and pressure fields so static timing
-    can later become actuated without changing the data contract.
+  - Adopted: detector-driven controllers. Each main intersection exposes
+    induction-loop-style detector records and pressure fields, and those
+    pressures now change green durations at runtime.
 - Eclipse SUMO pedestrians:
   https://eclipse.dev/sumo/docs/Simulation/Pedestrians.html
   - Adopted: sidewalks, walking areas, and crossings are distinct routing
@@ -43,7 +43,7 @@ This note tracks the traffic-rule pass for RealCity.
 
 ## RealCity Application
 
-- Vehicle signals now use a SUMO-inspired static cycle:
+- Vehicle signals now use a SUMO-inspired actuated cycle:
   - X-axis protected green
   - X-axis yellow clearance
   - all-red clearance
@@ -67,7 +67,15 @@ This note tracks the traffic-rule pass for RealCity.
 - Roads now carry lane and pedestrian policies: right-hand lane direction,
   sidewalk permissions, crossing control type, and gap-acceptance seconds.
 - Main intersection controllers now include four SUMO-style detector records
-  and an actuation-ready policy keyed to `TrafficFlowObserved` pressure.
+  and an active actuation policy keyed to `TrafficFlowObserved` pressure.
+- The detector policy now actively changes protected green durations: X/Z axis
+  green time is recomputed from `TrafficFlowObserved` intensity, occupancy,
+  headway, gap distance, and queue estimates while preserving yellow and
+  all-red clearance.
+- Main/local road lane models now expose turn-lane policy, turn-signal
+  distance, and turn-pocket length. Vehicle runtime samples carry straight/
+  left/right intent, chosen lane rule, turn decision distance, and amber signal
+  side before intersections.
 - NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
   gap-clear status, and nearest approaching vehicle when a conservative gap
   wait is triggered.
@@ -98,8 +106,7 @@ This note tracks the traffic-rule pass for RealCity.
 
 ## Next Traffic Targets
 
-- Add explicit turn lanes and turn intentions.
-- Use the new detector-like pressure to actually extend/shorten green splits
-  in high-traffic areas.
 - Add visible dock lock/hand pose animation and conflict handling when another
   NPC takes a reserved return slot.
+- Render painted turn-pocket markings and per-lane arrow stencils that match
+  the new turn-intent telemetry.

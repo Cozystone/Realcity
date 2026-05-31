@@ -42,17 +42,17 @@ audit has a clear finish line.
   for pedestrian/traffic/address rules; NPCs wait at curb approaches while the
   crossed vehicle axis has green/yellow and enter the crosswalk only when that
   vehicle axis turns red.
-- Traffic signal law: main intersections use a SUMO-inspired static `tlLogic`
-  sequence with protected green, yellow clearance, all-red clearance, stop-bar
-  vehicle stopping, and protected pedestrian WALK instead of allowing ambiguous
-  simultaneous starts.
+- Traffic signal law: main intersections use a SUMO-inspired actuated
+  `tlLogic` sequence with detector-pressure green durations, protected green,
+  yellow clearance, all-red clearance, stop-bar vehicle stopping, and protected
+  pedestrian WALK instead of allowing ambiguous simultaneous starts.
 - SUMO link model: the signal program must expose vehicle links, separate
   pedestrian crossing links, no-start clearance phases, countdown metadata,
   stop bars, and per-intersection controller records.
 - SUMO detector/gap model: each main intersection must expose four detector
-  records and an actuation-ready pressure policy; NPC crosswalk samples must
-  identify traffic-light, priority-zebra, or uncontrolled-gap control with
-  conservative vehicle-gap metadata.
+  records and an active pressure policy with computed green seconds; NPC
+  crosswalk samples must identify traffic-light, priority-zebra, or
+  uncontrolled-gap control with conservative vehicle-gap metadata.
 - Shared mobility and curb policy: the city exposes GBFS-shaped station
   information/status, vehicle types, geofencing zones, SmartCities-style curb
   and traffic-flow data models, and GATSim-style disruption policies that can
@@ -70,6 +70,9 @@ audit has a clear finish line.
 - Traffic visual reactions: vehicle samples expose brake-light intensity, amber
   caution/turn signals, and driver reaction text when yielding, stopping, or
   following another car.
+- Turn-lane behavior: roads expose right-hand turn-lane policy and vehicles
+  publish straight/left/right intent, turn signal distance, turn decision
+  distance, and active left/right signal-side telemetry.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - Place meaning: every landmark exposes a gameplay role, address, access plan,

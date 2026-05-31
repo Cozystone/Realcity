@@ -743,7 +743,7 @@ function roadForWaypoint(waypoint, roads = []) {
     null
 }
 
-function pedestrianSignalForCrossing(road, timeMinutes = 0, waypoint = null) {
+function pedestrianSignalForCrossing(road, timeMinutes = 0, waypoint = null, mobilitySystem = null) {
   const crossingControl = waypoint?.crossingControl || 'traffic-light'
   if (!road) return { vehicleSignal: 'unknown', walk: true, clearance: false, label: 'unsignalized crossing', crossingControl }
   if (crossingControl !== 'traffic-light') {
@@ -765,7 +765,7 @@ function pedestrianSignalForCrossing(road, timeMinutes = 0, waypoint = null) {
       label: crossingControl === 'priority-zebra' ? 'priority zebra gap' : 'uncontrolled clear gap',
     }
   }
-  const signal = pedestrianSignalForAxis(road.axis, timeMinutes)
+  const signal = pedestrianSignalForAxis(road.axis, timeMinutes, mobilitySystem)
   return {
     ...signal,
     crossingControl,
@@ -839,7 +839,7 @@ function currentWalkWaypoint(agent, target, roads = []) {
 
   const waypoint = route.waypoints[route.index] || target
   const crossingRoad = waypoint.routeMode === 'crosswalk-crossing' ? roadForWaypoint(waypoint, roads) : null
-  const crossingSignal = crossingRoad ? pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes, waypoint) : null
+  const crossingSignal = crossingRoad ? pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes, waypoint, useCityStore.getState().city?.mobilitySystem) : null
   agent.walkPlan = {
     mode: waypoint.routeMode || 'direct',
     targetName: route.targetName || target.name || 'destination',
@@ -953,13 +953,14 @@ function resolveAgentMovement(agent, previous, next, target, cityOrRoads) {
 }
 
 function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
+  const city = Array.isArray(cityOrRoads) ? null : cityOrRoads
   const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads?.roads
   const safeTarget = roads?.length ? pedestrianSafeTarget(target, agent.pos, roads) : target
   const waypoint = roads?.length ? currentWalkWaypoint(agent, safeTarget, roads) : safeTarget
   if (roads?.length && waypoint.routeMode === 'crosswalk-crossing') {
     const crossingRoad = roadForWaypoint(waypoint, roads)
     const store = useCityStore.getState()
-    const signal = pedestrianSignalForCrossing(crossingRoad, store.timeMinutes, waypoint)
+    const signal = pedestrianSignalForCrossing(crossingRoad, store.timeMinutes, waypoint, city?.mobilitySystem || store.city?.mobilitySystem)
     const gap = signal.requiresGap ? crossingVehicleGapStatus(crossingRoad, waypoint, store) : { clear: true }
     const alreadyInRoad = pedestrianInsideCrosswalkRoad(agent, crossingRoad)
     if ((!signal.walk || !gap.clear) && !alreadyInRoad) {
@@ -3159,9 +3160,9 @@ function distanceToSignalStop(car, pose, roads) {
   return nearest
 }
 
-function shouldStopForSignal(car, pose, roads, timeMinutes) {
-  const signal = trafficSignalForAxis(car.road.axis, timeMinutes)
-  const phase = trafficPhaseAt(timeMinutes)
+function shouldStopForSignal(car, pose, roads, timeMinutes, mobilitySystem = null) {
+  const signal = trafficSignalForAxis(car.road.axis, timeMinutes, mobilitySystem)
+  const phase = trafficPhaseAt(timeMinutes, mobilitySystem)
   if (signal === 'green') return null
   const stopDistance = distanceToSignalStop(car, pose, roads)
   if (signal === 'yellow') {
@@ -3262,10 +3263,30 @@ function pointInVehicleBody(pose, dim, point, padding = 0.72) {
   return Math.abs(localX) < dim.width / 2 + padding && Math.abs(localZ) < dim.length / 2 + padding
 }
 
-function vehicleSignalIntent(brakingReason, car, assignedPose) {
+function turnContextForCar(state, roads = []) {
+  const intent = state.car.turnIntent || 'straight'
+  const turnSignalDistance = state.car.turnSignalDistanceMeters || state.road.laneModel?.turnSignalDistanceMeters || 42
+  const stopDistance = distanceToSignalStop(state.trafficCar, state.pose, roads)
+  const active = intent !== 'straight' && Number.isFinite(stopDistance) && stopDistance > 0 && stopDistance <= turnSignalDistance
+  return {
+    intent,
+    direction: intent,
+    active,
+    distanceToDecision: Number.isFinite(stopDistance) ? Number(stopDistance.toFixed(2)) : null,
+    laneRule: state.car.turnLaneRule || state.road.laneModel?.turnLanePolicy || 'through-lane',
+    turnSignalDistanceMeters: turnSignalDistance,
+    turnPocketLengthMeters: state.road.laneModel?.turnPocketLengthMeters || null,
+    plannedSignalSide: state.car.plannedTurnSignalSide || null,
+    source: 'procedural turn intention + right-hand lane policy',
+  }
+}
+
+function vehicleSignalIntent(brakingReason, car, assignedPose, turnContext = null) {
   if (assignedPose && car.assignment) return 'service-pull-over'
   if (brakingReason === 'player-yield' || brakingReason === 'pedestrian-yield') return 'yield-hazard'
   if (brakingReason === 'player-contact') return 'collision-brake'
+  if (turnContext?.active && turnContext.direction === 'left') return 'turn-left'
+  if (turnContext?.active && turnContext.direction === 'right') return 'turn-right'
   if (brakingReason?.includes('signal')) return 'red-light-stop'
   if (brakingReason === 'following-vehicle') return 'following-gap'
   return null
@@ -3274,6 +3295,8 @@ function vehicleSignalIntent(brakingReason, car, assignedPose) {
 function vehicleSignalSide(signalIntent) {
   if (!signalIntent) return null
   if (signalIntent === 'service-pull-over') return 'right-side-pull-over'
+  if (signalIntent === 'turn-left') return 'left-side-turn'
+  if (signalIntent === 'turn-right') return 'right-side-turn'
   if (signalIntent === 'red-light-stop' || signalIntent === 'following-gap') return 'rear-caution'
   return 'hazard-all'
 }
@@ -3282,6 +3305,8 @@ function signalCornerActive(signalSide, corner) {
   if (!signalSide) return false
   if (signalSide === 'hazard-all') return true
   if (signalSide === 'right-side-pull-over') return corner === 'front-right' || corner === 'rear-right'
+  if (signalSide === 'left-side-turn') return corner === 'front-left' || corner === 'rear-left'
+  if (signalSide === 'right-side-turn') return corner === 'front-right' || corner === 'rear-right'
   if (signalSide === 'rear-caution') return corner === 'rear-left' || corner === 'rear-right'
   return false
 }
@@ -3326,10 +3351,12 @@ function Traffic({ cars, roads, mobilitySystem }) {
     window.__REALCITY_TRAFFIC_RENDERING__ = {
       vehicleBase: 'procedural-driver-visible-traffic',
       cabinParts: ['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'],
-      signalRules: ['hazard-all', 'right-side-pull-over', 'rear-caution'],
+      signalRules: ['hazard-all', 'right-side-pull-over', 'rear-caution', 'left-side-turn', 'right-side-turn'],
       behaviorCues: ['braking-forward-lean', 'checking-curb-mirror', 'hands-on-wheel'],
       vehicleCount: cars.length,
-      sumoProgram: mobilitySystem?.standards?.sumo?.reference || 'Eclipse SUMO static tlLogic',
+      sumoProgram: mobilitySystem?.standards?.sumo?.reference || 'Eclipse SUMO actuated tlLogic',
+      signalActuation: 'actuated TrafficFlowObserved detector pressure changes protected green durations at runtime',
+      turnIntentRendering: 'vehicles expose left/right/straight turn intent and blink amber side signals before intersections',
       gbfsStations: mobilitySystem?.gbfs?.stations?.length || 0,
       smartCityCurbZones: mobilitySystem?.smartCity?.curbZones?.length || 0,
       gatsimDisruptions: mobilitySystem?.gatsim?.disruptionEvents?.length || 0,
@@ -3365,9 +3392,10 @@ function Traffic({ cars, roads, mobilitySystem }) {
       const trafficCar = trafficState.trafficCar
       const playerContact = pointInVehicleBody(currentPose, dim, store.player, 0.74)
       const hazard = assignedPose ? null : shouldYieldToPedestrian(trafficCar, currentPose, pedestrians)
-      const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes)
-      const phase = trafficPhaseAt(store.timeMinutes)
+      const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes, mobilitySystem)
+      const phase = trafficPhaseAt(store.timeMinutes, mobilitySystem)
       const follow = assignedPose ? null : frontVehicleFor(trafficState, trafficStates)
+      const turnContext = assignedPose ? null : turnContextForCar(trafficState, roads)
       const brakingReason = playerContact
         ? 'player-contact'
         : signalStop
@@ -3378,7 +3406,7 @@ function Traffic({ cars, roads, mobilitySystem }) {
               ? 'following-vehicle'
               : null
       const shouldBrake = !assignedPose && !!brakingReason
-      const signalIntent = vehicleSignalIntent(brakingReason, car, assignedPose)
+      const signalIntent = vehicleSignalIntent(brakingReason, car, assignedPose, turnContext)
       const signalSide = vehicleSignalSide(signalIntent)
       const signalBlink = !!signalIntent && Math.sin(state.clock.elapsedTime * 8.4 + car.phase) > -0.25
       car.brake = shouldBrake
@@ -3432,9 +3460,22 @@ function Traffic({ cars, roads, mobilitySystem }) {
         cruiseRoutePoints: car.cruisePath?.length || 0,
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
+        laneRule: trafficState.road.laneModel?.rule || car.laneRule,
+        turnIntent: turnContext?.intent || car.turnIntent || 'straight',
+        turnLaneRule: turnContext?.laneRule || car.turnLaneRule || null,
+        turnSignalDistanceMeters: turnContext?.turnSignalDistanceMeters || car.turnSignalDistanceMeters || trafficState.road.laneModel?.turnSignalDistanceMeters || null,
+        turnDecisionDistance: turnContext?.distanceToDecision ?? null,
+        turnSignalActive: !!turnContext?.active,
+        turnPocketLengthMeters: turnContext?.turnPocketLengthMeters || trafficState.road.laneModel?.turnPocketLengthMeters || null,
+        plannedTurnSignalSide: turnContext?.plannedSignalSide || car.plannedTurnSignalSide || null,
+        turnTelemetrySource: turnContext?.source || 'procedural turn intention',
         brakingReason,
         signalPhase: signalStop?.phase || phase.kind,
         signalPhaseId: phase.id,
+        signalModel: phase.signalModel || 'SUMO-inspired static tlLogic',
+        actuatedGreenSeconds: phase.actuationPolicy?.mode === 'actuated-detector-pressure' ? phase.duration : null,
+        detectorPressure: phase.detectorPressure || null,
+        signalCycleSeconds: Number((phase.cycleSeconds || 0).toFixed(2)),
         sumoState: phase.sumoState,
         sumoVehicleLinkState: phase.vehicleLinks?.[trafficState.road.axis] || 'r',
         sumoPedestrianLinks: phase.pedestrianLinks || null,

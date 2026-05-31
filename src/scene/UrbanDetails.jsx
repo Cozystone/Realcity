@@ -246,7 +246,7 @@ function StreetLights({ roads }) {
   )
 }
 
-function TrafficSignals({ roads }) {
+function TrafficSignals({ roads, mobilitySystem }) {
   const poleRef = useRef()
   const headRef = useRef()
   const redRef = useRef()
@@ -271,12 +271,12 @@ function TrafficSignals({ roads }) {
     exposeRenderingMetadata({
       trafficSignals: {
         heads: signals.length,
-        controller: 'SUMO-inspired static tlLogic',
+        controller: 'SUMO-inspired actuated tlLogic',
         phases: SUMO_TL_LOGIC.map(phase => phase.id),
         program: SUMO_TL_LOGIC.map(phase => ({ id: phase.id, duration: phase.duration, state: phase.sumoState })),
         linkOrder: ['x_vehicle_forward', 'x_vehicle_reverse', 'z_vehicle_forward', 'z_vehicle_reverse', 'ped_cross_x', 'ped_cross_z'],
         pedestrianLinks: { crossX: 'ped_cross_x', crossZ: 'ped_cross_z' },
-        detectorPolicy: 'SUMO induction-loop-style pressure sensors are exposed on city intersection controllers for future actuated timing',
+        detectorPolicy: 'SUMO induction-loop-style pressure sensors actuate protected green duration from TrafficFlowObserved pressure',
         stopRule: 'vehicles stop at crosswalk stop bars on red/all-red; yellow decelerates when far and clears when close',
       },
     })
@@ -302,14 +302,14 @@ function TrafficSignals({ roads }) {
   useFrame(() => {
     if (!redRef.current || !yellowRef.current || !greenRef.current) return
     const timeMinutes = useCityStore.getState().timeMinutes
-    const phase = trafficPhaseAt(timeMinutes)
+    const phase = trafficPhaseAt(timeMinutes, mobilitySystem)
     const dummy = new THREE.Object3D()
     let redHeads = 0
     let yellowHeads = 0
     let greenHeads = 0
     for (let i = 0; i < signals.length; i += 1) {
       const signal = signals[i]
-      const state = trafficSignalForAxis(signal.axis, timeMinutes)
+      const state = trafficSignalForAxis(signal.axis, timeMinutes, mobilitySystem)
       if (state === 'red') redHeads += 1
       if (state === 'yellow') yellowHeads += 1
       if (state === 'green') greenHeads += 1
@@ -330,6 +330,10 @@ function TrafficSignals({ roads }) {
         currentPhase: phase.kind,
         currentPhaseId: phase.id,
         currentLabel: phase.label,
+        signalModel: phase.signalModel,
+        cycleSeconds: Number((phase.cycleSeconds || 0).toFixed(2)),
+        actuatedGreenSeconds: phase.actuationPolicy?.mode === 'actuated-detector-pressure' ? phase.duration : null,
+        detectorPressure: phase.detectorPressure,
         sumoState: phase.sumoState,
         vehicleLinks: phase.vehicleLinks,
         pedestrianLinks: phase.pedestrianLinks,
@@ -367,7 +371,7 @@ function TrafficSignals({ roads }) {
   )
 }
 
-function PedestrianSignals({ roads }) {
+function PedestrianSignals({ roads, mobilitySystem }) {
   const poleRef = useRef()
   const headRef = useRef()
   const waitRef = useRef()
@@ -398,7 +402,7 @@ function PedestrianSignals({ roads }) {
         heads: signals.length,
         labeledHeads: Math.min(24, signals.length),
         placement: 'curb-side crosswalk approach heads',
-        rule: 'WALK lights activate only during the protected phase where the crossed vehicle axis is red; yellow/all-red are clearance waits',
+        rule: 'WALK lights activate only during the actuated protected phase where the crossed vehicle axis is red; yellow/all-red are clearance waits',
       },
     })
   }, [signals.length])
@@ -429,7 +433,7 @@ function PedestrianSignals({ roads }) {
     let clearanceHeads = 0
     for (let i = 0; i < signals.length; i += 1) {
       const signal = signals[i]
-      const pedestrianSignal = pedestrianSignalForAxis(signal.crossedAxis, timeMinutes)
+      const pedestrianSignal = pedestrianSignalForAxis(signal.crossedAxis, timeMinutes, mobilitySystem)
       const canWalk = pedestrianSignal.walk
       if (canWalk) walkHeads += 1
       else {
@@ -452,6 +456,7 @@ function PedestrianSignals({ roads }) {
           walkHeads,
           waitHeads,
           clearanceHeads,
+          signalModel: trafficPhaseAt(timeMinutes, mobilitySystem).signalModel,
           liveSignalCoupling: 'protected-walk-only-when-crossed-road-vehicle-red-and-opposing-axis-green',
         },
       })
@@ -1602,8 +1607,8 @@ export default function UrbanDetails({ city }) {
     <>
       <Crosswalks roads={city.roads} />
       <StreetLights roads={city.roads} />
-      <TrafficSignals roads={city.roads} />
-      <PedestrianSignals roads={city.roads} />
+      <TrafficSignals roads={city.roads} mobilitySystem={city.mobilitySystem} />
+      <PedestrianSignals roads={city.roads} mobilitySystem={city.mobilitySystem} />
       <LaneReflectors roads={city.roads} />
       <RoadNameSigns roads={city.roads} />
       <TransitAndTaxiStops roads={city.roads} />
