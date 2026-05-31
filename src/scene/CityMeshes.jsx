@@ -8,6 +8,7 @@ import {
   CITY_WORLD_SIZE,
   ROAD_SPACING,
   ROAD_WIDTH,
+  TILE_SIZE,
   terrainHeight,
   terrainTone,
 } from '../engine/cityEngine'
@@ -1410,6 +1411,55 @@ function Landmark({ place }) {
   )
 }
 
+function TileStreamingTelemetry({ city }) {
+  const clock = useRef(0)
+
+  useFrame((_, delta) => {
+    if (typeof window === 'undefined' || !import.meta.env.DEV) return
+    clock.current += delta
+    if (clock.current < 0.32) return
+    clock.current = 0
+    const player = useCityStore.getState().player || { x: 0, z: 0 }
+    const tiles = city.tiles || []
+    const ranked = tiles
+      .map(tile => {
+        const dx = (tile.center?.x || 0) - player.x
+        const dz = (tile.center?.z || 0) - player.z
+        const distance = Math.hypot(dx, dz)
+        const lod = distance < TILE_SIZE * 1.15
+          ? 'near-detail'
+          : distance < TILE_SIZE * 2.45
+            ? 'mid-massing'
+            : 'far-shell'
+        const visible = distance < TILE_SIZE * 4.2
+        return {
+          id: tile.id,
+          distance: Number(distance.toFixed(1)),
+          lod,
+          visible,
+          contentUri: tile.contentUri,
+          geometricError: tile.geometricError,
+          featureCount: tile.content?.metadata?.properties?.featureCount || ((tile.buildings?.length || 0) + (tile.landmarks?.length || 0)),
+        }
+      })
+      .sort((a, b) => a.distance - b.distance)
+    window.__REALCITY_TILE_STREAMING__ = {
+      tilesetVersion: city.tileset?.asset?.tilesetVersion || null,
+      schemaId: city.tileset?.schema?.id || null,
+      totalTiles: tiles.length,
+      visibleTiles: ranked.filter(tile => tile.visible).length,
+      nearTiles: ranked.filter(tile => tile.lod === 'near-detail').length,
+      midTiles: ranked.filter(tile => tile.lod === 'mid-massing').length,
+      farTiles: ranked.filter(tile => tile.lod === 'far-shell').length,
+      nearest: ranked.slice(0, 8),
+      boundingVolumeType: city.tileset?.root?.boundingVolume?.box ? 'box' : 'missing',
+      runtimeRule: 'near tiles keep detailed facade/landmark content, mid tiles are massing candidates, far tiles are shell/aggregate candidates',
+    }
+  })
+
+  return null
+}
+
 export default function CityMeshes({ city }) {
   const terrain = useMemo(() => makeTerrainGeometry(), [])
   const roads = useMemo(() => makeRoadGeometry(city.roads), [city.roads])
@@ -1437,6 +1487,7 @@ export default function CityMeshes({ city }) {
       <Buildings buildings={city.buildings} />
       <Trees trees={city.trees} />
       {city.landmarks.map(place => <Landmark key={place.id} place={place} />)}
+      <TileStreamingTelemetry city={city} />
     </>
   )
 }

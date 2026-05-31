@@ -1182,27 +1182,201 @@ function createNPCs(rng, buildings, landmarks, roads) {
   })
 }
 
-function createTiles(buildings, landmarks) {
+function createTiles(buildings, landmarks, roads = []) {
   const tiles = new Map()
   const placeInTile = (item) => `${Math.floor((item.x + CITY_HALF) / TILE_SIZE)}:${Math.floor((item.z + CITY_HALF) / TILE_SIZE)}`
+  const emptyBounds = () => ({ minX: Infinity, minY: CITY_BASE_Y, minZ: Infinity, maxX: -Infinity, maxY: CITY_BASE_Y, maxZ: -Infinity })
+  const expand = (bounds, item) => {
+    const width = item.w || item.interior?.width || item.form?.width || 12
+    const depth = item.d || item.interior?.depth || item.form?.depth || 12
+    const height = item.h || item.interior?.height || item.form?.height || 8
+    bounds.minX = Math.min(bounds.minX, item.x - width / 2)
+    bounds.maxX = Math.max(bounds.maxX, item.x + width / 2)
+    bounds.minZ = Math.min(bounds.minZ, item.z - depth / 2)
+    bounds.maxZ = Math.max(bounds.maxZ, item.z + depth / 2)
+    bounds.minY = Math.min(bounds.minY, item.y || CITY_BASE_Y)
+    bounds.maxY = Math.max(bounds.maxY, (item.y || CITY_BASE_Y) + height)
+  }
+  const ensureTile = key => {
+    if (!tiles.has(key)) {
+      const [, gxText, gzText] = key.match(/^tile_(\d+)_(\d+)$/) || []
+      const gx = Number(gxText)
+      const gz = Number(gzText)
+      const minX = Number.isFinite(gx) ? gx * TILE_SIZE - CITY_HALF : -CITY_HALF
+      const minZ = Number.isFinite(gz) ? gz * TILE_SIZE - CITY_HALF : -CITY_HALF
+      tiles.set(key, {
+        id: key,
+        buildings: [],
+        landmarks: [],
+        roadSegments: [],
+        terrainPatchCount: 1,
+        bounds: { minX, minY: CITY_BASE_Y, minZ, maxX: minX + TILE_SIZE, maxY: CITY_BASE_Y + 1, maxZ: minZ + TILE_SIZE },
+        contentBounds: emptyBounds(),
+      })
+    }
+    return tiles.get(key)
+  }
+
+  const tileSpan = Math.ceil(CITY_WORLD_SIZE / TILE_SIZE)
+  for (let gx = 0; gx < tileSpan; gx += 1) {
+    for (let gz = 0; gz < tileSpan; gz += 1) {
+      ensureTile(`tile_${gx}_${gz}`)
+    }
+  }
 
   for (const building of buildings) {
-    const key = placeInTile(building)
-    if (!tiles.has(key)) tiles.set(key, { id: `tile_${key.replace(':', '_')}`, buildings: [], landmarks: [], bounds: null })
-    tiles.get(key).buildings.push(building.id)
+    const key = `tile_${placeInTile(building).replace(':', '_')}`
+    const tile = ensureTile(key)
+    tile.buildings.push(building.id)
+    expand(tile.contentBounds, building)
   }
 
   for (const landmark of landmarks) {
-    const key = placeInTile(landmark)
-    if (!tiles.has(key)) tiles.set(key, { id: `tile_${key.replace(':', '_')}`, buildings: [], landmarks: [], bounds: null })
-    tiles.get(key).landmarks.push(landmark.id)
+    const key = `tile_${placeInTile(landmark).replace(':', '_')}`
+    const tile = ensureTile(key)
+    tile.landmarks.push(landmark.id)
+    expand(tile.contentBounds, landmark)
   }
 
-  return [...tiles.values()].map(tile => ({
-    ...tile,
-    format: 'procedural-3d-tile',
-    geometricError: tile.buildings.length > 30 ? 64 : 32,
-  }))
+  const roadIntersectsTile = (road, bounds) => {
+    const halfWidth = (road.width || ROAD_WIDTH) / 2
+    if (road.axis === 'x') {
+      return road.z + halfWidth >= bounds.minZ &&
+        road.z - halfWidth <= bounds.maxZ &&
+        road.to >= bounds.minX &&
+        road.from <= bounds.maxX
+    }
+    return road.x + halfWidth >= bounds.minX &&
+      road.x - halfWidth <= bounds.maxX &&
+      road.to >= bounds.minZ &&
+      road.from <= bounds.maxZ
+  }
+
+  for (const road of roads) {
+    for (const tile of tiles.values()) {
+      if (roadIntersectsTile(road, tile.bounds)) tile.roadSegments.push(road.id)
+    }
+  }
+
+  return [...tiles.values()].map(tile => {
+    const content = tile.contentBounds.minX === Infinity ? tile.bounds : tile.contentBounds
+    const bounds = {
+      minX: Math.min(tile.bounds.minX, content.minX),
+      minY: CITY_BASE_Y,
+      minZ: Math.min(tile.bounds.minZ, content.minZ),
+      maxX: Math.max(tile.bounds.maxX, content.maxX),
+      maxY: Math.max(tile.bounds.maxY, content.maxY),
+      maxZ: Math.max(tile.bounds.maxZ, content.maxZ),
+    }
+    const center = {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+      z: (bounds.minZ + bounds.maxZ) / 2,
+    }
+    const half = {
+      x: Math.max(1, (bounds.maxX - bounds.minX) / 2),
+      y: Math.max(1, (bounds.maxY - bounds.minY) / 2),
+      z: Math.max(1, (bounds.maxZ - bounds.minZ) / 2),
+    }
+    const terrainPatchCount = tile.terrainPatchCount || 0
+    const roadSegmentCount = tile.roadSegments.length
+    const featureCount = tile.buildings.length + tile.landmarks.length + roadSegmentCount + terrainPatchCount
+    return {
+      ...tile,
+      bounds,
+      center,
+      halfAxes: half,
+      boundingVolume: {
+        box: [center.x, center.y, center.z, half.x, 0, 0, 0, half.y, 0, 0, 0, half.z],
+      },
+      format: '3d-tiles-1.1-procedural-content',
+      contentUri: `realcity://${tile.id}.glb`,
+      content: {
+        uri: `realcity://${tile.id}.glb`,
+        metadata: {
+          class: 'ProceduralCityTile',
+          properties: {
+            buildingCount: tile.buildings.length,
+            landmarkCount: tile.landmarks.length,
+            roadSegmentCount,
+            terrainPatchCount,
+            featureCount,
+            lod: featureCount > 36 ? 'near-detail' : featureCount > 14 ? 'mid-massing' : 'far-shell',
+          },
+        },
+      },
+      geometricError: featureCount > 36 ? 64 : featureCount > 14 ? 96 : 128,
+      refine: featureCount > 28 ? 'REPLACE' : 'ADD',
+    }
+  }).sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function createTileset(tiles) {
+  const bounds = tiles.reduce((acc, tile) => ({
+    minX: Math.min(acc.minX, tile.bounds.minX),
+    minY: Math.min(acc.minY, tile.bounds.minY),
+    minZ: Math.min(acc.minZ, tile.bounds.minZ),
+    maxX: Math.max(acc.maxX, tile.bounds.maxX),
+    maxY: Math.max(acc.maxY, tile.bounds.maxY),
+    maxZ: Math.max(acc.maxZ, tile.bounds.maxZ),
+  }), { minX: Infinity, minY: CITY_BASE_Y, minZ: Infinity, maxX: -Infinity, maxY: CITY_BASE_Y + 1, maxZ: -Infinity })
+  const center = {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+    z: (bounds.minZ + bounds.maxZ) / 2,
+  }
+  const half = {
+    x: Math.max(1, (bounds.maxX - bounds.minX) / 2),
+    y: Math.max(1, (bounds.maxY - bounds.minY) / 2),
+    z: Math.max(1, (bounds.maxZ - bounds.minZ) / 2),
+  }
+  return {
+    asset: {
+      version: '1.1',
+      tilesetVersion: 'realcity-procedural-2026.05',
+      generator: 'RealCity procedural city engine',
+    },
+    geometricError: 512,
+    schema: {
+      id: 'RealCityTiles',
+      classes: {
+        ProceduralCityTile: {
+          properties: {
+            buildingCount: { type: 'SCALAR', componentType: 'UINT16' },
+            landmarkCount: { type: 'SCALAR', componentType: 'UINT16' },
+            roadSegmentCount: { type: 'SCALAR', componentType: 'UINT16' },
+            terrainPatchCount: { type: 'SCALAR', componentType: 'UINT16' },
+            featureCount: { type: 'SCALAR', componentType: 'UINT16' },
+            lod: { type: 'STRING' },
+          },
+        },
+      },
+    },
+    root: {
+      boundingVolume: {
+        box: [center.x, center.y, center.z, half.x, 0, 0, 0, half.y, 0, 0, 0, half.z],
+      },
+      geometricError: 512,
+      refine: 'REPLACE',
+      metadata: {
+        class: 'ProceduralCityTile',
+        properties: {
+          buildingCount: tiles.reduce((sum, tile) => sum + tile.buildings.length, 0),
+          landmarkCount: tiles.reduce((sum, tile) => sum + tile.landmarks.length, 0),
+          roadSegmentCount: tiles.reduce((sum, tile) => sum + tile.roadSegments.length, 0),
+          terrainPatchCount: tiles.reduce((sum, tile) => sum + (tile.terrainPatchCount || 0), 0),
+          featureCount: tiles.reduce((sum, tile) => sum + tile.content.metadata.properties.featureCount, 0),
+          lod: 'root',
+        },
+      },
+      children: tiles.map(tile => ({
+        boundingVolume: tile.boundingVolume,
+        geometricError: tile.geometricError,
+        refine: tile.refine,
+        content: tile.content,
+      })),
+    },
+  }
 }
 
 function worldToLngLat(x, z) {
@@ -1268,7 +1442,8 @@ export function createRealCity(seed = 20260525) {
   const cars = createTraffic(rng, roads)
   const npcs = createNPCs(rng, buildings, landmarks, roads)
   const addressBook = createAddressBook(buildings, roads)
-  const tiles = createTiles(buildings, landmarks)
+  const tiles = createTiles(buildings, landmarks, roads)
+  const tileset = createTileset(tiles)
   const geojson = createGeoJSON(roads, landmarks)
   const getNearbyBuildings = buildCollisionIndex(buildings)
 
@@ -1282,6 +1457,7 @@ export function createRealCity(seed = 20260525) {
     cars,
     npcs,
     tiles,
+    tileset,
     geojson,
     worldToLngLat,
     districtAt,
@@ -1319,7 +1495,7 @@ export function createRealCity(seed = 20260525) {
     },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',
-      cesium3DTiles: `${tiles.length} procedural tiles with 3D Tiles-style metadata`,
+      cesium3DTiles: `${tiles.length} procedural tiles with 3D Tiles 1.1 bounding volumes, content URIs, metadata schema, and runtime LOD telemetry`,
       tripo3D: `${landmarks.length} landmark prompts ready for asset replacement`,
     },
   }

@@ -45,6 +45,9 @@ audit has a clear finish line.
   sequence with protected green, yellow clearance, all-red clearance, stop-bar
   vehicle stopping, and protected pedestrian WALK instead of allowing ambiguous
   simultaneous starts.
+- Procedural 3D Tiles: the city exposes a 3D Tiles 1.1-style tileset root,
+  child bounding volumes, procedural content URIs, terrain/road/building content
+  metadata schema, and runtime near/mid/far LOD telemetry for visible city tiles.
 - Pedestrian signals: crosswalk approaches expose visible curb-side WALK/WAIT
   signal heads, and their WALK state is coupled to the crossed vehicle axis
   being red.

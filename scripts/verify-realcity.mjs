@@ -467,6 +467,15 @@ async function inspectCityNorms(page) {
     const corridorTypes = new Set(city.buildings.map(building => building.interior?.corridorType).filter(Boolean))
     const carBodyStyles = new Set(city.cars.map(car => car.bodyStyle).filter(Boolean))
     const detailedCars = city.cars.filter(car => car.dimensions?.width > 0 && car.dimensions?.length > 0 && car.dimensions?.cabinLength > 0)
+    const proceduralTiles = city.tiles || []
+    const tilesWithBounds = proceduralTiles.filter(tile => tile.boundingVolume?.box?.length === 12 && tile.content?.uri && tile.bounds && tile.center && tile.halfAxes)
+    const tilesWithMetadata = proceduralTiles.filter(tile =>
+      tile.format === '3d-tiles-1.1-procedural-content' &&
+      tile.content?.metadata?.class === 'ProceduralCityTile' &&
+      tile.content.metadata.properties?.featureCount >= 1 &&
+      ['near-detail', 'mid-massing', 'far-shell'].includes(tile.content.metadata.properties?.lod)
+    )
+    const tileset = city.tileset || null
     const appearanceReady = city.npcs.filter(npc => npc.appearance?.heightScale && npc.appearance?.topColor && npc.appearance?.hairStyle)
     const heightVariants = new Set(city.npcs.map(npc => npc.appearance?.heightScale?.toFixed(2)).filter(Boolean))
     const fashionVariants = new Set(city.npcs.map(npc => `${npc.appearance?.topColor}:${npc.appearance?.jacketColor}:${npc.appearance?.bottomStyle}:${npc.appearance?.hatStyle}`))
@@ -522,6 +531,13 @@ async function inspectCityNorms(page) {
       floorNavigation: floorNavigation.length,
       interiorCoreTypes: interiorCoreTypes.size,
       corridorTypes: corridorTypes.size,
+      tileCount: proceduralTiles.length,
+      tilesWithBounds: tilesWithBounds.length,
+      tilesWithMetadata: tilesWithMetadata.length,
+      tilesetAssetVersion: tileset?.asset?.version || null,
+      tilesetRootChildren: tileset?.root?.children?.length || 0,
+      tilesetSchemaClasses: Object.keys(tileset?.schema?.classes || {}),
+      tilesetRootBoundingBox: tileset?.root?.boundingVolume?.box?.length || 0,
       buildingProfiles: formKeys(city.buildings),
       houseProfiles: formKeys(houses),
       houseRoofs: roofKeys(houses),
@@ -570,6 +586,10 @@ async function inspectCityNorms(page) {
   assert(norms.floorNavigation === norms.buildingCount, 'Procedural floor navigation metadata is incomplete')
   assert(norms.interiorCoreTypes >= 3, `Building vertical core types are not diverse enough: ${norms.interiorCoreTypes}`)
   assert(norms.corridorTypes >= 4, `Building corridor/interior layouts are not diverse enough: ${norms.corridorTypes}`)
+  assert(norms.tileCount >= 60, `Procedural 3D tile coverage is too sparse: ${norms.tileCount}`)
+  assert(norms.tilesWithBounds === norms.tileCount, `Procedural 3D tiles are missing bounding volumes/content URIs: ${norms.tilesWithBounds}/${norms.tileCount}`)
+  assert(norms.tilesWithMetadata === norms.tileCount, `Procedural 3D tile metadata schema is incomplete: ${norms.tilesWithMetadata}/${norms.tileCount}`)
+  assert(norms.tilesetAssetVersion === '1.1' && norms.tilesetRootChildren === norms.tileCount && norms.tilesetRootBoundingBox === 12 && norms.tilesetSchemaClasses.includes('ProceduralCityTile'), `3D Tiles tileset root/schema is incomplete: ${JSON.stringify(norms)}`)
   assert(norms.buildingRoadConflicts === 0, `${norms.buildingRoadConflicts} buildings overlap road reserves`)
   assert(norms.landmarkRoadConflicts === 0, `${norms.landmarkRoadConflicts} landmarks overlap road reserves: ${norms.landmarkRoadConflictIds.join(', ')}`)
   assert(norms.buildingProfiles.length >= 12, `Building massing profiles are not diverse enough: ${norms.buildingProfiles.join(', ')}`)
@@ -2232,6 +2252,47 @@ async function inspectStreetRendering(page) {
   return result
 }
 
+async function inspectTileStreaming(page) {
+  await page.waitForFunction(() => {
+    const city = window.__REALCITY_CITY__
+    const streaming = window.__REALCITY_TILE_STREAMING__
+    return city?.tileset?.asset?.version === '1.1' &&
+      streaming?.totalTiles === city.tiles?.length &&
+      streaming?.visibleTiles > 0 &&
+      streaming?.nearest?.length >= 4
+  }, null, { timeout: 12000 })
+
+  const result = await page.evaluate(() => {
+    const city = window.__REALCITY_CITY__
+    const streaming = window.__REALCITY_TILE_STREAMING__
+    return {
+      tileCount: city?.tiles?.length || 0,
+      tilesetVersion: city?.tileset?.asset?.version || null,
+      tilesetGenerator: city?.tileset?.asset?.generator || null,
+      schemaClasses: Object.keys(city?.tileset?.schema?.classes || {}),
+      rootChildren: city?.tileset?.root?.children?.length || 0,
+      rootBoundingBox: city?.tileset?.root?.boundingVolume?.box?.length || 0,
+      streaming,
+      sampleTiles: (city?.tiles || []).slice(0, 5).map(tile => ({
+        id: tile.id,
+        uri: tile.contentUri,
+        format: tile.format,
+        geometricError: tile.geometricError,
+        refine: tile.refine,
+        lod: tile.content?.metadata?.properties?.lod,
+        featureCount: tile.content?.metadata?.properties?.featureCount,
+      })),
+    }
+  })
+
+  assert(result.tileCount >= 60, `3D tile count is too low: ${JSON.stringify(result)}`)
+  assert(result.tilesetVersion === '1.1' && result.rootChildren === result.tileCount && result.rootBoundingBox === 12, `3D Tiles root is incomplete: ${JSON.stringify(result)}`)
+  assert(result.schemaClasses.includes('ProceduralCityTile'), `3D Tiles metadata schema is missing: ${JSON.stringify(result)}`)
+  assert(result.sampleTiles.every(tile => tile.uri?.startsWith('realcity://') && tile.format === '3d-tiles-1.1-procedural-content' && tile.featureCount > 0), `3D tile content metadata is incomplete: ${JSON.stringify(result.sampleTiles)}`)
+  assert(result.streaming?.schemaId === 'RealCityTiles' && result.streaming.visibleTiles > 0 && result.streaming.nearTiles >= 1 && /near tiles/i.test(result.streaming.runtimeRule || ''), `Runtime tile streaming telemetry is incomplete: ${JSON.stringify(result.streaming)}`)
+  return result
+}
+
 async function inspectAutomaticDoors(page) {
   const setup = await page.evaluate(() => {
     const city = window.__REALCITY_CITY__
@@ -2857,6 +2918,7 @@ async function main() {
     const socialReaction = await inspectDeterministicSocialReaction(page)
     const dailyRoutine = await inspectDailyRoutineTimeShift(page)
     const streetRendering = await inspectStreetRendering(page)
+    const tileStreaming = await inspectTileStreaming(page)
     const automaticDoors = await inspectAutomaticDoors(page)
     const interiorState = await inspectInteriorStateAndFloors(page)
     const playerPhysics = await inspectPlayerPhysicsAndCollision(page)
@@ -3190,6 +3252,7 @@ async function main() {
       socialReaction,
       dailyRoutine,
       streetRendering,
+      tileStreaming,
       automaticDoors,
       interiorState,
       playerPhysics,
