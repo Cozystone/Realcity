@@ -1986,6 +1986,10 @@ async function inspectLocalLlmAutonomy(page) {
       updatedLlmAutonomyThought: updated?.llmAutonomyThought || null,
       updatedLlmAutonomySource: updated?.llmAutonomySource || null,
       updatedLlmAutonomyLatencyMs: updated?.llmAutonomyLatencyMs ?? null,
+      updatedLlmAutonomyAction: updated?.llmAutonomyAction || null,
+      updatedLlmAutonomyExecuted: updated?.llmAutonomyExecuted ?? null,
+      updatedLlmAutonomyOutcome: updated?.llmAutonomyOutcome || null,
+      updatedLlmAutonomyTargetName: updated?.llmAutonomyTargetName || null,
     }
   })
 
@@ -1997,6 +2001,9 @@ async function inspectLocalLlmAutonomy(page) {
   assert(result.runtime?.lastPurpose === 'npc-autonomy' && result.runtime?.lastSource === 'local-llm' && result.runtime?.successes > 0, `NPC autonomous LLM runtime telemetry is incomplete: ${JSON.stringify(result.runtime)}`)
   assert(result.event?.text && /local-LLM intention/i.test(result.event.text), `NPC autonomous LLM event was not recorded: ${JSON.stringify(result.event)}`)
   assert(result.updatedLlmAutonomyThought && result.updatedLlmAutonomySource === 'local-llm-autonomy' && result.updatedLlmAutonomyLatencyMs > 0, `NPC autonomous LLM thought did not update agent telemetry: ${JSON.stringify(result)}`)
+  assert(result.autonomy?.action && result.autonomy?.execution?.action === result.autonomy.action, `NPC autonomous LLM did not expose an executable action: ${JSON.stringify(result.autonomy)}`)
+  assert(result.autonomy?.execution?.executed === true && result.updatedLlmAutonomyExecuted === true, `NPC autonomous LLM action did not execute through the simulator: ${JSON.stringify(result)}`)
+  assert(result.updatedLlmAutonomyAction === result.autonomy.action && result.updatedLlmAutonomyOutcome, `NPC autonomous LLM action telemetry did not reach pedestrian samples: ${JSON.stringify(result)}`)
   return { ...result, skipped: false, localLlmStatus }
 }
 

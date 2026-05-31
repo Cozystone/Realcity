@@ -665,6 +665,13 @@ function AgentCard({ agent, stats, pulse, llmRuntime }) {
           <small className="agent-life-route">Daily route: {lifeRoute.slice(0, 3).join(' -> ')}</small>
         ) : null}
         <LlmRuntimeLine stats={stats} runtime={llmRuntime} />
+        {agent.llmAutonomy?.action ? (
+          <div className="agent-llm-action" data-llm-action={agent.llmAutonomy.action}>
+            <span>LLM action</span>
+            <strong>{agent.llmAutonomy.action.replaceAll('_', ' ')}</strong>
+            <small>{agent.llmAutonomy.execution?.outcome || agent.llmAutonomy.targetName || 'queued'}</small>
+          </div>
+        ) : null}
         {agent.socialReaction ? <small>{agent.socialReaction.replaceAll('-', ' ')}</small> : null}
         {agent.currentIntent ? <small>{agent.currentIntent}</small> : null}
         {agent.memories?.[0]?.text ? <small>{agent.memories[0].text}</small> : null}

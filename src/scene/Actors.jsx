@@ -1531,6 +1531,41 @@ class Agent {
     return true
   }
 
+  startLlmDirectedErrand(place, detail = {}, timeMinutes = 0) {
+    if (!place?.id) return false
+    const label = detail.label || detail.actionLabel || 'local LLM errand'
+    this.needErrand = {
+      id: `${this.id}_llm_${place.id}_${Math.floor(timeMinutes)}`,
+      reason: 'local-llm',
+      label,
+      activity: detail.activity || `going to ${place.name}`,
+      targetId: place.id,
+      targetName: place.name,
+      startedAt: timeMinutes,
+      durationMinutes: 14 + (hashValue(`${this.id}_${place.id}`) % 14),
+      forced: true,
+      cognitiveReason: detail.reason || detail.thought || 'local LLM selected this executable city action',
+      cognitionPolicy: 'local-llm-autonomy',
+    }
+    this.walkRoute = null
+    this.walkPlan = null
+    this.selfTaxi = null
+    this.boardingTaxi = null
+    this.routeStatus = `local LLM directed errand to ${place.name}`
+    this.currentIntent = `${label} at ${place.name}`
+    this.remember('llm-action', `${detail.thought || this.currentIntent} Target: ${place.name}.`, this.placeName, 0.82)
+    useCityStore.getState().addCityEvent({
+      id: `llm_errand_${this.id}_${place.id}_${Date.now()}`,
+      kind: 'llm',
+      agentId: this.id,
+      agentName: this.name,
+      placeName: place.name,
+      topic: 'npc autonomy action',
+      text: `${this.name} turns a local-LLM decision into a real route toward ${place.name}.`,
+    })
+    return true
+  }
+
   updateNeedErrand(timeMinutes, places, roads = [], currentTarget = null) {
     if (this.needErrand) {
       if (this.selfTaxi) return
@@ -1905,6 +1940,7 @@ class Agent {
       relationshipCount: this.relationshipCount,
       lastInteraction: this.lastInteraction,
       currentIntent: this.currentIntent,
+      llmAutonomy: this.llmAutonomy,
       activity: this.activity,
       placeName: this.placeName,
       socialReaction: this.socialReaction,
@@ -1944,6 +1980,144 @@ class Agent {
       } : null,
     }
   }
+}
+
+function resolveAutonomyTargetPlace(result, places, scheduledTarget = null) {
+  const list = [...(places?.values?.() || [])]
+  if (result?.targetPlaceId) {
+    const byId = places.get(result.targetPlaceId) || list.find(place => place.id === result.targetPlaceId)
+    if (byId) return byId
+  }
+  if (result?.targetPlaceName) {
+    const name = String(result.targetPlaceName).toLowerCase()
+    const byName = list.find(place => String(place.name || '').toLowerCase().includes(name) || name.includes(String(place.name || '').toLowerCase()))
+    if (byName) return byName
+  }
+  if (result?.targetKind) {
+    const byKind = list.find(place => place.kind === result.targetKind)
+    if (byKind) return byKind
+  }
+  if (scheduledTarget?.id) return places.get(scheduledTarget.id) || null
+  return null
+}
+
+function nearestConversationPartner(agent, agents) {
+  return agents
+    .filter(item => item && item !== agent && !item.mission && !item.selfTaxi && item.talkTimer <= 0 && item.fallTimer <= 0)
+    .map(item => ({ item, distance: agent.pos.distanceTo(item.pos) }))
+    .filter(({ distance }) => distance <= 8.5)
+    .sort((a, b) => a.distance - b.distance)[0]?.item || null
+}
+
+function executeAutonomyAction(agent, result, context) {
+  const { agents, city, places, scheduledTarget, store, timeMinutes, reason } = context
+  const action = result?.action || 'continue_schedule'
+  const targetPlace = resolveAutonomyTargetPlace(result, places, scheduledTarget)
+  let executed = false
+  let outcome = 'observed'
+  let targetName = targetPlace?.name || scheduledTarget?.name || result?.targetPlaceName || ''
+
+  if (!result?.ok || agent.mission || agent.selfTaxi || agent.fallTimer > 0) {
+    outcome = result?.ok ? 'busy' : 'llm-fallback-only'
+  } else if (action === 'start_need_errand') {
+    const profile = needErrandProfile(agent)
+    if (profile && agent.startNeedErrand(profile, places, timeMinutes, true, agent.cognition)) {
+      executed = true
+      outcome = 'need-errand'
+      targetName = agent.needErrand?.targetName || targetName
+    } else if (targetPlace && agent.startLlmDirectedErrand(targetPlace, {
+      label: 'LLM errand',
+      activity: `checking ${targetPlace.name}`,
+      thought: result.text,
+      reason: result.reason,
+    }, timeMinutes)) {
+      executed = true
+      outcome = 'directed-errand'
+    } else {
+      outcome = 'no-errand-target'
+    }
+  } else if (action === 'visit_place') {
+    if (targetPlace && agent.startLlmDirectedErrand(targetPlace, {
+      label: 'LLM place visit',
+      activity: `visiting ${targetPlace.name}`,
+      thought: result.text,
+      reason: result.reason,
+    }, timeMinutes)) {
+      executed = true
+      outcome = 'directed-place-route'
+    } else {
+      outcome = 'no-place-target'
+    }
+  } else if (action === 'social_check_in') {
+    const partner = nearestConversationPartner(agent, agents)
+    if (partner) {
+      const topic = conversationTopicFor(agent, partner, timeMinutes)
+      agent.talk(7.5, partner, topic, timeMinutes)
+      partner.talk(7.5, agent, topic, timeMinutes)
+      store.addCityEvent(conversationEventFor(agent, partner, topic, timeMinutes, `llm_social_${Date.now()}`))
+      executed = true
+      outcome = `talking-with-${partner.name}`
+      targetName = partner.name
+    } else {
+      agent.talkTimer = Math.max(agent.talkTimer, 2.5)
+      agent.routeStatus = 'local LLM wanted a social check-in but no partner was close'
+      outcome = 'no-nearby-partner'
+    }
+  } else if (action === 'hail_taxi') {
+    const taxiTarget = targetPlace ? scheduleTargetForPlace(targetPlace, agent.offset, city.roads) : scheduledTarget
+    if (taxiTarget && startAutonomousNpcTaxi(agent, taxiTarget, city)) {
+      executed = true
+      outcome = 'self-called-taxi'
+      targetName = taxiTarget.name
+    } else {
+      outcome = 'taxi-unavailable-or-too-close'
+    }
+  } else if (action === 'replan_route') {
+    agent.walkRoute = null
+    agent.walkPlan = null
+    agent.blockedContacts = 0
+    agent.stuckTimer = 0
+    agent.routeStatus = `local LLM requested route repair toward ${targetName || 'schedule'}`
+    agent.remember('llm-action', agent.routeStatus, agent.placeName, 0.62)
+    executed = true
+    outcome = 'route-repair'
+  } else if (action === 'pause_observe') {
+    agent.talkTimer = Math.max(agent.talkTimer, 2.4)
+    agent.routeStatus = 'local LLM paused to observe street context'
+    executed = true
+    outcome = 'pause-observe'
+  } else {
+    outcome = 'continue-schedule'
+  }
+
+  const execution = {
+    action,
+    executed,
+    outcome,
+    targetPlaceId: targetPlace?.id || result?.targetPlaceId || '',
+    targetName,
+    reason: result?.reason || reason,
+    createdAt: Date.now(),
+  }
+  agent.llmAutonomy = {
+    ...(agent.llmAutonomy || {}),
+    action,
+    targetPlaceId: execution.targetPlaceId,
+    targetName,
+    execution,
+  }
+  if (executed && !['need-errand', 'directed-errand', 'directed-place-route', 'self-called-taxi'].includes(outcome)) {
+    store.addCityEvent({
+      id: `llm_action_${agent.id}_${Date.now()}`,
+      kind: 'llm',
+      agentId: agent.id,
+      agentName: agent.name,
+      placeName: agent.placeName,
+      topic: 'npc autonomy action',
+      text: `${agent.name} executes local-LLM action ${action}: ${outcome}.`,
+    })
+  }
+  return execution
 }
 
 function autonomyEventFor(agent, timeMinutes) {
@@ -3198,25 +3372,55 @@ function NPCs({ city }) {
     autonomyLlmLastAgent.current = agent.id
     try {
       const store = useCityStore.getState()
+      const scheduledTarget = targetFor(agent, places, store.timeMinutes, city.roads)
+      const targetDistance = Math.hypot(scheduledTarget.x - agent.pos.x, scheduledTarget.z - agent.pos.z)
+      const placeCandidates = [...places.values()].slice(0, 12).map(place => ({
+        id: place.id,
+        name: place.name,
+        kind: place.kind,
+        address: place.address,
+      }))
       const snapshot = agent.snapshot(places)
       const result = await askLocalAutonomy(snapshot, {
         timeLabel: `Day ${store.day}, ${formatTime(store.timeMinutes)}`,
         placeContext: `${agent.placeName || 'street'} / ${reason}`,
+        scheduledTargetId: scheduledTarget.id || '',
+        scheduledTargetName: scheduledTarget.name || '',
+        scheduledTargetKind: scheduledTarget.kind || '',
+        targetDistance,
+        placeCandidates,
+        forceAction: reason === 'verification autonomous city life' ? 'visit_place' : undefined,
+        forceTargetPlaceId: reason === 'verification autonomous city life' ? 'river_cafe' : undefined,
       })
       const runtime = window.__REALCITY_LLM__ || null
       if (!result?.ok) return result
       const thought = result.text || `${agent.name} keeps following the current routine.`
+      const execution = executeAutonomyAction(agent, result, {
+        agents,
+        city,
+        places,
+        scheduledTarget,
+        store,
+        timeMinutes: store.timeMinutes,
+        reason,
+      })
       agent.currentIntent = thought
       agent.llmAutonomy = {
+        ...(agent.llmAutonomy || {}),
         thought,
         source: result.source,
         provider: result.provider,
         model: result.model,
         latencyMs: result.latencyMs,
         reason,
+        action: result.action,
+        targetPlaceId: result.targetPlaceId || execution.targetPlaceId,
+        targetName: result.targetPlaceName || execution.targetName,
+        execution,
+        parsed: result.parsed,
         createdAt: Date.now(),
       }
-      agent.remember('llm-autonomy', thought, agent.placeName, 0.76)
+      agent.remember('llm-autonomy', `${thought} Action: ${execution.action} -> ${execution.outcome}.`, agent.placeName, 0.76)
       const event = {
         id: `llm_autonomy_${agent.id}_${Date.now()}`,
         kind: 'llm',
@@ -3224,7 +3428,7 @@ function NPCs({ city }) {
         agentName: agent.name,
         placeName: agent.placeName,
         topic: 'npc autonomy',
-        text: `${agent.name} updates a local-LLM intention: ${thought}`.slice(0, 180),
+        text: `${agent.name} updates a local-LLM intention: ${thought} (${execution.action}: ${execution.outcome})`.slice(0, 180),
       }
       store.addCityEvent(event)
       const player = store.player || { x: 0, z: 0 }
@@ -3238,6 +3442,11 @@ function NPCs({ city }) {
         provider: result.provider,
         model: result.model,
         latencyMs: result.latencyMs,
+        action: result.action,
+        targetPlaceId: result.targetPlaceId || execution.targetPlaceId,
+        targetName: result.targetPlaceName || execution.targetName,
+        execution,
+        parsed: result.parsed,
         runtime,
         createdAt: Date.now(),
       }
@@ -3251,6 +3460,10 @@ function NPCs({ city }) {
               llmAutonomySource: result.source,
               llmAutonomyLatencyMs: result.latencyMs,
               llmAutonomyReason: reason,
+              llmAutonomyAction: result.action,
+              llmAutonomyExecuted: execution.executed,
+              llmAutonomyOutcome: execution.outcome,
+              llmAutonomyTargetName: execution.targetName,
               lastMemory: thought,
             }
           : sample))
@@ -3702,6 +3915,10 @@ function NPCs({ city }) {
           llmAutonomySource: agent.llmAutonomy?.source || null,
           llmAutonomyLatencyMs: agent.llmAutonomy?.latencyMs ?? null,
           llmAutonomyReason: agent.llmAutonomy?.reason || null,
+          llmAutonomyAction: agent.llmAutonomy?.action || null,
+          llmAutonomyExecuted: agent.llmAutonomy?.execution?.executed ?? null,
+          llmAutonomyOutcome: agent.llmAutonomy?.execution?.outcome || null,
+          llmAutonomyTargetName: agent.llmAutonomy?.execution?.targetName || agent.llmAutonomy?.targetName || null,
           autonomyGoal: agent.autonomy?.dailyGoal || null,
           relationshipStyle: agent.autonomy?.relationshipStyle || null,
           relationshipCount: agent.relationshipCount || 0,

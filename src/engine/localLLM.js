@@ -239,6 +239,102 @@ export async function askLocalNPC(agent, context) {
   return styleNpcSpeech(agent, response.text)
 }
 
+const AUTONOMY_ACTIONS = [
+  'continue_schedule',
+  'start_need_errand',
+  'visit_place',
+  'social_check_in',
+  'hail_taxi',
+  'replan_route',
+  'pause_observe',
+]
+
+function normalizeAutonomyAction(action, fallback = 'continue_schedule') {
+  const candidate = String(action || '').trim().toLowerCase().replace(/\s+/g, '_').replaceAll('-', '_')
+  return AUTONOMY_ACTIONS.includes(candidate) ? candidate : fallback
+}
+
+function autonomyPlaceCandidates(context = {}) {
+  return Array.isArray(context.placeCandidates)
+    ? context.placeCandidates.filter(place => place?.id && place?.name).slice(0, 10)
+    : []
+}
+
+function placeByKind(places, kinds) {
+  return places.find(place => kinds.includes(place.kind)) || null
+}
+
+function fallbackAutonomyChoice(agent, context = {}) {
+  const places = autonomyPlaceCandidates(context)
+  const forcedAction = normalizeAutonomyAction(context.forceAction, '')
+  const forcedPlace = places.find(place => place.id === context.forceTargetPlaceId) || null
+  if (forcedAction) {
+    return {
+      action: forcedAction,
+      targetPlaceId: forcedPlace?.id || context.forceTargetPlaceId || context.scheduledTargetId || '',
+      targetPlaceName: forcedPlace?.name || context.forceTargetPlaceName || context.scheduledTargetName || '',
+      targetKind: forcedPlace?.kind || context.forceTargetKind || context.scheduledTargetKind || '',
+      reason: 'debug scenario selected a concrete executable affordance',
+    }
+  }
+
+  const needs = agent?.needs || {}
+  if (Number(needs.hunger) > 0.82) {
+    const place = placeByKind(places, ['cafe', 'retail', 'leisure', 'transit'])
+    return {
+      action: 'start_need_errand',
+      targetPlaceId: place?.id || '',
+      targetPlaceName: place?.name || '',
+      targetKind: place?.kind || 'cafe',
+      reason: 'hunger pressure is high enough to interrupt the routine',
+    }
+  }
+  if (Number(needs.energy) < 0.22) {
+    const place = placeByKind(places, ['park', 'cafe', 'leisure'])
+    return {
+      action: 'start_need_errand',
+      targetPlaceId: place?.id || '',
+      targetPlaceName: place?.name || '',
+      targetKind: place?.kind || 'park',
+      reason: 'energy is low enough to seek a rest stop',
+    }
+  }
+  if (Number(needs.social) < 0.18) {
+    return {
+      action: 'social_check_in',
+      targetPlaceId: '',
+      targetPlaceName: '',
+      targetKind: '',
+      reason: 'social need is low enough to look for a conversation',
+    }
+  }
+  if (Number(context.targetDistance) > 520) {
+    return {
+      action: 'hail_taxi',
+      targetPlaceId: context.scheduledTargetId || '',
+      targetPlaceName: context.scheduledTargetName || '',
+      targetKind: context.scheduledTargetKind || '',
+      reason: 'scheduled destination is far enough for road-based mobility',
+    }
+  }
+  if (/blocked|replan|stuck/i.test(agent?.routeStatus || '')) {
+    return {
+      action: 'replan_route',
+      targetPlaceId: context.scheduledTargetId || '',
+      targetPlaceName: context.scheduledTargetName || '',
+      targetKind: context.scheduledTargetKind || '',
+      reason: 'route status suggests short-sighted movement needs repair',
+    }
+  }
+  return {
+    action: 'continue_schedule',
+    targetPlaceId: context.scheduledTargetId || '',
+    targetPlaceName: context.scheduledTargetName || '',
+    targetKind: context.scheduledTargetKind || '',
+    reason: 'no stronger affordance is more useful than the daily schedule',
+  }
+}
+
 export async function askLocalAutonomy(agent, context = {}) {
   const needText = agent.needs
     ? `energy ${Math.round(agent.needs.energy * 100)}, hunger ${Math.round(agent.needs.hunger * 100)}, social ${Math.round(agent.needs.social * 100)}`
@@ -246,12 +342,26 @@ export async function askLocalAutonomy(agent, context = {}) {
   const cognition = agent.cognition || {}
   const policy = cognition.selectedPolicy?.label || cognition.selectedPolicy?.id || 'daily routine'
   const memory = agent.memories?.[0]?.text || cognition.reflection?.text || agent.currentIntent || 'following routine'
+  const places = autonomyPlaceCandidates(context)
+  const fallbackChoice = fallbackAutonomyChoice(agent, context)
+  const forcedAction = normalizeAutonomyAction(context.forceAction, '')
+  const placeList = places.length
+    ? places.map(place => `${place.id}: ${place.name} (${place.kind})${place.address ? ` / ${place.address}` : ''}`).join('\n')
+    : 'none'
+  const schema = {
+    thought: 'short Korean private thought',
+    action: AUTONOMY_ACTIONS.join(' | '),
+    targetPlaceId: 'one listed place id or empty string',
+    targetKind: 'place kind or empty string',
+    reason: 'short reason grounded in needs, memory, schedule, or social norms',
+  }
   const system = [
     'You are the private thought layer for one autonomous NPC in RealCity.',
-    'Return one short Korean sentence only. No JSON, no markdown, no explanation.',
-    'The sentence should decide what this person will do or say in the next few city minutes.',
-    'Stay grounded in the NPC job, needs, memory, current place, and social norms.',
-  ].join(' ')
+    'Return one-line JSON only. No markdown.',
+    'Choose exactly one executable action the simulator can run in the next few city minutes.',
+    'Stay grounded in the NPC job, needs, memory, current place, schedule, traffic, and social norms.',
+    `JSON schema: ${JSON.stringify(schema)}`,
+  ].join('\n')
   const user = [
     `${agent.name}, ${agent.age}, ${agent.gender}, ${agent.job}.`,
     `Personality: ${agent.personality}; speech: ${agent.speechStyle?.label || 'natural'}.`,
@@ -259,7 +369,10 @@ export async function askLocalAutonomy(agent, context = {}) {
     `Needs: ${needText}.`,
     `Policy: ${policy}.`,
     `Memory: ${String(memory).slice(0, 140)}.`,
+    `Scheduled destination: ${context.scheduledTargetName || 'unknown'} (${Math.round(Number(context.targetDistance) || 0)}m).`,
     `City context: ${context.timeLabel || 'unknown time'}, ${context.placeContext || 'normal city life'}.`,
+    `Candidate places:\n${placeList}`,
+    `Simulator fallback affordance: ${fallbackChoice.action} / ${fallbackChoice.targetPlaceName || fallbackChoice.targetKind || 'no target'} / ${fallbackChoice.reason}.`,
   ].join('\n')
   const completion = await completeLocal({
     messages: [
@@ -267,12 +380,29 @@ export async function askLocalAutonomy(agent, context = {}) {
       { role: 'user', content: user },
     ],
     text: `${system}\n\n${user}`,
-  }, { temperature: 0.35, maxTokens: 38, purpose: 'npc-autonomy', agentName: agent.name, timeoutMs: 15000 })
+  }, { temperature: 0.2, maxTokens: 110, purpose: 'npc-autonomy', agentName: agent.name, json: true, timeoutMs: 17000 })
+  const parsed = extractJson(completion.text)
   const fallback = `${agent.name} keeps following ${agent.autonomy?.dailyGoal || agent.currentIntent || 'the daily routine'} near ${agent.placeName}.`
-  const line = cleanPlanText(completion.text, fallback, 150)
+  const thought = cleanPlanText(parsed?.thought || completion.text, fallback, 150)
+  const action = forcedAction || normalizeAutonomyAction(parsed?.action, fallbackChoice.action)
+  const targetById = places.find(place => place.id === (forcedAction ? fallbackChoice.targetPlaceId : parsed?.targetPlaceId)) ||
+    places.find(place => place.id === fallbackChoice.targetPlaceId) ||
+    null
+  const targetByKind = places.find(place => place.kind === (forcedAction ? fallbackChoice.targetKind : parsed?.targetKind)) ||
+    places.find(place => place.kind === fallbackChoice.targetKind) ||
+    null
+  const target = targetById || targetByKind
   return {
     ok: completion.ok,
-    text: styleNpcSpeech(agent, line),
+    text: styleNpcSpeech(agent, thought),
+    action,
+    targetPlaceId: target?.id || fallbackChoice.targetPlaceId || '',
+    targetPlaceName: target?.name || fallbackChoice.targetPlaceName || parsed?.targetPlaceName || '',
+    targetKind: target?.kind || parsed?.targetKind || fallbackChoice.targetKind || '',
+    reason: cleanPlanText(parsed?.reason, fallbackChoice.reason, 150),
+    parsed: !!parsed,
+    parsedAction: normalizeAutonomyAction(parsed?.action, ''),
+    forcedAction: forcedAction || null,
     source: completion.ok ? 'local-llm-autonomy' : `fallback:${completion.source}`,
     provider,
     model,

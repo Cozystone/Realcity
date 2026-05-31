@@ -299,6 +299,46 @@ select {
   font-size: 10px;
 }
 
+.agent-llm-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(158, 228, 147, 0.22);
+  border-radius: 8px;
+  background: rgba(158, 228, 147, 0.07);
+}
+
+.agent-llm-action span,
+.agent-llm-action strong,
+.agent-llm-action small {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-llm-action span {
+  color: rgba(238, 244, 255, 0.55);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-llm-action strong {
+  color: #9ee493;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.agent-llm-action small {
+  grid-column: 1 / -1;
+  color: rgba(238, 244, 255, 0.58);
+  font-size: 10px;
+}
+
 .indoor-directory-panel {
   position: absolute;
   top: 312px;
