@@ -524,6 +524,17 @@ async function inspectCityNorms(page) {
       if (road.axis === 'x') return tree.x >= road.from - 3 && tree.x <= road.to + 3 && Math.abs(tree.z - road.z) <= road.width / 2 + 5
       return tree.z >= road.from - 3 && tree.z <= road.to + 3 && Math.abs(tree.x - road.x) <= road.width / 2 + 5
     }))
+    const roadGrowthProfiles = city.roads.filter(road =>
+      /heatmap-road-growth/i.test(road.sourceAlgorithm || '') &&
+      road.growth?.source === 'magnificus-mit-heatmap-growth-port' &&
+      road.sidewalkDecor?.source === 'magnificus-mit-sidewalk-info-port'
+    )
+    const buildingGrowthPlans = city.buildings.filter(building =>
+      building.growthPlan?.source === 'magnificus-mit-plotbuilder-port' &&
+      building.proceduralSource?.compatibleReference === 'magnificus/Procedural-Cities MIT'
+    )
+    const blockPatterns = new Set(city.buildings.map(building => building.growthPlan?.pattern).filter(Boolean))
+    const activeFrontages = city.buildings.filter(building => building.growthPlan?.publicRealm === 'active-frontage')
     return {
       roads: city.roads.length,
       buildingCount: city.buildings.length,
@@ -581,8 +592,14 @@ async function inspectCityNorms(page) {
       autonomyGoals: autonomyGoals.size,
       relationshipStyles: relationshipStyles.size,
       treeRoadConflicts: treeRoadConflicts.length,
+      roadGrowthProfiles: roadGrowthProfiles.length,
+      buildingGrowthPlans: buildingGrowthPlans.length,
+      blockPatterns: blockPatterns.size,
+      activeFrontages: activeFrontages.length,
       socialNorms: city.socialNorms,
+      zoningRules: city.zoningRules,
       trafficRules: city.trafficRules,
+      proceduralSources: city.proceduralSources,
     }
   })
   assert(norms, 'City metadata was not exposed for norm verification')
@@ -644,7 +661,12 @@ async function inspectCityNorms(page) {
   assert(norms.autonomyGoals >= 20, `NPC daily goal variation is too low: ${norms.autonomyGoals}`)
   assert(norms.relationshipStyles >= 6, `NPC relationship style variation is too low: ${norms.relationshipStyles}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && /memory\/reflection\/planning|generative-agent/i.test(norms.socialNorms?.npcAutonomy || '') && norms.socialNorms?.npcMobility && norms.socialNorms?.humanReactions && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
+  assert(norms.roadGrowthProfiles === norms.roads, `Procedural road growth metadata is incomplete: ${norms.roadGrowthProfiles}/${norms.roads}`)
+  assert(norms.buildingGrowthPlans === norms.buildingCount, `Procedural building growth metadata is incomplete: ${norms.buildingGrowthPlans}/${norms.buildingCount}`)
+  assert(norms.blockPatterns >= 3 && norms.activeFrontages > 30, `Procedural block pattern/frontage variation is too low: ${norms.blockPatterns}/${norms.activeFrontages}`)
+  assert(norms.proceduralSources?.compatibleReferences?.some(item => /Procedural-Cities MIT/i.test(item)) && norms.proceduralSources?.conceptOnlyReferences?.some(item => /AGPL/i.test(item)), `Procedural source metadata is incomplete: ${JSON.stringify(norms.proceduralSources)}`)
+  assert(/parcel/i.test(norms.zoningRules?.parcelSubdivision || ''), `Procedural parcel subdivision zoning rule is missing: ${JSON.stringify(norms.zoningRules)}`)
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && /memory\/reflection\/planning|generative-agent/i.test(norms.socialNorms?.npcAutonomy || '') && norms.socialNorms?.npcMobility && norms.socialNorms?.humanReactions && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem && /heatmap-growth/i.test(norms.socialNorms?.proceduralCityPlanning || ''), 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -751,7 +773,8 @@ async function inspectMapCoordinateResilience(page) {
 async function inspectActorRendering(page) {
   await page.waitForFunction(() => {
     const actor = window.__REALCITY_ACTOR_RENDERING__
-    return actor?.npcBase === 'player-avatar-shared-humanoid' &&
+    return actor?.npcBase === 'makehuman-cc0-parametric-digital-human' &&
+      /CC0/i.test(actor.digitalHumanSource?.license || '') &&
       actor.bodyParts?.includes('hips') &&
       actor.bodyParts?.includes('hairBack') &&
       actor.bodyParts?.includes('pupils') &&
@@ -764,6 +787,9 @@ async function inspectActorRendering(page) {
 
   const actor = await page.evaluate(() => window.__REALCITY_ACTOR_RENDERING__ || null)
   assert(actor, 'Actor rendering metadata was not exposed')
+  assert(actor.npcBase === 'makehuman-cc0-parametric-digital-human', `NPCs are not using the MakeHuman-style digital human base: ${actor.npcBase}`)
+  assert(/CC0/i.test(actor.digitalHumanSource?.license || '') && /makehuman/i.test(`${actor.digitalHumanSource?.base || ''} ${actor.digitalHumanSource?.assetSource || ''}`), `Digital human source metadata is incomplete: ${JSON.stringify(actor.digitalHumanSource)}`)
+  assert(actor.anatomicalRig?.base === actor.npcBase && actor.anatomicalRig?.copiedExternalMeshCode === false && actor.anatomicalRig?.morphTargets?.length >= 10, `Anatomical rig metadata is incomplete: ${JSON.stringify(actor.anatomicalRig)}`)
   assert(actor.playerReference === 'PlayerRig.Character', `NPCs are not tied to the player avatar base: ${actor.playerReference}`)
   assert(actor.rigScale?.torsoCapsuleTotalHeight === 0.94, 'NPC torso was not matched to the player avatar torso capsule')
   assert(actor.rigScale?.armCapsuleTotalHeight === 0.53, 'NPC arm capsule proportions do not match the player avatar')
@@ -779,7 +805,8 @@ async function inspectActorRendering(page) {
   assert(actor.variation.ageBands >= 3 && actor.variation.ages >= 40, `NPC age variation is too low in actor rendering: ${JSON.stringify(actor.variation)}`)
   assert(actor.variation.hairStyles >= 5, `NPC hair style variation is too low in actor rendering: ${actor.variation.hairStyles}`)
   assert(actor.variation.outfitSignatures >= 120, `NPC outfit variation is too low in actor rendering: ${actor.variation.outfitSignatures}`)
-  assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit), 'NPC actor samples do not expose person-like identity and style')
+  assert(actor.variation.digitalHumanMorphs >= 40, `NPC digital-human morph variation is too low: ${actor.variation.digitalHumanMorphs}`)
+  assert(actor.samplePeople?.length >= 10 && actor.samplePeople.every(person => person.name && person.age && person.hairStyle && person.outfit && person.digitalHumanMorph), 'NPC actor samples do not expose person-like identity and digital-human morph style')
   const readablePrefixes = ['네.', '좋아요.', '간단히 말하면,', '확인했습니다.', '좋죠.', '음,', '바로 보면,', '확인해볼게요.', '좋지.', '가능합니다.']
   assert(actor.speechSamples?.length >= 10, 'NPC speech style samples were not exposed')
   assert(actor.speechSamples.every(sample => readablePrefixes.includes(sample.prefix)), `NPC speech prefixes are not readable Korean: ${JSON.stringify(actor.speechSamples)}`)
@@ -850,7 +877,7 @@ async function inspectMultiplayer(page) {
   }, seeded.roomId)
 
   assert(state.peers.some(peer => peer.id === 'verify_peer_b' && Number.isFinite(peer.x) && Number.isFinite(peer.z)), `Multiplayer peer pose was not synchronized: ${JSON.stringify(state)}`)
-  assert(state.rendering?.remoteAvatarBase === 'player-avatar-shared-humanoid', `Remote multiplayer avatars are not using the shared humanoid base: ${JSON.stringify(state.rendering)}`)
+  assert(state.rendering?.remoteAvatarBase === 'makehuman-cc0-parametric-digital-human', `Remote multiplayer avatars are not using the digital-human base: ${JSON.stringify(state.rendering)}`)
   assert(state.rendering?.renderMode === 'smoothed-nameplate-peer-avatar', `Remote multiplayer avatars are missing smoothing/nameplate metadata: ${JSON.stringify(state.rendering)}`)
 
   const inviteRoom = `invite-${Date.now()}`

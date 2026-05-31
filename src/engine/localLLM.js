@@ -439,14 +439,29 @@ function normalizeText(value) {
     .trim()
 }
 
-function includesPlaceCandidate(request, values) {
+function containsCandidate(text, candidate) {
+  if (!candidate) return false
+  const numericCandidate = /^\s*\d/.test(candidate)
+  if (!numericCandidate) return text.includes(candidate)
+
+  let index = text.indexOf(candidate)
+  while (index >= 0) {
+    const before = index > 0 ? text[index - 1] : ''
+    const after = text[index + candidate.length] || ''
+    if (!/[a-z0-9]/i.test(before) && !/[a-z0-9]/i.test(after)) return true
+    index = text.indexOf(candidate, index + 1)
+  }
+  return false
+}
+
+export function includesPlaceCandidate(request, values) {
   const raw = String(request || '').toLowerCase()
   const normalized = normalizeText(request)
   return values.some(value => {
     if (!value) return false
     const candidate = String(value).toLowerCase()
     const normalizedCandidate = normalizeText(value)
-    return raw.includes(candidate) || (normalizedCandidate && normalized.includes(normalizedCandidate))
+    return containsCandidate(raw, candidate) || (normalizedCandidate && containsCandidate(normalized, normalizedCandidate))
   })
 }
 

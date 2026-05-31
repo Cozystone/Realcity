@@ -1,4 +1,11 @@
 import { DISTRICT_BLUEPRINT, LANDMARK_BLUEPRINTS, ROAD_TIERS } from './cityBlueprint'
+import {
+  PROCEDURAL_CITY_SOURCE_MODEL,
+  blockGrowthPlan,
+  chooseBuildingTypeForPlan,
+  roadGrowthProfile,
+  sidewalkDecorationPlan,
+} from './proceduralCityRules'
 
 const TAU = Math.PI * 2
 
@@ -353,8 +360,42 @@ function roadGrid() {
   for (let p = -CITY_GRID_HALF; p <= CITY_GRID_HALF + 1; p += ROAD_SPACING) {
     const isMain = Math.round((p + CITY_GRID_HALF) / ROAD_SPACING) % 4 === 0
     const tier = isMain ? ROAD_TIERS.primary : ROAD_TIERS.local
-    roads.push({ id: `ew_${index}`, axis: 'x', z: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight, name: streetName('x', index, isMain) })
-    roads.push({ id: `ns_${index}`, axis: 'z', x: p, from: -CITY_GRID_HALF, to: CITY_GRID_HALF, width: ROAD_WIDTH * tier.widthMultiplier, main: isMain, tier: tier.id, trafficWeight: tier.trafficWeight, name: streetName('z', index, isMain) })
+    const eastWestGrowth = roadGrowthProfile({ axis: 'x', coordinate: p, index, isMain, half: CITY_GRID_HALF, spacing: ROAD_SPACING })
+    const northSouthGrowth = roadGrowthProfile({ axis: 'z', coordinate: p, index, isMain, half: CITY_GRID_HALF, spacing: ROAD_SPACING })
+    const eastWest = {
+      id: `ew_${index}`,
+      axis: 'x',
+      z: p,
+      from: -CITY_GRID_HALF,
+      to: CITY_GRID_HALF,
+      width: ROAD_WIDTH * tier.widthMultiplier,
+      main: isMain,
+      tier: tier.id,
+      trafficWeight: Number((tier.trafficWeight * eastWestGrowth.trafficDemand).toFixed(3)),
+      name: streetName('x', index, isMain),
+      growth: eastWestGrowth,
+      pattern: eastWestGrowth.pattern,
+      sourceAlgorithm: 'heatmap-road-growth-port',
+    }
+    const northSouth = {
+      id: `ns_${index}`,
+      axis: 'z',
+      x: p,
+      from: -CITY_GRID_HALF,
+      to: CITY_GRID_HALF,
+      width: ROAD_WIDTH * tier.widthMultiplier,
+      main: isMain,
+      tier: tier.id,
+      trafficWeight: Number((tier.trafficWeight * northSouthGrowth.trafficDemand).toFixed(3)),
+      name: streetName('z', index, isMain),
+      growth: northSouthGrowth,
+      pattern: northSouthGrowth.pattern,
+      sourceAlgorithm: 'heatmap-road-growth-port',
+    }
+    eastWest.sidewalkDecor = sidewalkDecorationPlan(eastWest, index)
+    northSouth.sidewalkDecor = sidewalkDecorationPlan(northSouth, index)
+    roads.push(eastWest)
+    roads.push(northSouth)
     index += 1
   }
   return roads
@@ -409,9 +450,10 @@ function oppositeFace(face) {
   }[face] || 'north'
 }
 
-function createFacadePlan(type, form, entryFace, rng) {
+function createFacadePlan(type, form, entryFace, rng, growthPlan = {}) {
   const faces = ['north', 'south', 'east', 'west']
-  const baseDensity = type === 'skyscraper' ? 0.95 : type === 'office' ? 0.78 : type === 'apartment' ? 0.64 : 0.42
+  const densityBias = growthPlan.facadeDensityBias || 1
+  const baseDensity = (type === 'skyscraper' ? 0.95 : type === 'office' ? 0.78 : type === 'apartment' ? 0.64 : 0.42) * densityBias
   const rearFace = oppositeFace(entryFace)
   const primaryRhythm = pick(rng, ['regular-grid', 'offset-grid', 'vertical-bands', 'punched-openings'])
   const sideRhythm = pick(rng, ['regular-grid', 'offset-grid', 'vertical-bands', 'punched-openings'])
@@ -448,6 +490,7 @@ function createFacadePlan(type, form, entryFace, rng) {
             : index % 2 === 0
               ? 'balanced-side-a'
               : 'balanced-side-b',
+        urbanPattern: growthPlan.pattern || 'grid',
       }]
     })),
     coherence: {
@@ -455,6 +498,7 @@ function createFacadePlan(type, form, entryFace, rng) {
       sideFacesBalanced: true,
       balconyRule: balconyPattern,
       entryRule: 'street-facing-door',
+      sourcePattern: growthPlan.source || 'realcity-procedural-facade',
     },
   }
 }
@@ -760,27 +804,28 @@ function createBuildings(rng, landmarks, roads) {
   for (let x = -CITY_GRID_HALF + ROAD_SPACING / 2; x < CITY_GRID_HALF; x += ROAD_SPACING) {
     for (let z = -CITY_GRID_HALF + ROAD_SPACING / 2; z < CITY_GRID_HALF; z += ROAD_SPACING) {
       const distance = Math.hypot(x, z)
-      if (distance > 900 || distance < 170 || landmarkMask(x, z)) continue
+      if (distance > 930 || distance < 120 || landmarkMask(x, z)) continue
 
       const district = districtAt(x, z)
-      const isParkPocket = distance > 360 && rng() > 0.83
-      if (isParkPocket) continue
+      const growthPlan = blockGrowthPlan(x, z, district, rng)
+      if (growthPlan.landUse === 'green-pocket') continue
       const zone = buildableZoneForBlock(x, z, roads)
       if (!zone) continue
 
-      const count = district.id === 'core' ? 1 + Math.floor(rng() * 2) : district.id === 'outer' ? 2 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * 3)
+      const count = Math.max(1, Math.min(4, growthPlan.parcelCount || 1))
       const slots = slotSets[Math.min(4, count)]
 
       for (let i = 0; i < count; i += 1) {
-        const type = district.id === 'core' ? 'skyscraper' : district.type === 'house' ? 'house' : district.type === 'apartment' ? 'apartment' : rng() > 0.55 ? 'office' : 'apartment'
+        const type = chooseBuildingTypeForPlan(district, growthPlan, rng)
         const slot = slots[i] || slots[0]
         const single = count === 1
+        const footprintScale = clamp(growthPlan.footprintScale || 1, 0.72, single ? 1.08 : count === 2 ? 1 : 0.92)
         const maxW = single
-          ? zone.width * (type === 'house' ? 0.42 : 0.58)
-          : zone.width * (type === 'house' ? 0.28 : 0.32)
+          ? zone.width * (type === 'house' ? 0.42 : 0.58) * footprintScale
+          : zone.width * (type === 'house' ? 0.28 : 0.32) * footprintScale
         const maxD = single
-          ? zone.depth * (type === 'apartment' ? 0.48 : type === 'house' ? 0.42 : 0.56)
-          : zone.depth * (type === 'house' ? 0.28 : 0.31)
+          ? zone.depth * (type === 'apartment' ? 0.48 : type === 'house' ? 0.42 : 0.56) * footprintScale
+          : zone.depth * (type === 'house' ? 0.28 : 0.31) * footprintScale
         const minW = type === 'house' ? 7.2 : 11
         const minD = type === 'house' ? 7.2 : 11
         if (maxW < minW || maxD < minD) continue
@@ -791,16 +836,17 @@ function createBuildings(rng, landmarks, roads) {
         const bx = clamp(zone.cx + slot.x * zone.width + (rng() - 0.5) * jitterX, zone.minX + w * 0.68, zone.maxX - w * 0.68)
         const bz = clamp(zone.cz + slot.z * zone.depth + (rng() - 0.5) * jitterZ, zone.minZ + d * 0.72, zone.maxZ - d * 0.72)
         const base = terrainHeight(bx, bz)
-        const height = type === 'skyscraper'
+        const baseHeight = type === 'skyscraper'
           ? 44 + rng() * 92
           : type === 'office'
             ? 16 + rng() * 42
             : type === 'apartment'
               ? 10 + rng() * 24
               : 4.5 + rng() * 6.5
+        const height = Math.max(type === 'house' ? 3.4 : 5.2, baseHeight * (growthPlan.heightMultiplier || 1))
 
         const address = addressInfoForPoint(bx, bz, roads)
-        const form = createBuildingForm(type, rng, district)
+        const form = createBuildingForm(type, rng, district, growthPlan)
         const entryFace = entryFaceForPoint(bx, bz, address.roadId, roads)
 
         buildings.push({
@@ -814,17 +860,26 @@ function createBuildings(rng, landmarks, roads) {
           h: height,
           type,
           district: district.name,
+          districtId: district.id,
           rot: 0,
           tint: rng(),
           entryFace,
-          facadePlan: createFacadePlan(type, form, entryFace, rng),
+          facadePlan: createFacadePlan(type, form, entryFace, rng, growthPlan),
           interior: createBuildingInterior(type, form, w, d, height, entryFace, rng),
+          growthPlan,
+          proceduralSource: {
+            model: 'RealCity procedural-city-rule-port',
+            compatibleReference: 'magnificus/Procedural-Cities MIT',
+            conceptReferences: ['phiresky/procedural-cities AGPL concepts', 'aljanue Blender addon concepts'],
+          },
           zoning: {
             blockCenter: { x, z },
             buildable: zone,
             roadSetback: BUILDING_ROAD_SETBACK,
             envelopeW: w * 1.36,
             envelopeD: d * 1.44,
+            publicRealm: growthPlan.publicRealm,
+            subdivisionPressure: growthPlan.subdivisionPressure,
           },
           form,
         })
@@ -835,9 +890,11 @@ function createBuildings(rng, landmarks, roads) {
   return buildings
 }
 
-function createBuildingForm(type, rng, district) {
+function createBuildingForm(type, rng, district, growthPlan = {}) {
   if (type === 'house') {
-    const profile = pick(rng, ['cottage', 'duplex', 'rowhouse', 'villa', 'courtyard'])
+    const profile = growthPlan.heat > 0.55
+      ? pick(rng, ['duplex', 'rowhouse', 'courtyard'])
+      : pick(rng, ['cottage', 'duplex', 'rowhouse', 'villa', 'courtyard'])
     return {
       profile,
       roof: pick(rng, profile === 'rowhouse' ? ['flat', 'gable', 'shed'] : ['gable', 'hip', 'shed']),
@@ -847,30 +904,40 @@ function createBuildingForm(type, rng, district) {
       garage: rng() > 0.62,
       chimney: rng() > 0.36,
       facade: pick(rng, ['brick', 'stucco', 'timber', 'painted']),
+      cityPattern: growthPlan.pattern || 'residential',
+      parcelSource: growthPlan.source || 'realcity',
     }
   }
 
   if (type === 'apartment') {
     return {
-      profile: pick(rng, ['bar', 'terraced', 'l_block', 'balcony_stack']),
+      profile: growthPlan.publicRealm === 'active-frontage'
+        ? pick(rng, ['terraced', 'l_block', 'balcony_stack'])
+        : pick(rng, ['bar', 'terraced', 'l_block', 'balcony_stack']),
       roof: pick(rng, ['flat', 'terrace', 'utility']),
       podium: rng() > 0.52,
       wing: rng() > 0.42,
       balconies: true,
       bodyRatio: 0.82 + rng() * 0.1,
       facade: pick(rng, ['concrete', 'warm_panel', 'brick_base']),
+      cityPattern: growthPlan.pattern || 'mixed-grid',
+      parcelSource: growthPlan.source || 'realcity',
     }
   }
 
   if (type === 'office') {
     return {
-      profile: pick(rng, ['slab', 'podium_tower', 'atrium', 'offset_core']),
+      profile: growthPlan.heat > 0.66
+        ? pick(rng, ['podium_tower', 'atrium', 'offset_core'])
+        : pick(rng, ['slab', 'podium_tower', 'atrium', 'offset_core']),
       roof: pick(rng, ['flat', 'green', 'mechanical']),
       podium: true,
       wing: rng() > 0.5,
       balconies: false,
       bodyRatio: 0.74 + rng() * 0.18,
       facade: pick(rng, ['stone_grid', 'glass_band', 'metal_panel']),
+      cityPattern: growthPlan.pattern || 'office-grid',
+      parcelSource: growthPlan.source || 'realcity',
     }
   }
 
@@ -883,6 +950,8 @@ function createBuildingForm(type, rng, district) {
     bodyRatio: 0.78 + rng() * 0.16,
     facade: pick(rng, ['blue_glass', 'silver_glass', 'dark_glass']),
     districtType: district.type,
+    cityPattern: growthPlan.pattern || 'core-growth',
+    parcelSource: growthPlan.source || 'realcity',
   }
 }
 
@@ -1475,12 +1544,15 @@ export function createRealCity(seed = 20260525) {
       collision: 'Buildings, landmark interiors, pedestrians, and vehicles are treated as solid bodies; contacts push actors apart, make pedestrians stumble or fall, and force drivers to brake.',
       streetHierarchy: 'Sidewalks are segmented before intersections, curbs mark the road edge, and zebra crosswalks with stop bars are the only pedestrian surfaces crossing traffic lanes.',
       facadeSystem: 'Procedural facades use bright wall palettes, mullion grids, reflective/lit window cells, balcony rails, and trim so buildings read as walls and glass rather than black blocks.',
+      proceduralCityPlanning: 'Roads and parcels carry a heatmap-growth profile inspired by MIT-licensed Procedural-Cities: denser active frontages near civic/transport heat, quieter branching residential blocks outside, and sidewalk furniture plans on every named road.',
     },
     zoningRules: {
       roadSetback: BUILDING_ROAD_SETBACK,
       buildableEnvelope: 'Each generated building is clamped inside the rectangle between adjacent roads after subtracting road half-widths and setbacks.',
       rotationPolicy: 'Procedural buildings stay axis-aligned with the street grid until parcel-aware rotated lots are introduced.',
+      parcelSubdivision: 'Blocks use heatmap-driven parcel counts, footprint scale, public-realm labels, and facade-density bias before building placement.',
     },
+    proceduralSources: PROCEDURAL_CITY_SOURCE_MODEL,
     trafficRules: {
       drivingSide: 'right-hand',
       laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',

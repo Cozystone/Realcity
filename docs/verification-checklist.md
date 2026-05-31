@@ -128,6 +128,9 @@ audit has a clear finish line.
 - Human model readability: confirm player and NPCs have visible front-facing
   face cues, hair/back cues, clothing detail, hands/feet, and readable walking
   direction at street-camera distance.
+- Digital-human source audit: confirm actor metadata reports the
+  MakeHuman-style CC0 parametric base, per-agent morph variation, and no copied
+  MakeHuman source code or unlicensed external mesh code.
 - NPC social life visual pass: observe NPC-to-NPC talks near social places and
   confirm the rendered poses face each other believably, beyond the automated
   event/relationship checks.
@@ -145,6 +148,9 @@ audit has a clear finish line.
   and contact location.
 - Place meaning: confirm every landmark has a visible form, map point, gameplay
   role, and is reachable by NPC/player movement.
+- Procedural city source audit: confirm roads/buildings expose heatmap-growth,
+  block-subdivision, public-frontage, and sidewalk-decoration metadata from the
+  MIT-compatible city-rule port; AGPL/no-license sources must remain concept-only.
 - Landmark interiors: confirm named buildings have solid wall shells, visible
   door openings, a lobby/readable interior, and elevator/stair/escalator props.
 - Entry rules: verify the player cannot walk through landmark side/back walls

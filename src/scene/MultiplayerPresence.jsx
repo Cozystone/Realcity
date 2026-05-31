@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import { useCityStore } from '../engine/cityStore'
+import { DIGITAL_HUMAN_SOURCE } from './digitalHumanRig'
 
 const SEND_INTERVAL = 0.72
 const REMOTE_LERP_RATE = 8.2
@@ -236,7 +237,7 @@ export default function MultiplayerPresence() {
       enabled,
       roomId: useCityStore.getState().multiplayer.roomId,
       peerCount: peers.length,
-      remoteAvatarBase: 'player-avatar-shared-humanoid',
+      remoteAvatarBase: DIGITAL_HUMAN_SOURCE.base,
       renderMode: 'smoothed-nameplate-peer-avatar',
       peers: peers.map(peer => ({ id: peer.id, name: peer.name, district: peer.district })),
     }

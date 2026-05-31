@@ -5,8 +5,9 @@ import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalFo
 import { resolveBuildingCollision } from '../engine/collision'
 import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
-import { askLocalAutonomy, askLocalNPC, fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
+import { askLocalAutonomy, askLocalNPC, fallbackLine, includesPlaceCandidate, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
+import { DIGITAL_HUMAN_SOURCE, makeHumanStyleRig } from './digitalHumanRig'
 import { makeProceduralTexture } from './proceduralTextures'
 
 const forward = new THREE.Vector3(0, 0, 1)
@@ -305,6 +306,46 @@ function pedestrianSafeTarget(target, from = target, roads = []) {
     z,
     y: terrainHeight(x, z),
     adjustedRoadName,
+  }
+}
+
+function pushOutdoorFromSolid(city, x, z, radius = 0.86) {
+  let px = x
+  let pz = z
+  const pushFromBox = item => {
+    const width = item.w || item.interior?.width || item.footprint?.width || 0
+    const depth = item.d || item.interior?.depth || item.footprint?.depth || 0
+    if (!width || !depth) return false
+    const dx = px - item.x
+    const dz = pz - item.z
+    const hw = width / 2 + radius
+    const hd = depth / 2 + radius
+    if (Math.abs(dx) >= hw || Math.abs(dz) >= hd) return false
+    const pushX = hw - Math.abs(dx)
+    const pushZ = hd - Math.abs(dz)
+    if (pushX < pushZ) px = item.x + Math.sign(dx || -1) * hw
+    else pz = item.z + Math.sign(dz || -1) * hd
+    return true
+  }
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    let moved = false
+    const buildings = city.getNearbyBuildings?.(px, pz) || city.buildings || []
+    for (const building of buildings) {
+      if (building.h < 3) continue
+      moved = pushFromBox(building) || moved
+    }
+    for (const place of city.landmarks || []) {
+      if (!place.interior?.solidWalls) continue
+      moved = pushFromBox(place) || moved
+    }
+    if (!moved) break
+  }
+
+  return {
+    x: px,
+    z: pz,
+    y: terrainHeight(px, pz),
   }
 }
 
@@ -2321,14 +2362,7 @@ function normalizeRouteText(value) {
 }
 
 function placeMatchesText(place, text) {
-  const normalized = normalizeRouteText(text)
-  const raw = String(text || '').toLowerCase()
-  return [place.id, place.name, place.kind, place.address, place.roadName, place.district, place.buildingType].some(value => {
-    if (!value) return false
-    const candidate = String(value).toLowerCase()
-    const normalizedCandidate = normalizeRouteText(value)
-    return raw.includes(candidate) || (normalizedCandidate && normalized.includes(normalizedCandidate))
-  })
+  return includesPlaceCandidate(text, [place.id, place.name, place.kind, place.address, place.roadName, place.district, place.buildingType])
 }
 
 function routePlacesForRequest(request, city, player) {
@@ -3296,7 +3330,8 @@ function NPCs({ city }) {
         ? agent.home.z + Math.cos(i * 1.61) * spread
         : target.z + Math.cos(i * 1.71) * spread
     const spawn = pedestrianSafeTarget({ x, z, y: terrainHeight(x, z), name: plazaAgent ? 'Central Core plaza' : lateTaxiCommuter ? agent.home.name : target.name }, spawnAnchor, city.roads)
-    const [safeX, safeZ] = resolveBuildingCollision(city, spawn.x, spawn.z, spawn.x, spawn.z, 0.68)
+    const outdoorSpawn = pushOutdoorFromSolid(city, spawn.x, spawn.z, 0.92)
+    const [safeX, safeZ] = resolveBuildingCollision(city, spawnAnchor.x, spawnAnchor.z, outdoorSpawn.x, outdoorSpawn.z, 0.68)
     agent.pos.set(safeX, terrainHeight(safeX, safeZ) + 0.95, safeZ)
     agent.activity = plazaAgent ? 'available for directions' : target.activity
     agent.placeName = plazaAgent ? 'Central Core plaza' : lateTaxiCommuter ? agent.home.name : target.name
@@ -3497,8 +3532,9 @@ function NPCs({ city }) {
     if (typeof window === 'undefined') return
     const unique = selector => new Set(agents.map(agent => selector(agent)).filter(Boolean)).size
     window.__REALCITY_ACTOR_RENDERING__ = {
-      npcBase: 'player-avatar-shared-humanoid',
+      npcBase: DIGITAL_HUMAN_SOURCE.base,
       playerReference: 'PlayerRig.Character',
+      digitalHumanSource: DIGITAL_HUMAN_SOURCE,
       rigScale: {
         npcBaseY: 0.95,
         playerBaseY: 1.1,
@@ -3506,6 +3542,15 @@ function NPCs({ city }) {
         torsoCapsuleTotalHeight: 0.94,
         armCapsuleTotalHeight: 0.53,
         legCapsuleTotalHeight: 0.65,
+        morphSystem: 'MakeHuman-style height, chest, waist, hip, limb, hand, foot, face-width, and age-posture parameters',
+        sharedBaseRule: DIGITAL_HUMAN_SOURCE.sharedBaseRule,
+      },
+      anatomicalRig: {
+        base: DIGITAL_HUMAN_SOURCE.base,
+        sourceLicense: DIGITAL_HUMAN_SOURCE.license,
+        morphTargets: ['height', 'shoulder', 'chest', 'waist', 'hip', 'torsoDepth', 'limbThickness', 'armLength', 'legLength', 'headScale', 'faceWidth', 'eyeSpacing', 'agePosture'],
+        perAgentDeterministic: true,
+        copiedExternalMeshCode: false,
       },
       bodyParts: [
         'hips',
@@ -3569,6 +3614,7 @@ function NPCs({ city }) {
         outfitSignatures: unique(agent => agent.appearance?.signature),
         skinTones: unique(agent => agent.appearance?.skinColor),
         faceAccessoryVariants: unique(agent => `${agent.appearance?.glassesStyle}:${agent.appearance?.ageBand}:${agent.gender}`),
+        digitalHumanMorphs: unique(agent => makeHumanStyleRig(agent, agentLook(agent)).summary),
       },
       streetReadableDetails: ['collar', 'lapels', 'cheeks', 'eye whites', 'pupils', 'blink eyelids', 'front badge', 'pant cuffs'],
       samplePeople: agents.slice(0, 12).map(agent => ({
@@ -3578,6 +3624,7 @@ function NPCs({ city }) {
         gender: agent.gender,
         heightScale: Number((agent.appearance?.heightScale ?? 1).toFixed(3)),
         bodyArchetype: agent.appearance?.bodyArchetype,
+        digitalHumanMorph: makeHumanStyleRig(agent, agentLook(agent)).summary,
         hairStyle: agent.appearance?.hairStyle,
         outfit: agent.appearance?.styleBrief,
       })),
@@ -3733,11 +3780,22 @@ function NPCs({ city }) {
       const walk = look.walkStyle || { cadence: 1, stride: 1, armSwing: 1 }
       const stride = Math.sin(state.clock.elapsedTime * (walking ? 7.6 : 1.2) * agent.pace * (walk.cadence || 1) + i * 0.83) * (walking ? 0.46 * (walk.stride || 1) : 0.035)
       const armSwing = walk.armSwing || 1
-      const height = look.heightScale || 1
-      const shoulder = look.shoulderScale || 1
-      const bodyScale = look.bodyScale || 1
-      const legScale = look.legScale || 1
-      const headScale = look.headScale || 1
+      const human = makeHumanStyleRig(agent, look)
+      const height = human.heightScale
+      const shoulder = human.shoulderScale
+      const bodyScale = human.bodyScale
+      const legScale = human.legScale
+      const headScale = human.headScale
+      const chestWidth = human.chestWidth
+      const waistWidth = human.waistWidth
+      const hipWidth = human.hipWidth
+      const torsoDepth = human.torsoDepth
+      const armThickness = human.armThickness
+      const legThickness = human.legThickness
+      const stanceWidth = human.stanceWidth
+      const faceWidth = human.faceWidth
+      const faceDepth = human.faceDepth
+      const eyeSpacing = human.eyeSpacing
       const longHair = look.hairStyle === 'long'
       const bobHair = look.hairStyle === 'bob'
       const hairLong = longHair || bobHair
@@ -3783,55 +3841,55 @@ function NPCs({ city }) {
       const hairY = (hairLong ? 1.02 : 1.13) * height
       const hairBackY = (longHair ? 0.78 : bobHair ? 0.9 : 0.97) * height
       const hairCapHeight = hairBun ? 0.15 : longHair ? 0.22 : bobHair ? 0.16 : 0.105
-      setLocalPart(hipsRef.current, i, dummy, base, agent.heading, [0, hipY, 0], [0.38 * shoulder, 0.2 * height * bodyScale, 0.25 * bodyScale], bodyRotX, bodyRotZ)
-      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, torsoY, 0], [0.21 * shoulder, (walking ? 0.25 : 0.235) * height * bodyScale, 0.16 * bodyScale], bodyRotX, bodyRotZ)
-      setLocalPart(neckRef.current, i, dummy, base, agent.heading, [0, neckY, 0.01], [0.075 * headScale, 0.12 * height, 0.075 * headScale], bodyRotX * 0.82, bodyRotZ)
-      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, headY, 0.025], [0.205 * headScale, 0.225 * headScale, 0.205 * headScale], bodyRotX * 0.68, bodyRotZ)
-      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, hairY, hairLong ? -0.055 : -0.02], shaved ? [0.16 * headScale, 0.035 * headScale, 0.17 * headScale] : [0.215 * headScale, hairCapHeight * headScale, 0.22 * headScale], bodyRotX * 0.68, bodyRotZ)
-      setLocalPart(hairBackRef.current, i, dummy, base, agent.heading, [0, hairBackY, hairLong ? -0.16 : -0.145], shaved ? [0.001, 0.001, 0.001] : [0.33 * headScale, (longHair ? 0.42 : bobHair ? 0.26 : 0.14) * headScale, 0.075 * headScale], bodyRotX * 0.64, bodyRotZ)
-      setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
-      setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.215 * headScale, 0.96 * height, 0.02], [0.03, 0.042, 0.02])
-      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.188], [0.032, 0.019, 0.012])
-      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.188], [0.032, 0.019, 0.012])
-      setLocalPart(pupilRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale + saccade, eyeY + pupilY, 0.205], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
-      setLocalPart(pupilRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale + saccade, eyeY + pupilY, 0.205], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
-      setLocalPart(eyelidRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY + 0.004, 0.209], [0.06, Math.max(0.001, 0.038 * blink), 0.014])
-      setLocalPart(eyelidRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY + 0.004, 0.209], [0.06, Math.max(0.001, 0.038 * blink), 0.014])
-      setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, -0.08)
-      setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, browY, 0.2], [0.058, 0.009, 0.011], 0, 0.08)
-      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.215], [0.026, 0.052, 0.026])
-      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, mouthY, 0.202], [0.088, 0.012, 0.014])
-      setLocalPart(faceMarkRef.current, i * 2, dummy, base, agent.heading, [0, 0.915 * height, 0.222], facialHair ? [0.12 * headScale, 0.018, 0.012] : [0.001, 0.001, 0.001])
-      setLocalPart(faceMarkRef.current, i * 2 + 1, dummy, base, agent.heading, [0, 1.025 * height, 0.21], seniorFace ? [0.13 * headScale, 0.008, 0.01] : [0.001, 0.001, 0.001])
-      setLocalPart(cheekRef.current, i * 2, dummy, base, agent.heading, [-0.07 * headScale, 0.925 * height, 0.218], [0.033, 0.018, 0.011])
-      setLocalPart(cheekRef.current, i * 2 + 1, dummy, base, agent.heading, [0.07 * headScale, 0.925 * height, 0.218], [0.033, 0.018, 0.011])
-      setLocalPart(glassesRef.current, i * 2, dummy, base, agent.heading, [-0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
-      setLocalPart(glassesRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * headScale, eyeY, 0.21], glassesVisible ? [0.06, 0.014, 0.014] : [0.001, 0.001, 0.001])
-      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, chestY, 0.18], [0.28 * shoulder, 0.34 * height, 0.035], bodyRotX, bodyRotZ)
-      setLocalPart(collarRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.205], [0.17 * shoulder, 0.03 * height, 0.018], bodyRotX, bodyRotZ)
-      setLocalPart(lapelRef.current, i * 2, dummy, base, agent.heading, [-0.072 * shoulder, 0.52 * height, 0.206], [0.035, 0.2 * height, 0.015], bodyRotX, bodyRotZ - 0.16)
-      setLocalPart(lapelRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * shoulder, 0.52 * height, 0.206], [0.035, 0.2 * height, 0.015], bodyRotX, bodyRotZ + 0.16)
-      setLocalPart(badgeRef.current, i, dummy, base, agent.heading, [0.105 * shoulder, 0.58 * height, 0.222], [0.028, 0.038, 0.012], bodyRotX, bodyRotZ)
-      setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, 0.15 * height, 0.158], [0.19 * shoulder, 0.025, 0.032])
-      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.24 * shoulder, 0.38 * height, -0.13], bagVisible ? [0.1, 0.22 * height, 0.055] : [0.001, 0.001, 0.001])
-      setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 1.18 * height, 0.006], hatVisible ? [0.2 * headScale, 0.08, 0.2 * headScale] : [0.001, 0.001, 0.001])
-      setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.05 * height, 0], skirtVisible ? [0.22 * shoulder, 0.3 * height, 0.18] : [0.001, 0.001, 0.001])
-      setLocalPart(scarfRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.15], scarfVisible ? [0.19 * shoulder, look.scarfStyle === 'wide' ? 0.052 : 0.034, 0.044] : [0.001, 0.001, 0.001])
-      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? 0.55 : stride, bodyRotZ * 0.35)
-      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.35 * height, 0], [0.065, 0.1625 * height * legScale, 0.065], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
-      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.33 * height + leftHandLift * 0.34, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? 0.92 : talkCueVisible ? -0.28 - gesturePulse * 0.05 : -stride * 0.55 * armSwing, bodyRotZ)
-      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.33 * height + rightHandLift * 0.34, 0.02], [0.055, 0.1325 * height, 0.055], fallen ? -0.72 : talkCueVisible ? 0.38 + gesturePulse * 0.08 : stride * 0.55 * armSwing, bodyRotZ)
-      setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], -stride * 0.38 * armSwing)
-      setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.27 * shoulder, shoulderY, 0.026], [0.065, 0.065 * height, 0.065], stride * 0.38 * armSwing)
-      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.08 * height + leftHandLift, 0.035], [0.065, 0.065, 0.065])
-      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height + rightHandLift, phoneVisible ? 0.16 : 0.035], [0.065, 0.065, 0.065])
-      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
-      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.68 * height, 0.055], [0.11, 0.06, 0.18])
-      setLocalPart(cuffRef.current, i * 2, dummy, base, agent.heading, [-0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? 0.55 : stride, bodyRotZ * 0.35)
-      setLocalPart(cuffRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * shoulder, -0.58 * height, 0.046], [0.075, 0.026, 0.078], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
+      setLocalPart(hipsRef.current, i, dummy, base, agent.heading, [0, hipY, 0], [0.38 * hipWidth, 0.2 * height * bodyScale, 0.25 * torsoDepth], bodyRotX, bodyRotZ)
+      setLocalPart(torsoRef.current, i, dummy, base, agent.heading, [0, torsoY, human.postureLean], [0.21 * waistWidth, (walking ? 0.25 : 0.235) * height * bodyScale, 0.16 * torsoDepth], bodyRotX, bodyRotZ)
+      setLocalPart(neckRef.current, i, dummy, base, agent.heading, [0, neckY, 0.01 + human.postureLean], [0.075 * human.neckScale, 0.12 * height, 0.075 * human.neckScale], bodyRotX * 0.82, bodyRotZ)
+      setLocalPart(headRef.current, i, dummy, base, agent.heading, [0, headY, 0.025 + human.postureLean], [0.205 * faceWidth, 0.225 * headScale, 0.205 * faceDepth], bodyRotX * 0.68, bodyRotZ)
+      setLocalPart(hairRef.current, i, dummy, base, agent.heading, [0, hairY, hairLong ? -0.055 : -0.02], shaved ? [0.16 * faceWidth, 0.035 * headScale, 0.17 * faceDepth] : [0.215 * faceWidth, hairCapHeight * headScale, 0.22 * faceDepth], bodyRotX * 0.68, bodyRotZ)
+      setLocalPart(hairBackRef.current, i, dummy, base, agent.heading, [0, hairBackY, hairLong ? -0.16 : -0.145], shaved ? [0.001, 0.001, 0.001] : [0.33 * faceWidth, (longHair ? 0.42 : bobHair ? 0.26 : 0.14) * headScale, 0.075 * faceDepth], bodyRotX * 0.64, bodyRotZ)
+      setLocalPart(earRef.current, i * 2, dummy, base, agent.heading, [-0.215 * faceWidth, 0.96 * height, 0.02], [0.03 * headScale, 0.042 * headScale, 0.02 * faceDepth])
+      setLocalPart(earRef.current, i * 2 + 1, dummy, base, agent.heading, [0.215 * faceWidth, 0.96 * height, 0.02], [0.03 * headScale, 0.042 * headScale, 0.02 * faceDepth])
+      setLocalPart(eyeRef.current, i * 2, dummy, base, agent.heading, [-0.086 * eyeSpacing, eyeY, 0.188 * faceDepth], [0.032 * faceWidth, 0.019, 0.012])
+      setLocalPart(eyeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * eyeSpacing, eyeY, 0.188 * faceDepth], [0.032 * faceWidth, 0.019, 0.012])
+      setLocalPart(pupilRef.current, i * 2, dummy, base, agent.heading, [-0.086 * eyeSpacing + saccade, eyeY + pupilY, 0.205 * faceDepth], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
+      setLocalPart(pupilRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * eyeSpacing + saccade, eyeY + pupilY, 0.205 * faceDepth], [0.010, Math.max(0.002, 0.01 * (1 - blink * 0.86)), 0.006])
+      setLocalPart(eyelidRef.current, i * 2, dummy, base, agent.heading, [-0.086 * eyeSpacing, eyeY + 0.004, 0.209 * faceDepth], [0.06 * faceWidth, Math.max(0.001, 0.038 * blink), 0.014])
+      setLocalPart(eyelidRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * eyeSpacing, eyeY + 0.004, 0.209 * faceDepth], [0.06 * faceWidth, Math.max(0.001, 0.038 * blink), 0.014])
+      setLocalPart(browRef.current, i * 2, dummy, base, agent.heading, [-0.086 * eyeSpacing, browY, 0.2 * faceDepth], [0.058 * human.browWidth, 0.009, 0.011], 0, -0.08)
+      setLocalPart(browRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * eyeSpacing, browY, 0.2 * faceDepth], [0.058 * human.browWidth, 0.009, 0.011], 0, 0.08)
+      setLocalPart(noseRef.current, i, dummy, base, agent.heading, [0, 0.94 * height, 0.215 * faceDepth], [0.026 * faceWidth, 0.052 * headScale, 0.026 * faceDepth])
+      setLocalPart(mouthRef.current, i, dummy, base, agent.heading, [0, mouthY, 0.202 * faceDepth], [0.088 * faceWidth, 0.012, 0.014])
+      setLocalPart(faceMarkRef.current, i * 2, dummy, base, agent.heading, [0, 0.915 * height, 0.222 * faceDepth], facialHair ? [0.12 * faceWidth, 0.018, 0.012] : [0.001, 0.001, 0.001])
+      setLocalPart(faceMarkRef.current, i * 2 + 1, dummy, base, agent.heading, [0, 1.025 * height, 0.21 * faceDepth], seniorFace ? [0.13 * faceWidth, 0.008, 0.01] : [0.001, 0.001, 0.001])
+      setLocalPart(cheekRef.current, i * 2, dummy, base, agent.heading, [-0.07 * eyeSpacing, 0.925 * height, 0.218 * faceDepth], [0.033 * faceWidth, 0.018, 0.011])
+      setLocalPart(cheekRef.current, i * 2 + 1, dummy, base, agent.heading, [0.07 * eyeSpacing, 0.925 * height, 0.218 * faceDepth], [0.033 * faceWidth, 0.018, 0.011])
+      setLocalPart(glassesRef.current, i * 2, dummy, base, agent.heading, [-0.086 * eyeSpacing, eyeY, 0.21 * faceDepth], glassesVisible ? [0.06 * faceWidth, 0.014, 0.014] : [0.001, 0.001, 0.001])
+      setLocalPart(glassesRef.current, i * 2 + 1, dummy, base, agent.heading, [0.086 * eyeSpacing, eyeY, 0.21 * faceDepth], glassesVisible ? [0.06 * faceWidth, 0.014, 0.014] : [0.001, 0.001, 0.001])
+      setLocalPart(chestRef.current, i, dummy, base, agent.heading, [0, chestY, 0.18 * torsoDepth], [0.28 * chestWidth, 0.34 * height, 0.035 * torsoDepth], bodyRotX, bodyRotZ)
+      setLocalPart(collarRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.205 * torsoDepth], [0.17 * chestWidth, 0.03 * height, 0.018], bodyRotX, bodyRotZ)
+      setLocalPart(lapelRef.current, i * 2, dummy, base, agent.heading, [-0.072 * chestWidth, 0.52 * height, 0.206 * torsoDepth], [0.035 * chestWidth, 0.2 * height, 0.015], bodyRotX, bodyRotZ - 0.16)
+      setLocalPart(lapelRef.current, i * 2 + 1, dummy, base, agent.heading, [0.072 * chestWidth, 0.52 * height, 0.206 * torsoDepth], [0.035 * chestWidth, 0.2 * height, 0.015], bodyRotX, bodyRotZ + 0.16)
+      setLocalPart(badgeRef.current, i, dummy, base, agent.heading, [0.105 * chestWidth, 0.58 * height, 0.222 * torsoDepth], [0.028, 0.038, 0.012], bodyRotX, bodyRotZ)
+      setLocalPart(beltRef.current, i, dummy, base, agent.heading, [0, 0.15 * height, 0.158 * torsoDepth], [0.19 * waistWidth, 0.025, 0.032])
+      setLocalPart(bagRef.current, i, dummy, base, agent.heading, [0.24 * shoulder, 0.38 * height, -0.13 * torsoDepth], bagVisible ? [0.1 * torsoDepth, 0.22 * height, 0.055 * torsoDepth] : [0.001, 0.001, 0.001])
+      setLocalPart(hatRef.current, i, dummy, base, agent.heading, [0, 1.18 * height, 0.006], hatVisible ? [0.2 * faceWidth, 0.08, 0.2 * faceDepth] : [0.001, 0.001, 0.001])
+      setLocalPart(skirtRef.current, i, dummy, base, agent.heading, [0, -0.05 * height, 0], skirtVisible ? [0.22 * hipWidth, 0.3 * height, 0.18 * torsoDepth] : [0.001, 0.001, 0.001])
+      setLocalPart(scarfRef.current, i, dummy, base, agent.heading, [0, 0.75 * height, 0.15 * torsoDepth], scarfVisible ? [0.19 * chestWidth, look.scarfStyle === 'wide' ? 0.052 : 0.034, 0.044] : [0.001, 0.001, 0.001])
+      setLocalPart(legRef.current, i * 2, dummy, base, agent.heading, [-0.12 * stanceWidth, -0.35 * height, 0], [0.065 * legThickness, 0.1625 * height * legScale, 0.065 * legThickness], fallen ? 0.55 : stride, bodyRotZ * 0.35)
+      setLocalPart(legRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * stanceWidth, -0.35 * height, 0], [0.065 * legThickness, 0.1625 * height * legScale, 0.065 * legThickness], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
+      setLocalPart(armRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.33 * height + leftHandLift * 0.34, 0.02 * torsoDepth], [0.055 * armThickness, 0.1325 * height * human.armLength, 0.055 * armThickness], fallen ? 0.92 : talkCueVisible ? -0.28 - gesturePulse * 0.05 : -stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(armRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.33 * height + rightHandLift * 0.34, 0.02 * torsoDepth], [0.055 * armThickness, 0.1325 * height * human.armLength, 0.055 * armThickness], fallen ? -0.72 : talkCueVisible ? 0.38 + gesturePulse * 0.08 : stride * 0.55 * armSwing, bodyRotZ)
+      setLocalPart(sleeveRef.current, i * 2, dummy, base, agent.heading, [-0.27 * shoulder, shoulderY, 0.026 * torsoDepth], [0.065 * armThickness, 0.065 * height, 0.065 * armThickness], -stride * 0.38 * armSwing)
+      setLocalPart(sleeveRef.current, i * 2 + 1, dummy, base, agent.heading, [0.27 * shoulder, shoulderY, 0.026 * torsoDepth], [0.065 * armThickness, 0.065 * height, 0.065 * armThickness], stride * 0.38 * armSwing)
+      setLocalPart(handRef.current, i * 2, dummy, base, agent.heading, [-0.28 * shoulder, 0.08 * height + leftHandLift, 0.035 * torsoDepth], [0.065 * human.handScale, 0.065 * human.handScale, 0.065 * human.handScale])
+      setLocalPart(handRef.current, i * 2 + 1, dummy, base, agent.heading, [0.28 * shoulder, 0.08 * height + rightHandLift, phoneVisible ? 0.16 : 0.035 * torsoDepth], [0.065 * human.handScale, 0.065 * human.handScale, 0.065 * human.handScale])
+      setLocalPart(shoeRef.current, i * 2, dummy, base, agent.heading, [-0.12 * stanceWidth, -0.68 * height, 0.055], [0.11 * human.footScale, 0.06, 0.18 * human.footScale])
+      setLocalPart(shoeRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * stanceWidth, -0.68 * height, 0.055], [0.11 * human.footScale, 0.06, 0.18 * human.footScale])
+      setLocalPart(cuffRef.current, i * 2, dummy, base, agent.heading, [-0.12 * stanceWidth, -0.58 * height, 0.046], [0.075 * legThickness, 0.026, 0.078 * legThickness], fallen ? 0.55 : stride, bodyRotZ * 0.35)
+      setLocalPart(cuffRef.current, i * 2 + 1, dummy, base, agent.heading, [0.12 * stanceWidth, -0.58 * height, 0.046], [0.075 * legThickness, 0.026, 0.078 * legThickness], fallen ? -0.35 : -stride, bodyRotZ * 0.35)
       setLocalPart(speechCueRef.current, i, dummy, base, agent.heading, [0, 1.47 * height + Math.max(0, gesturePulse) * 0.035, 0.08], talkCueVisible ? [0.13, 0.1, 0.13] : [0.001, 0.001, 0.001])
-      setLocalPart(phoneRef.current, i, dummy, base, agent.heading, [0.34 * shoulder, 0.38 * height + rightHandLift, 0.2], phoneVisible ? [0.055, 0.105, 0.012] : [0.001, 0.001, 0.001])
-      setLocalPart(gestureCueRef.current, i, dummy, base, agent.heading, [0.38 * shoulder, 0.56 * height + rightHandLift * 0.52, 0.18], talkCueVisible && !phoneVisible ? [0.045 + Math.max(0, gesturePulse) * 0.018, 0.045, 0.045] : [0.001, 0.001, 0.001])
+      setLocalPart(phoneRef.current, i, dummy, base, agent.heading, [0.34 * shoulder, 0.38 * height + rightHandLift, 0.2 * torsoDepth], phoneVisible ? [0.055, 0.105, 0.012] : [0.001, 0.001, 0.001])
+      setLocalPart(gestureCueRef.current, i, dummy, base, agent.heading, [0.38 * shoulder, 0.56 * height + rightHandLift * 0.52, 0.18 * torsoDepth], talkCueVisible && !phoneVisible ? [0.045 + Math.max(0, gesturePulse) * 0.018, 0.045, 0.045] : [0.001, 0.001, 0.001])
     }
 
     socialClock.current += dt
@@ -3902,6 +3960,8 @@ function NPCs({ city }) {
           name: agent.name,
           job: agent.job,
           role: agent.role,
+          digitalHumanBase: DIGITAL_HUMAN_SOURCE.base,
+          digitalHumanMorph: makeHumanStyleRig(agent, agentLook(agent)).summary,
           x: agent.pos.x,
           z: agent.pos.z,
           radius: 0.82,
@@ -3987,7 +4047,7 @@ function NPCs({ city }) {
           visualGesture: agent.visualGesture || null,
           renderFacingPartner: !!agent.renderFacingPartner,
           facingPartnerAngle: agent.facingPartnerAngle,
-          sharedHumanoidBase: 'player-avatar-shared-humanoid',
+          sharedHumanoidBase: DIGITAL_HUMAN_SOURCE.base,
         }
       }))
       store.setNearbyAgent(nearestAgent && nearestDistance <= 24
