@@ -49,6 +49,10 @@ audit has a clear finish line.
 - SUMO link model: the signal program must expose vehicle links, separate
   pedestrian crossing links, no-start clearance phases, countdown metadata,
   stop bars, and per-intersection controller records.
+- SUMO detector/gap model: each main intersection must expose four detector
+  records and an actuation-ready pressure policy; NPC crosswalk samples must
+  identify traffic-light, priority-zebra, or uncontrolled-gap control with
+  conservative vehicle-gap metadata.
 - Shared mobility and curb policy: the city exposes GBFS-shaped station
   information/status, vehicle types, geofencing zones, SmartCities-style curb
   and traffic-flow data models, and GATSim-style disruption policies that can

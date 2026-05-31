@@ -541,6 +541,25 @@ async function inspectCityNorms(page) {
     const gbfs = mobility.gbfs || {}
     const smartCity = mobility.smartCity || {}
     const gatsim = mobility.gatsim || {}
+    const signalDetectorCount = intersectionControllers.reduce((sum, controller) => sum + (controller.detectors?.length || 0), 0)
+    const actuatedReadyControllers = intersectionControllers.filter(controller =>
+      controller.actuationPolicy?.mode === 'static-now-detector-ready' &&
+      controller.actuationPolicy?.pressureSignals?.includes('averageHeadwayTime') &&
+      (controller.detectors?.length || 0) >= 4
+    )
+    const roadPedestrianPolicies = city.roads.filter(road =>
+      road.pedestrianPolicy?.sidewalks === 'both-sides' &&
+      road.pedestrianPolicy?.lanePermission === 'pedestrians-forbidden-except-crossings' &&
+      road.laneModel?.drivingSide === 'right-hand'
+    )
+    const directionalTrafficFlows = (smartCity.trafficFlowObserved || []).filter(flow =>
+      flow.type === 'TrafficFlowObserved' &&
+      flow.laneId &&
+      flow.laneDirection &&
+      typeof flow.averageHeadwayTime === 'number' &&
+      typeof flow.averageGapDistance === 'number' &&
+      typeof flow.occupancy === 'number'
+    )
     return {
       roads: city.roads.length,
       buildingCount: city.buildings.length,
@@ -612,6 +631,9 @@ async function inspectCityNorms(page) {
       signalProgramPedestrianLinks: signalProgram.filter(phase => phase.pedestrianLinks?.crossX || phase.pedestrianLinks?.crossZ).length,
       intersectionControllers: intersectionControllers.length,
       controllerPhaseCoverage: intersectionControllers.filter(controller => controller.phases?.length === signalProgram.length && controller.stopBars?.length === 4 && controller.pedestrianCrossings?.length === 2).length,
+      signalDetectorCount,
+      actuatedReadyControllers: actuatedReadyControllers.length,
+      roadPedestrianPolicies: roadPedestrianPolicies.length,
       gbfsStations: gbfs.stations?.length || 0,
       gbfsStationInfo: gbfs.stationInformation?.length || 0,
       gbfsStationStatus: gbfs.stationStatus?.length || 0,
@@ -619,6 +641,7 @@ async function inspectCityNorms(page) {
       gbfsGeofences: gbfs.geofencingZones?.length || 0,
       smartCurbZones: smartCity.curbZones?.length || 0,
       smartTrafficFlows: smartCity.trafficFlowObserved?.length || 0,
+      directionalTrafficFlows: directionalTrafficFlows.length,
       smartDataModels: smartCity.dataModels || [],
       gatsimDisruptions: gatsim.disruptionEvents?.length || 0,
       gatsimSignals: gatsim.agentDecisionSignals || [],
@@ -668,8 +691,11 @@ async function inspectCityNorms(page) {
   assert(norms.signalProgramLength === 6 && norms.signalProgramStates.includes('GGrr') && norms.signalProgramStates.includes('rrGG') && norms.signalProgramStates.includes('rrrr'), `SUMO tlLogic program is incomplete: ${JSON.stringify(norms.signalProgramStates)}`)
   assert(norms.signalProgramPedestrianLinks === norms.signalProgramLength && norms.trafficRules?.linkOrder?.includes('ped_cross_x') && norms.trafficRules?.linkOrder?.includes('ped_cross_z'), `Pedestrian links are not explicit in the signal program: ${JSON.stringify(norms.trafficRules)}`)
   assert(norms.intersectionControllers >= 20 && norms.controllerPhaseCoverage === norms.intersectionControllers, `Intersection controllers are missing SUMO phase/stop-bar/crossing data: ${norms.controllerPhaseCoverage}/${norms.intersectionControllers}`)
+  assert(norms.signalDetectorCount >= norms.intersectionControllers * 4 && norms.actuatedReadyControllers === norms.intersectionControllers, `SUMO detector/actuation-ready metadata is incomplete: ${JSON.stringify({ detectors: norms.signalDetectorCount, controllers: norms.intersectionControllers, ready: norms.actuatedReadyControllers })}`)
+  assert(norms.roadPedestrianPolicies === norms.roads && /gap/i.test(norms.trafficRules?.pedestrianGapAcceptance || ''), `Road pedestrian policy/gap acceptance rules are incomplete: ${JSON.stringify({ roads: norms.roads, policies: norms.roadPedestrianPolicies, rule: norms.trafficRules?.pedestrianGapAcceptance })}`)
   assert(norms.gbfsStations >= 9 && norms.gbfsStationInfo === norms.gbfsStations && norms.gbfsStationStatus === norms.gbfsStations && norms.gbfsVehicleTypes >= 2 && norms.gbfsGeofences >= 2, `GBFS mobility feed shape is incomplete: ${JSON.stringify({ stations: norms.gbfsStations, info: norms.gbfsStationInfo, status: norms.gbfsStationStatus, types: norms.gbfsVehicleTypes, geofences: norms.gbfsGeofences })}`)
   assert(norms.smartCurbZones >= 20 && norms.smartTrafficFlows >= 12 && norms.smartDataModels.includes('TrafficFlowObserved') && norms.smartDataModels.includes('ParkingSpot'), `SmartCities transport data model coverage is incomplete: ${JSON.stringify(norms.smartDataModels)}`)
+  assert(norms.directionalTrafficFlows >= 24, `TrafficFlowObserved directional/headway fields are too sparse: ${norms.directionalTrafficFlows}`)
   assert(norms.gatsimDisruptions >= 3 && norms.gatsimSignals.includes('traffic flow observed') && norms.gatsimAdaptiveBehaviors.includes('re-route to next crosswalk'), `GATSim-style adaptive mobility policies are incomplete: ${JSON.stringify({ disruptions: norms.gatsimDisruptions, signals: norms.gatsimSignals, behaviors: norms.gatsimAdaptiveBehaviors })}`)
   assert(norms.detailedCars === 120, 'Vehicle style/dimension metadata is incomplete')
   assert(norms.carBodyStyles >= 5, `Vehicle body style variation is too low: ${norms.carBodyStyles}`)
@@ -1870,6 +1896,7 @@ async function inspectCrosswalkSignalCompliance(page) {
 
   assert(waiting.sample?.crosswalkWaiting && waiting.eventText, `NPC did not wait for vehicle green at the curb: ${JSON.stringify(waiting)}`)
   assert(waiting.sample.crosswalkNoStart === true && waiting.sample.crosswalkProgram === 'SUMO_TL_LOGIC' && typeof waiting.sample.crosswalkCountdown === 'number', `NPC crosswalk wait did not expose SUMO no-start/countdown metadata: ${JSON.stringify(waiting.sample)}`)
+  assert(waiting.sample.crosswalkControl === 'traffic-light' && /SUMO tlLogic/i.test(waiting.sample.crosswalkPriorityRule || ''), `NPC crosswalk sample did not expose crossing control rules: ${JSON.stringify(waiting.sample)}`)
   assert(crossing.sample && !crossing.sample.crosswalkWaiting, `NPC did not leave the curb when the crossed vehicle axis turned red: ${JSON.stringify(crossing)}`)
   return {
     roadName: setup.roadName,
@@ -2442,6 +2469,7 @@ async function inspectStreetRendering(page) {
   assert(result.crosswalks.raisedAboveRoad && result.crosswalks.separatedFromSidewalks, 'Crosswalks are not explicitly separated from sidewalks')
   assert(result.trafficSignals?.heads >= result.crosswalks.crossingPads && /SUMO/i.test(result.trafficSignals?.controller || ''), `Traffic signal controller metadata is incomplete: ${JSON.stringify(result.trafficSignals)}`)
   assert(result.trafficSignals?.phases?.some(phase => /all-red-clearance/.test(phase)) && /stop bars/i.test(result.trafficSignals?.stopRule || ''), `Traffic signal phase/stop rules are incomplete: ${JSON.stringify(result.trafficSignals)}`)
+  assert(/induction-loop/i.test(result.trafficSignals?.detectorPolicy || ''), `Traffic signal detector policy is missing: ${JSON.stringify(result.trafficSignals)}`)
   assert(
     result.trafficSignals?.program?.length === 6 &&
       result.trafficSignals?.linkOrder?.includes('ped_cross_x') &&

@@ -392,6 +392,31 @@ function nearestCrosswalkForRoad(road, from, to, roads) {
   return best
 }
 
+function crossingControlForRoad(road, crossRoad) {
+  if (road?.main && crossRoad?.main) {
+    return {
+      type: 'traffic-light',
+      priorityRule: 'SUMO tlLogic protected WALK; pedestrians start only when the crossed vehicle link is red',
+      minimumGapSeconds: 0,
+      source: 'Eclipse SUMO Traffic_Lights',
+    }
+  }
+  if (road?.main || crossRoad?.main) {
+    return {
+      type: 'priority-zebra',
+      priorityRule: 'zebra crossing with conservative vehicle-gap acceptance',
+      minimumGapSeconds: 4.5,
+      source: 'Eclipse SUMO Pedestrians priority crossing',
+    }
+  }
+  return {
+    type: 'uncontrolled-gap',
+    priorityRule: 'uncontrolled local crossing; pedestrians enter only after a clear vehicle time slot',
+    minimumGapSeconds: 5.2,
+    source: 'Eclipse SUMO Pedestrians unprioritized crossing',
+  }
+}
+
 function pedestrianWaypoint(agent, target, roads = []) {
   const from = { x: agent.pos.x, z: agent.pos.z }
   const crossingRoad = roads
@@ -490,6 +515,10 @@ function routePoint(point, mode, details = {}) {
     routeRoadAxis: details.roadAxis || point.roadAxis || null,
     waypointName: details.name || point.name || details.roadName || 'waypoint',
     crosswalk: details.crosswalk || null,
+    crossingControl: details.crossingControl || point.crossingControl || null,
+    crossingPriorityRule: details.crossingPriorityRule || point.crossingPriorityRule || null,
+    crossingGapSeconds: details.crossingGapSeconds ?? point.crossingGapSeconds ?? null,
+    crossingSource: details.crossingSource || point.crossingSource || null,
   }
 }
 
@@ -500,6 +529,10 @@ function pushRoutePoint(waypoints, point, mode, details = {}) {
     previous.routeMode = previous.routeMode === 'crosswalk-crossing' ? previous.routeMode : mode
     previous.routeRoadId = previous.routeRoadId || details.roadId || point.roadId || null
     previous.routeRoadAxis = previous.routeRoadAxis || details.roadAxis || point.roadAxis || null
+    previous.crossingControl = previous.crossingControl || details.crossingControl || point.crossingControl || null
+    previous.crossingPriorityRule = previous.crossingPriorityRule || details.crossingPriorityRule || point.crossingPriorityRule || null
+    previous.crossingGapSeconds = previous.crossingGapSeconds ?? details.crossingGapSeconds ?? point.crossingGapSeconds ?? null
+    previous.crossingSource = previous.crossingSource || details.crossingSource || point.crossingSource || null
     return
   }
   waypoints.push(routePoint(point, mode, details))
@@ -510,6 +543,7 @@ function crosswalkPairForRoad(road, from, to, roads) {
   if (!crosswalk) return null
 
   const curbOffset = road.width / 2 + 4.2
+  const control = crossingControlForRoad(road, crosswalk.crossRoad)
   if (road.axis === 'x') {
     const fromSide = from.z >= road.z ? 1 : -1
     const toSide = to.z >= road.z ? 1 : -1
@@ -519,6 +553,10 @@ function crosswalkPairForRoad(road, from, to, roads) {
       roadId: road.id,
       roadName: road.name,
       roadAxis: road.axis,
+      crossingControl: control.type,
+      crossingPriorityRule: control.priorityRule,
+      crossingGapSeconds: control.minimumGapSeconds,
+      crossingSource: control.source,
       crosswalk: { x: crosswalk.x, z: road.z },
       approach: {
         x: crosswalk.x,
@@ -543,6 +581,10 @@ function crosswalkPairForRoad(road, from, to, roads) {
     roadId: road.id,
     roadName: road.name,
     roadAxis: road.axis,
+    crossingControl: control.type,
+    crossingPriorityRule: control.priorityRule,
+    crossingGapSeconds: control.minimumGapSeconds,
+    crossingSource: control.source,
     crosswalk: { x: road.x, z: crosswalk.z },
     approach: {
       x: approachX,
@@ -598,6 +640,10 @@ function buildPedestrianRoute(from, target, roads = []) {
         roadAxis: pair.roadAxis,
         name: pair.approach.name,
         crosswalk: pair.crosswalk,
+        crossingControl: pair.crossingControl,
+        crossingPriorityRule: pair.crossingPriorityRule,
+        crossingGapSeconds: pair.crossingGapSeconds,
+        crossingSource: pair.crossingSource,
       })
     }
     pushRoutePoint(waypoints, pair.exit, 'crosswalk-crossing', {
@@ -606,6 +652,10 @@ function buildPedestrianRoute(from, target, roads = []) {
       roadAxis: pair.roadAxis,
       name: pair.exit.name,
       crosswalk: pair.crosswalk,
+      crossingControl: pair.crossingControl,
+      crossingPriorityRule: pair.crossingPriorityRule,
+      crossingGapSeconds: pair.crossingGapSeconds,
+      crossingSource: pair.crossingSource,
     })
     cursor = pair.exit
     crossedRoads.add(road.id)
@@ -655,12 +705,63 @@ function roadForWaypoint(waypoint, roads = []) {
     null
 }
 
-function pedestrianSignalForCrossing(road, timeMinutes = 0) {
-  if (!road) return { vehicleSignal: 'unknown', walk: true, clearance: false, label: 'unsignalized crossing' }
+function pedestrianSignalForCrossing(road, timeMinutes = 0, waypoint = null) {
+  const crossingControl = waypoint?.crossingControl || 'traffic-light'
+  if (!road) return { vehicleSignal: 'unknown', walk: true, clearance: false, label: 'unsignalized crossing', crossingControl }
+  if (crossingControl !== 'traffic-light') {
+    return {
+      vehicleSignal: 'gap-check',
+      walk: true,
+      clearance: false,
+      noStart: false,
+      pedestrianLinkState: 'G',
+      secondsRemaining: 0,
+      sourceProgram: crossingControl === 'priority-zebra' ? 'SUMO_PRIORITY_CROSSING' : 'SUMO_UNCONTROLLED_GAP',
+      phase: 'gap-acceptance',
+      phaseId: crossingControl,
+      activeVehicleAxis: null,
+      crossingControl,
+      crossingPriorityRule: waypoint?.crossingPriorityRule || null,
+      minimumGapSeconds: waypoint?.crossingGapSeconds || 4.5,
+      requiresGap: true,
+      label: crossingControl === 'priority-zebra' ? 'priority zebra gap' : 'uncontrolled clear gap',
+    }
+  }
   const signal = pedestrianSignalForAxis(road.axis, timeMinutes)
   return {
     ...signal,
+    crossingControl,
     label: signal.label,
+  }
+}
+
+function crossingVehicleGapStatus(road, waypoint, store) {
+  if (!road || !waypoint?.crosswalk) return { clear: true, nearestSeconds: null, nearestVehicleId: null }
+  const minimumGapSeconds = Number(waypoint.crossingGapSeconds || 4.5)
+  const crossing = waypoint.crosswalk
+  let nearestSeconds = Infinity
+  let nearestVehicleId = null
+  for (const sample of store.vehicleSamples || []) {
+    const sameRoad = sample.laneKey?.startsWith(`${road.id}:`) || sample.activeRoadName === road.name
+    if (!sameRoad || !Number.isFinite(sample.x) || !Number.isFinite(sample.z)) continue
+    const lateral = road.axis === 'x' ? Math.abs(sample.z - road.z) : Math.abs(sample.x - road.x)
+    if (lateral > road.width * 0.78) continue
+    const longitudinal = road.axis === 'x' ? Math.abs(sample.x - crossing.x) : Math.abs(sample.z - crossing.z)
+    if (longitudinal > 46) continue
+    const speed = Math.max(1, Number(sample.speed) || 1)
+    const seconds = longitudinal / speed
+    if (seconds < nearestSeconds) {
+      nearestSeconds = seconds
+      nearestVehicleId = sample.id
+    }
+  }
+  if (!Number.isFinite(nearestSeconds)) return { clear: true, nearestSeconds: null, nearestVehicleId: null }
+  const clear = nearestSeconds >= minimumGapSeconds
+  return {
+    clear,
+    nearestSeconds: Number(nearestSeconds.toFixed(2)),
+    nearestVehicleId,
+    minimumGapSeconds,
   }
 }
 
@@ -700,7 +801,7 @@ function currentWalkWaypoint(agent, target, roads = []) {
 
   const waypoint = route.waypoints[route.index] || target
   const crossingRoad = waypoint.routeMode === 'crosswalk-crossing' ? roadForWaypoint(waypoint, roads) : null
-  const crossingSignal = crossingRoad ? pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes) : null
+  const crossingSignal = crossingRoad ? pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes, waypoint) : null
   agent.walkPlan = {
     mode: waypoint.routeMode || 'direct',
     targetName: route.targetName || target.name || 'destination',
@@ -712,6 +813,10 @@ function currentWalkWaypoint(agent, target, roads = []) {
     roadAxis: waypoint.routeRoadAxis || crossingRoad?.axis || null,
     crosswalkSignal: crossingSignal?.label || null,
     crosswalkVehicleSignal: crossingSignal?.vehicleSignal || null,
+    crosswalkControl: waypoint.crossingControl || crossingSignal?.crossingControl || null,
+    crosswalkPriorityRule: waypoint.crossingPriorityRule || crossingSignal?.crossingPriorityRule || null,
+    crosswalkGapSeconds: waypoint.crossingGapSeconds ?? crossingSignal?.minimumGapSeconds ?? null,
+    crosswalkSource: waypoint.crossingSource || crossingSignal?.sourceProgram || null,
     crosswalkWaiting: false,
     routeIndex: route.index,
     routePoints: route.waypoints.length,
@@ -815,22 +920,31 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
   const waypoint = roads?.length ? currentWalkWaypoint(agent, safeTarget, roads) : safeTarget
   if (roads?.length && waypoint.routeMode === 'crosswalk-crossing') {
     const crossingRoad = roadForWaypoint(waypoint, roads)
-    const signal = pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes)
+    const store = useCityStore.getState()
+    const signal = pedestrianSignalForCrossing(crossingRoad, store.timeMinutes, waypoint)
+    const gap = signal.requiresGap ? crossingVehicleGapStatus(crossingRoad, waypoint, store) : { clear: true }
     const alreadyInRoad = pedestrianInsideCrosswalkRoad(agent, crossingRoad)
-    if (!signal.walk && !alreadyInRoad) {
+    if ((!signal.walk || !gap.clear) && !alreadyInRoad) {
       agent.crosswalkWaitTimer = (agent.crosswalkWaitTimer || 0) + delta
-      agent.activity = 'waiting for walk signal'
-      agent.currentIntent = `waiting at ${crossingRoad?.name || 'crosswalk'} while traffic has ${signal.vehicleSignal}`
+      agent.activity = signal.requiresGap ? 'waiting for traffic gap' : 'waiting for walk signal'
+      agent.currentIntent = signal.requiresGap
+        ? `waiting at ${crossingRoad?.name || 'crosswalk'} for a ${gap.minimumGapSeconds || signal.minimumGapSeconds || 4.5}s safe vehicle gap`
+        : `waiting at ${crossingRoad?.name || 'crosswalk'} while traffic has ${signal.vehicleSignal}`
       agent.walkPlan = {
         ...(agent.walkPlan || {}),
         mode: 'crosswalk-waiting',
         crosswalkWaiting: true,
-        crosswalkSignal: signal.label,
-        crosswalkVehicleSignal: signal.vehicleSignal,
+        crosswalkSignal: gap.clear === false ? 'waiting for safe gap' : signal.label,
+        crosswalkVehicleSignal: gap.clear === false ? 'approaching vehicle' : signal.vehicleSignal,
         crosswalkPhaseId: signal.phaseId,
-        crosswalkNoStart: signal.noStart,
-        crosswalkCountdown: signal.secondsRemaining,
+        crosswalkNoStart: signal.noStart || gap.clear === false,
+        crosswalkCountdown: gap.clear === false ? gap.nearestSeconds : signal.secondsRemaining,
         crosswalkProgram: signal.sourceProgram,
+        crosswalkControl: waypoint.crossingControl || signal.crossingControl || null,
+        crosswalkPriorityRule: waypoint.crossingPriorityRule || signal.crossingPriorityRule || null,
+        crosswalkGapClear: gap.clear ?? null,
+        crosswalkGapSeconds: gap.minimumGapSeconds ?? signal.minimumGapSeconds ?? waypoint.crossingGapSeconds ?? null,
+        crosswalkNearestVehicleId: gap.nearestVehicleId || null,
         roadId: crossingRoad?.id || agent.walkPlan?.roadId || null,
         roadName: crossingRoad?.name || agent.walkPlan?.roadName || null,
         roadAxis: crossingRoad?.axis || agent.walkPlan?.roadAxis || null,
@@ -845,8 +959,10 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
           agentId: agent.id,
           agentName: agent.name,
           placeName: crossingRoad?.name || agent.placeName,
-          topic: 'walk signal wait',
-          text: `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because ${signal.phaseId || 'the signal phase'} gives ${signal.vehicleSignal} to vehicle traffic and no pedestrian start.`,
+          topic: signal.requiresGap ? 'crossing gap wait' : 'walk signal wait',
+          text: signal.requiresGap
+            ? `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because a vehicle gap is below ${gap.minimumGapSeconds || signal.minimumGapSeconds || 4.5}s under ${waypoint.crossingControl || 'gap'} rules.`
+            : `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because ${signal.phaseId || 'the signal phase'} gives ${signal.vehicleSignal} to vehicle traffic and no pedestrian start.`,
         })
       }
       return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
@@ -4355,6 +4471,11 @@ function NPCs({ city }) {
           crosswalkNoStart: agent.walkPlan?.crosswalkNoStart ?? null,
           crosswalkCountdown: agent.walkPlan?.crosswalkCountdown ?? null,
           crosswalkProgram: agent.walkPlan?.crosswalkProgram || null,
+          crosswalkControl: agent.walkPlan?.crosswalkControl || null,
+          crosswalkPriorityRule: agent.walkPlan?.crosswalkPriorityRule || null,
+          crosswalkGapClear: agent.walkPlan?.crosswalkGapClear ?? null,
+          crosswalkGapSeconds: agent.walkPlan?.crosswalkGapSeconds ?? null,
+          crosswalkNearestVehicleId: agent.walkPlan?.crosswalkNearestVehicleId || null,
           crosswalkWaitSeconds: Number((agent.crosswalkWaitTimer || 0).toFixed(2)),
           routeRoadId: agent.walkPlan?.roadId || null,
           routeRoadName: agent.walkPlan?.roadName || null,
@@ -4759,6 +4880,10 @@ function NPCs({ city }) {
           roadAxis: road.axis,
           name: destination.name,
           crosswalk: road.axis === 'x' ? { x: exit.x, z: road.z } : { x: road.x, z: exit.z },
+          crossingControl: 'traffic-light',
+          crossingPriorityRule: 'SUMO tlLogic protected WALK debug crossing',
+          crossingGapSeconds: 0,
+          crossingSource: 'Eclipse SUMO Traffic_Lights',
         })],
         index: 0,
         createdAt: nowMs(),

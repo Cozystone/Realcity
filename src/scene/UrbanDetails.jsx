@@ -275,7 +275,8 @@ function TrafficSignals({ roads }) {
         phases: SUMO_TL_LOGIC.map(phase => phase.id),
         program: SUMO_TL_LOGIC.map(phase => ({ id: phase.id, duration: phase.duration, state: phase.sumoState })),
         linkOrder: ['x_vehicle_forward', 'x_vehicle_reverse', 'z_vehicle_forward', 'z_vehicle_reverse', 'ped_cross_x', 'ped_cross_z'],
-        pedestrianLinks: ['ped_cross_x', 'ped_cross_z'],
+        pedestrianLinks: { crossX: 'ped_cross_x', crossZ: 'ped_cross_z' },
+        detectorPolicy: 'SUMO induction-loop-style pressure sensors are exposed on city intersection controllers for future actuated timing',
         stopRule: 'vehicles stop at crosswalk stop bars on red/all-red; yellow decelerates when far and clears when close',
       },
     })
@@ -482,7 +483,7 @@ function PedestrianSignals({ roads }) {
       {signals.slice(0, 24).map((signal, index) => (
         <Billboard key={`ped-signal-label-${index}-${signal.x}-${signal.z}`} position={[signal.x, CITY_BASE_Y + 2.25, signal.z]}>
           <Text fontSize={0.13} maxWidth={1.8} textAlign="center" color="#f8fbff" outlineWidth={0.012} outlineColor="#07111c">
-            WALK
+            PED XING
           </Text>
         </Billboard>
       ))}

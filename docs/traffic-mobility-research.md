@@ -5,11 +5,14 @@ This note tracks the traffic-rule pass for RealCity.
 ## Sources Reviewed
 
 - Eclipse SUMO traffic lights:
-  https://sumo.dlr.de/docs/Simulation/Traffic_Lights.html
+  https://eclipse.dev/sumo/docs/Simulation/Traffic_Lights.html
   - Adopted: static `tlLogic`-style phase sequence, explicit yellow phases, and
     optional all-red clearance before the next green phase.
   - Adopted: signal states as whole-intersection phases, not isolated lamp
     toggles.
+  - Adopted: detector-ready controllers. Each main intersection now exposes
+    induction-loop-style detector records and pressure fields so static timing
+    can later become actuated without changing the data contract.
 - Eclipse SUMO pedestrians:
   https://eclipse.dev/sumo/docs/Simulation/Pedestrians.html
   - Adopted: sidewalks, walking areas, and crossings are distinct routing
@@ -17,6 +20,9 @@ This note tracks the traffic-rule pass for RealCity.
     space.
   - Adopted: a crossing should be considered unavailable when vehicles block
     the crossing path.
+  - Adopted: three crossing controls: traffic-light, priority zebra, and
+    uncontrolled gap. Non-signalized crossings use conservative time-gap
+    acceptance before pedestrians enter the lane.
 - MobilityData GBFS:
   https://gbfs.org/specification
   - Adopted as future data-model shape for shared micromobility: station or
@@ -26,6 +32,9 @@ This note tracks the traffic-rule pass for RealCity.
   https://github.com/smart-data-models/SmartCities
   - Adopted as a model direction: traffic, parking, building, and mobility rules
     should be represented as explicit city data, not hidden constants.
+  - Adopted Transportation `TrafficFlowObserved` fields for live traffic
+    pressure: lane id/direction, intensity, occupancy, headway, gap distance,
+    average speed, and queue estimate.
 - qiliuchn/GATSim:
   https://github.com/qiliuchn/gatsim
   - Adopted: traffic agents should perceive traffic conditions, remember
@@ -55,6 +64,13 @@ This note tracks the traffic-rule pass for RealCity.
   vehicle links, separate `ped_cross_x` and `ped_cross_z` crossing links, and a
   controller record for every main-road intersection. Pedestrian route samples
   carry no-start, countdown, and source-program telemetry while they wait.
+- Roads now carry lane and pedestrian policies: right-hand lane direction,
+  sidewalk permissions, crossing control type, and gap-acceptance seconds.
+- Main intersection controllers now include four SUMO-style detector records
+  and an actuation-ready policy keyed to `TrafficFlowObserved` pressure.
+- NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
+  gap-clear status, and nearest approaching vehicle when a conservative gap
+  wait is triggered.
 - A GBFS-shaped shared mobility layer now exists in `city.mobilitySystem.gbfs`:
   system information, vehicle types, station information, station status, and
   geofencing zones are generated near meaningful landmarks.
@@ -75,8 +91,8 @@ This note tracks the traffic-rule pass for RealCity.
 ## Next Traffic Targets
 
 - Add explicit turn lanes and turn intentions.
-- Add queue length and detector-like pressure so green splits can become
-  actuated in high-traffic areas.
+- Use the new detector-like pressure to actually extend/shorten green splits
+  in high-traffic areas.
 - Add visible dock pickup/return poses and bike/scooter props for the
   `shared-bike`/`shared-scooter` routes.
 - Render the shared mobility docks and curb-zone markings as physical street

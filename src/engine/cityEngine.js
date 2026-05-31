@@ -98,6 +98,8 @@ export const SMART_MOBILITY_STANDARDS = {
     reference: 'Eclipse SUMO static tlLogic',
     linkOrder: ['x_vehicle_forward', 'x_vehicle_reverse', 'z_vehicle_forward', 'z_vehicle_reverse', 'ped_cross_x', 'ped_cross_z'],
     pedestrianRule: 'pedestrian crossings are modeled as separate controlled links after vehicle links',
+    crossingTypes: ['traffic-light', 'priority-zebra', 'uncontrolled-gap'],
+    detectorModel: 'SUMO induction-loop-style pressure sensors feeding future actuated green splits',
   },
   gbfs: {
     reference: 'MobilityData GBFS station_information, station_status, vehicle_types, geofencing_zones',
@@ -469,6 +471,18 @@ function roadGrid() {
       growth: eastWestGrowth,
       pattern: eastWestGrowth.pattern,
       sourceAlgorithm: 'heatmap-road-growth-port',
+      laneModel: {
+        drivingSide: 'right-hand',
+        lanesPerDirection: 1,
+        positiveDirectionLaneOffset: ROAD_WIDTH * tier.widthMultiplier * 0.27,
+        rule: 'positive eastbound traffic uses the south/right lane; negative westbound traffic uses the north/right lane',
+      },
+      pedestrianPolicy: {
+        sidewalks: 'both-sides',
+        lanePermission: 'pedestrians-forbidden-except-crossings',
+        crossingControl: isMain ? 'traffic-light-on-main-main-crossings' : 'priority-zebra-or-gap-crossing',
+        gapAcceptanceSeconds: isMain ? 0 : 4.5,
+      },
     }
     const northSouth = {
       id: `ns_${index}`,
@@ -484,6 +498,18 @@ function roadGrid() {
       growth: northSouthGrowth,
       pattern: northSouthGrowth.pattern,
       sourceAlgorithm: 'heatmap-road-growth-port',
+      laneModel: {
+        drivingSide: 'right-hand',
+        lanesPerDirection: 1,
+        positiveDirectionLaneOffset: ROAD_WIDTH * tier.widthMultiplier * 0.27,
+        rule: 'positive northbound traffic uses the west/right lane; negative southbound traffic uses the east/right lane',
+      },
+      pedestrianPolicy: {
+        sidewalks: 'both-sides',
+        lanePermission: 'pedestrians-forbidden-except-crossings',
+        crossingControl: isMain ? 'traffic-light-on-main-main-crossings' : 'priority-zebra-or-gap-crossing',
+        gapAcceptanceSeconds: isMain ? 0 : 4.5,
+      },
     }
     eastWest.sidewalkDecor = sidewalkDecorationPlan(eastWest, index)
     northSouth.sidewalkDecor = sidewalkDecorationPlan(northSouth, index)
@@ -1129,6 +1155,7 @@ function createIntersectionControllers(roads) {
   for (const h of horizontal) {
     for (const v of vertical) {
       if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.94) continue
+      const detectorDistance = 38
       controllers.push({
         id: `tl_${h.id}_${v.id}`,
         model: 'SUMO static tlLogic',
@@ -1154,6 +1181,19 @@ function createIntersectionControllers(roads) {
           { crossedAxis: 'x', controlledLink: 'ped_cross_x', rule: 'walk only while z-protected-green is active' },
           { crossedAxis: 'z', controlledLink: 'ped_cross_z', rule: 'walk only while x-protected-green is active' },
         ],
+        detectors: [
+          { id: `loop_${h.id}_${v.id}_x_pos`, type: 'SUMO-style inductionLoop', roadId: h.id, controlledLink: 'x_vehicle_forward', laneDirection: 1, x: v.x - detectorDistance, z: h.z, distanceToStopBar: detectorDistance, source: 'TrafficFlowObserved' },
+          { id: `loop_${h.id}_${v.id}_x_neg`, type: 'SUMO-style inductionLoop', roadId: h.id, controlledLink: 'x_vehicle_reverse', laneDirection: -1, x: v.x + detectorDistance, z: h.z, distanceToStopBar: detectorDistance, source: 'TrafficFlowObserved' },
+          { id: `loop_${h.id}_${v.id}_z_pos`, type: 'SUMO-style inductionLoop', roadId: v.id, controlledLink: 'z_vehicle_forward', laneDirection: 1, x: v.x, z: h.z - detectorDistance, distanceToStopBar: detectorDistance, source: 'TrafficFlowObserved' },
+          { id: `loop_${h.id}_${v.id}_z_neg`, type: 'SUMO-style inductionLoop', roadId: v.id, controlledLink: 'z_vehicle_reverse', laneDirection: -1, x: v.x, z: h.z + detectorDistance, distanceToStopBar: detectorDistance, source: 'TrafficFlowObserved' },
+        ],
+        actuationPolicy: {
+          mode: 'static-now-detector-ready',
+          minGreenSeconds: 12,
+          maxGreenSeconds: 34,
+          extensionSeconds: 3,
+          pressureSignals: ['intensity', 'occupancy', 'averageHeadwayTime', 'queueLengthEstimate'],
+        },
       })
     }
   }
@@ -1280,14 +1320,29 @@ function createMobilitySystem(roads, landmarks) {
     smartCity: {
       dataModels: SMART_MOBILITY_STANDARDS.smartCities.entities,
       curbZones,
-      trafficFlowObserved: mainRoads.slice(0, 18).map((road, index) => ({
-        id: `traffic_flow_${road.id}`,
-        type: 'TrafficFlowObserved',
-        roadId: road.id,
-        roadName: road.name,
-        intensity: Number(clamp(road.trafficWeight + (index % 4) * 0.08, 0.2, 1.8).toFixed(2)),
-        averageVehicleSpeedKph: Math.round(24 + road.trafficWeight * 18),
-        congestionLevel: road.trafficWeight > 1.1 ? 'medium' : 'low',
+      trafficFlowObserved: mainRoads.slice(0, 18).flatMap((road, index) => [-1, 1].map(direction => {
+        const intensity = clamp(road.trafficWeight + (index % 4) * 0.08 + (direction > 0 ? 0.04 : 0), 0.2, 1.8)
+        const averageVehicleSpeedKph = Math.round(24 + road.trafficWeight * 18 - intensity * 3)
+        const laneDirection = road.axis === 'x'
+          ? direction > 0 ? 'eastbound' : 'westbound'
+          : direction > 0 ? 'northbound' : 'southbound'
+        return {
+          id: `traffic_flow_${road.id}_${direction > 0 ? 'pos' : 'neg'}`,
+          type: 'TrafficFlowObserved',
+          roadId: road.id,
+          roadName: road.name,
+          laneId: `${road.id}_${direction > 0 ? 'positive' : 'negative'}`,
+          laneDirection,
+          reversedLane: direction < 0,
+          vehicleType: 'car',
+          intensity: Number(intensity.toFixed(2)),
+          occupancy: Number(clamp(0.18 + intensity * 0.22, 0.08, 0.82).toFixed(2)),
+          averageHeadwayTime: Number(clamp(6.8 - intensity * 2.1, 1.2, 7.5).toFixed(2)),
+          averageGapDistance: Number(clamp(46 - intensity * 13, 9, 48).toFixed(1)),
+          averageVehicleSpeedKph,
+          congestionLevel: intensity > 1.25 ? 'medium' : 'low',
+          queueLengthEstimate: Math.round(clamp((intensity - 0.72) * 8, 0, 12)),
+        }
       })),
     },
     gatsim: {
@@ -1828,8 +1883,8 @@ export function createRealCity(seed = 20260525) {
     districtAt,
     getNearbyBuildings,
     socialNorms: {
-      pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings, and pedestrians wait at curb approaches until the crossed vehicle axis has a red signal.',
-      traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
+      pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings. Signalized crossings require protected WALK, while lower-tier crossings use conservative vehicle-gap acceptance.',
+      traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, track detector-like traffic pressure, and taxis use named-road addresses for pickup and drop-off.',
       sharedMobility: 'GBFS-shaped bike and scooter docks expose station information, station status, vehicle types, geofenced slow/no-park zones, and sidewalk clearance rules.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
@@ -1865,6 +1920,8 @@ export function createRealCity(seed = 20260525) {
       signals: `Main intersections use a SUMO-style static tlLogic program with protected green, yellow clearance, all-red clearance, and separate pedestrian crossing links. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
       yielding: 'Drivers brake for pedestrians in or near a lane and stop at stop bars for red/all-red signal approaches; yellow allows close vehicles to clear but makes far vehicles decelerate.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
+      pedestrianGapAcceptance: 'Priority-zebra and uncontrolled crossings use a SUMO-style conservative gap rule: pedestrians wait if an approaching vehicle would reach the crossing before the configured gap window.',
+      detectorPolicy: 'Each main intersection exposes four SUMO induction-loop-style detector records and an actuation-ready policy keyed to TrafficFlowObserved intensity, occupancy, headway, and queue pressure.',
       smartCityCurbZones: mobilitySystem.smartCity.curbZones.length,
       gbfsStations: mobilitySystem.gbfs.stations.length,
       gatsimDisruptions: mobilitySystem.gatsim.disruptionEvents.length,
