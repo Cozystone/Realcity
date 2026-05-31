@@ -241,11 +241,13 @@ function fbm(x, z) {
 }
 
 export function terrainHeight(x, z) {
-  const distance = Math.hypot(x, z)
+  const safeX = Number.isFinite(Number(x)) ? Number(x) : 0
+  const safeZ = Number.isFinite(Number(z)) ? Number(z) : 40
+  const distance = Math.hypot(safeX, safeZ)
   const cityBlend = smoothstep(900, 1160, distance)
-  const cityFloor = CITY_BASE_Y + fbm(x * 0.1, z * 0.1) * 0.035
-  const hills = 4 + Math.max(0, fbm(x + 450, z - 250) + 0.5) * 92
-  const coastalDip = smoothstep(74, 0, Math.abs(z + 980 + Math.sin(x * 0.003) * 40)) * 6
+  const cityFloor = CITY_BASE_Y + fbm(safeX * 0.1, safeZ * 0.1) * 0.035
+  const hills = 4 + Math.max(0, fbm(safeX + 450, safeZ - 250) + 0.5) * 92
+  const coastalDip = smoothstep(74, 0, Math.abs(safeZ + 980 + Math.sin(safeX * 0.003) * 40)) * 6
   return cityFloor * (1 - cityBlend) + hills * cityBlend - coastalDip
 }
 
@@ -1214,7 +1216,7 @@ export function createRealCity(seed = 20260525) {
     districtAt,
     getNearbyBuildings,
     socialNorms: {
-      pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings.',
+      pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings, and pedestrians wait at curb approaches until the crossed vehicle axis has a red signal.',
       traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
@@ -1235,7 +1237,7 @@ export function createRealCity(seed = 20260525) {
     trafficRules: {
       drivingSide: 'right-hand',
       laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',
-      signals: `Main intersections alternate east-west and north-south green phases every ${TRAFFIC_SIGNAL_CYCLE_SECONDS / 2} seconds with a ${TRAFFIC_SIGNAL_YELLOW_SECONDS} second yellow interval.`,
+      signals: `Main intersections alternate east-west and north-south green phases every ${TRAFFIC_SIGNAL_CYCLE_SECONDS / 2} seconds with a ${TRAFFIC_SIGNAL_YELLOW_SECONDS} second yellow interval; pedestrian crosswalk movement is allowed only while the crossed vehicle axis is red unless already in the road.`,
       yielding: 'Drivers brake for pedestrians in or near a lane and stop at red/yellow signal approaches.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
     },

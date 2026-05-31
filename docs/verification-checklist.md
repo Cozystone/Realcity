@@ -13,7 +13,8 @@ audit has a clear finish line.
 - Full map: clicking the circular minimap must open a city-wide map with the
   current player marker and landmark labels; map coordinate conversion and
   player state updates must sanitize `NaN` so MapLibre never receives invalid
-  `LngLat` centers.
+  `LngLat` centers, and wheel zoom/scroll must not emit passive-listener
+  `preventDefault` console warnings.
 - Full map navigation: the map exposes a live navigation card, route start/end
   markers, progress marker, remaining distance, and lane-following point count
   whenever a taxi/walking route is active.
@@ -37,7 +38,9 @@ audit has a clear finish line.
   and produce a mission owned by that contacted NPC.
 - Street norms: every road has a name, landmarks/buildings have road-name
   addresses, trees do not overlap road reserves, and social norm metadata exists
-  for pedestrian/traffic/address rules.
+  for pedestrian/traffic/address rules; NPCs wait at curb approaches while the
+  crossed vehicle axis has green/yellow and enter the crosswalk only when that
+  vehicle axis turns red.
 - Traffic visual reactions: vehicle samples expose brake-light intensity, amber
   caution/turn signals, and driver reaction text when yielding, stopping, or
   following another car.
@@ -136,7 +139,8 @@ audit has a clear finish line.
 - Daily routine visual pass: observe several named agents over time and confirm
   the visible walking routes match their schedule changes.
 - Taxi route: request taxi escorts to at least three distant landmarks and
-  confirm boarding, ride, arrival, and mission completion.
+  confirm boarding, ride, camera visibility after pressing `F`, arrival, and
+  mission completion.
 - Walking route visual pass: request several different nearby walking escorts
   and confirm the visible route feels natural around crossings and entrances.
 - Physics feel visual pass: manually sample jump timing, slopes, collisions with

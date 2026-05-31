@@ -39,6 +39,17 @@ function finitePoint2(point) {
   return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z))
 }
 
+function safePoint2(point, fallback = { x: 0, z: 40 }) {
+  return {
+    x: Number.isFinite(Number(point?.x)) ? Number(point.x) : fallback.x,
+    z: Number.isFinite(Number(point?.z)) ? Number(point.z) : fallback.z,
+  }
+}
+
+function finiteVector3(vector) {
+  return Number.isFinite(vector?.x) && Number.isFinite(vector?.y) && Number.isFinite(vector?.z)
+}
+
 function finiteRoute(points = []) {
   return points.filter(finitePoint2)
 }
@@ -628,11 +639,16 @@ export default function PlayerRig({ city }) {
       const taxi = mission.taxi
       const startedAt = mission.boardingStartedAt || performance.now()
       const t = smoothstep(Math.min(1, Math.max(0, (performance.now() - startedAt) / 1450)))
-      const start = mission.boardingPlayerStart || { x: pos.current.x, z: pos.current.z }
-      const door = taxiPassengerDoorPoint(taxi, 'player')
+      const start = finitePoint2(mission.boardingPlayerStart)
+        ? safePoint2(mission.boardingPlayerStart)
+        : { x: pos.current.x, z: pos.current.z }
+      const rawDoor = taxiPassengerDoorPoint(taxi, 'player')
+      const door = finitePoint2(rawDoor)
+        ? rawDoor
+        : safePoint2(taxi.passengerPickup || mission.pickup || taxi.pickupStop || taxi.pose, start)
       const x = start.x + (door.x - start.x) * t
       const z = start.z + (door.z - start.z) * t
-      heading.current = taxi.pose.heading ?? door.heading ?? heading.current
+      heading.current = finiteNumber(taxi.pose.heading ?? door.heading, heading.current)
       pos.current.set(x, terrainHeight(x, z) + 1.1, z)
       moving.current = t < 0.98
       running.current = false
@@ -722,7 +738,14 @@ export default function PlayerRig({ city }) {
     if (!Number.isFinite(camTarget.x) || !Number.isFinite(camTarget.y) || !Number.isFinite(camTarget.z)) {
       camTarget.set(pos.current.x, pos.current.y + CAMERA_HEIGHT + 2, pos.current.z + CAMERA_DISTANCE)
     }
-    state.camera.position.lerp(camTarget, 0.12)
+    if (!finiteVector3(state.camera.position)) {
+      state.camera.position.set(camTarget.x, camTarget.y, camTarget.z)
+    } else {
+      state.camera.position.lerp(camTarget, 0.12)
+    }
+    if (!finiteVector3(state.camera.position)) {
+      state.camera.position.set(pos.current.x, pos.current.y + CAMERA_HEIGHT + 2, pos.current.z + CAMERA_DISTANCE)
+    }
     lookAt.set(pos.current.x, pos.current.y + 1.2, pos.current.z)
     if (!Number.isFinite(lookAt.x) || !Number.isFinite(lookAt.y) || !Number.isFinite(lookAt.z)) {
       lookAt.set(0, terrainHeight(0, 40) + 2.3, 40)

@@ -443,7 +443,9 @@ function routePoint(point, mode, details = {}) {
     z,
     y: point.y ?? terrainHeight(x, z),
     routeMode: mode,
+    routeRoadId: details.roadId || point.roadId || null,
     routeRoadName: details.roadName || point.roadName || null,
+    routeRoadAxis: details.roadAxis || point.roadAxis || null,
     waypointName: details.name || point.name || details.roadName || 'waypoint',
     crosswalk: details.crosswalk || null,
   }
@@ -454,6 +456,8 @@ function pushRoutePoint(waypoints, point, mode, details = {}) {
   const previous = waypoints[waypoints.length - 1]
   if (previous && pointDistance(previous, point) < 0.9) {
     previous.routeMode = previous.routeMode === 'crosswalk-crossing' ? previous.routeMode : mode
+    previous.routeRoadId = previous.routeRoadId || details.roadId || point.roadId || null
+    previous.routeRoadAxis = previous.routeRoadAxis || details.roadAxis || point.roadAxis || null
     return
   }
   waypoints.push(routePoint(point, mode, details))
@@ -470,7 +474,9 @@ function crosswalkPairForRoad(road, from, to, roads) {
     const approachZ = road.z + fromSide * curbOffset
     const exitZ = road.z + toSide * curbOffset
     return {
+      roadId: road.id,
       roadName: road.name,
+      roadAxis: road.axis,
       crosswalk: { x: crosswalk.x, z: road.z },
       approach: {
         x: crosswalk.x,
@@ -492,7 +498,9 @@ function crosswalkPairForRoad(road, from, to, roads) {
   const approachX = road.x + fromSide * curbOffset
   const exitX = road.x + toSide * curbOffset
   return {
+    roadId: road.id,
     roadName: road.name,
+    roadAxis: road.axis,
     crosswalk: { x: road.x, z: crosswalk.z },
     approach: {
       x: approachX,
@@ -543,13 +551,17 @@ function buildPedestrianRoute(from, target, roads = []) {
     if (!pair) break
     if (pointDistance(cursor, pair.approach) > WALK_ROUTE_WAYPOINT_RADIUS) {
       pushRoutePoint(waypoints, pair.approach, 'sidewalk-waypoint', {
+        roadId: pair.roadId,
         roadName: pair.roadName,
+        roadAxis: pair.roadAxis,
         name: pair.approach.name,
         crosswalk: pair.crosswalk,
       })
     }
     pushRoutePoint(waypoints, pair.exit, 'crosswalk-crossing', {
+      roadId: pair.roadId,
       roadName: pair.roadName,
+      roadAxis: pair.roadAxis,
       name: pair.exit.name,
       crosswalk: pair.crosswalk,
     })
@@ -593,6 +605,36 @@ function ensureWalkRoute(agent, target, roads = [], force = false) {
   return agent.walkRoute
 }
 
+function roadForWaypoint(waypoint, roads = []) {
+  if (!waypoint || !roads.length) return null
+  return roads.find(road => road.id === waypoint.routeRoadId) ||
+    roads.find(road => road.name === waypoint.routeRoadName && road.axis === waypoint.routeRoadAxis) ||
+    roads.find(road => road.name === waypoint.routeRoadName) ||
+    null
+}
+
+function pedestrianSignalForCrossing(road, timeMinutes = 0) {
+  if (!road) return { vehicleSignal: 'unknown', walk: true, label: 'unsignalized crossing' }
+  const vehicleSignal = trafficSignalForAxis(road.axis, timeMinutes)
+  return {
+    vehicleSignal,
+    walk: vehicleSignal === 'red',
+    label: vehicleSignal === 'red' ? 'walk' : vehicleSignal === 'yellow' ? 'wait yellow' : 'wait green traffic',
+  }
+}
+
+function pedestrianInsideCrosswalkRoad(agent, road) {
+  if (!road) return false
+  if (road.axis === 'x') {
+    return agent.pos.x >= road.from - 2 &&
+      agent.pos.x <= road.to + 2 &&
+      Math.abs(agent.pos.z - road.z) <= road.width / 2 + 1.15
+  }
+  return agent.pos.z >= road.from - 2 &&
+    agent.pos.z <= road.to + 2 &&
+    Math.abs(agent.pos.x - road.x) <= road.width / 2 + 1.15
+}
+
 function currentWalkWaypoint(agent, target, roads = []) {
   const route = ensureWalkRoute(agent, target, roads)
   if (!route?.waypoints?.length) {
@@ -616,13 +658,20 @@ function currentWalkWaypoint(agent, target, roads = []) {
   }
 
   const waypoint = route.waypoints[route.index] || target
+  const crossingRoad = waypoint.routeMode === 'crosswalk-crossing' ? roadForWaypoint(waypoint, roads) : null
+  const crossingSignal = crossingRoad ? pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes) : null
   agent.walkPlan = {
     mode: waypoint.routeMode || 'direct',
     targetName: route.targetName || target.name || 'destination',
     waypointName: waypoint.waypointName || waypoint.name || route.targetName,
     waypoint: { x: waypoint.x, z: waypoint.z },
     crosswalk: waypoint.crosswalk,
+    roadId: waypoint.routeRoadId || null,
     roadName: waypoint.routeRoadName || waypoint.roadName || null,
+    roadAxis: waypoint.routeRoadAxis || crossingRoad?.axis || null,
+    crosswalkSignal: crossingSignal?.label || null,
+    crosswalkVehicleSignal: crossingSignal?.vehicleSignal || null,
+    crosswalkWaiting: false,
     routeIndex: route.index,
     routePoints: route.waypoints.length,
     stableRoute: true,
@@ -723,6 +772,42 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
   const roads = Array.isArray(cityOrRoads) ? cityOrRoads : cityOrRoads?.roads
   const safeTarget = roads?.length ? pedestrianSafeTarget(target, agent.pos, roads) : target
   const waypoint = roads?.length ? currentWalkWaypoint(agent, safeTarget, roads) : safeTarget
+  if (roads?.length && waypoint.routeMode === 'crosswalk-crossing') {
+    const crossingRoad = roadForWaypoint(waypoint, roads)
+    const signal = pedestrianSignalForCrossing(crossingRoad, useCityStore.getState().timeMinutes)
+    const alreadyInRoad = pedestrianInsideCrosswalkRoad(agent, crossingRoad)
+    if (!signal.walk && !alreadyInRoad) {
+      agent.crosswalkWaitTimer = (agent.crosswalkWaitTimer || 0) + delta
+      agent.activity = 'waiting for walk signal'
+      agent.currentIntent = `waiting at ${crossingRoad?.name || 'crosswalk'} while traffic has ${signal.vehicleSignal}`
+      agent.walkPlan = {
+        ...(agent.walkPlan || {}),
+        mode: 'crosswalk-waiting',
+        crosswalkWaiting: true,
+        crosswalkSignal: signal.label,
+        crosswalkVehicleSignal: signal.vehicleSignal,
+        roadId: crossingRoad?.id || agent.walkPlan?.roadId || null,
+        roadName: crossingRoad?.name || agent.walkPlan?.roadName || null,
+        roadAxis: crossingRoad?.axis || agent.walkPlan?.roadAxis || null,
+        distanceToTarget: pointDistance(agent.pos, safeTarget),
+        distanceToWaypoint: pointDistance(agent.pos, waypoint),
+      }
+      if (agent.crosswalkWaitTimer > 1.4 && (!agent.lastCrosswalkWaitAt || nowMs() - agent.lastCrosswalkWaitAt > 5000)) {
+        agent.lastCrosswalkWaitAt = nowMs()
+        useCityStore.getState().addCityEvent({
+          id: `crosswalk_wait_${agent.id}_${Math.floor(useCityStore.getState().timeMinutes * 10)}`,
+          kind: 'crosswalk',
+          agentId: agent.id,
+          agentName: agent.name,
+          placeName: crossingRoad?.name || agent.placeName,
+          topic: 'walk signal wait',
+          text: `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because vehicle traffic still has ${signal.vehicleSignal}.`,
+        })
+      }
+      return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
+    }
+  }
+  agent.crosswalkWaitTimer = 0
   const dx = waypoint.x - agent.pos.x
   const dz = waypoint.z - agent.pos.z
   const distance = Math.hypot(dx, dz)
@@ -1287,6 +1372,8 @@ class Agent {
     this.taxiCooldown = 0
     this.needErrand = null
     this.needErrandCooldown = NEED_ERRAND_MIN_SECONDS + (hashValue(data.id) % 16)
+    this.crosswalkWaitTimer = 0
+    this.lastCrosswalkWaitAt = 0
     this.stuckTimer = 0
     this.lastRouteDistance = null
     this.blockedContacts = 0
@@ -3460,7 +3547,13 @@ function NPCs({ city }) {
           taxiRouteMeters: agent.selfTaxi?.routeMeters ? Number(agent.selfTaxi.routeMeters.toFixed(1)) : null,
           routeStatus: agent.routeStatus || null,
           routeMode: agent.walkPlan?.mode || 'direct',
+          crosswalkWaiting: !!agent.walkPlan?.crosswalkWaiting,
+          crosswalkSignal: agent.walkPlan?.crosswalkSignal || null,
+          crosswalkVehicleSignal: agent.walkPlan?.crosswalkVehicleSignal || null,
+          crosswalkWaitSeconds: Number((agent.crosswalkWaitTimer || 0).toFixed(2)),
+          routeRoadId: agent.walkPlan?.roadId || null,
           routeRoadName: agent.walkPlan?.roadName || null,
+          routeRoadAxis: agent.walkPlan?.roadAxis || null,
           stableRoute: !!agent.walkPlan?.stableRoute,
           routeIndex: agent.walkPlan?.routeIndex ?? null,
           routePoints: agent.walkPlan?.routePoints ?? null,
@@ -3691,6 +3784,8 @@ function NPCs({ city }) {
       agent.heading = Number.isFinite(Number(detail.heading)) ? Number(detail.heading) : agent.heading
       agent.walkRoute = null
       agent.walkPlan = null
+      agent.crosswalkWaitTimer = 0
+      agent.lastCrosswalkWaitAt = 0
       agent.mission = null
       agent.selfTaxi = null
       agent.boardingTaxi = null
@@ -3727,6 +3822,8 @@ function NPCs({ city }) {
       agent.boardingTaxi = null
       agent.walkRoute = null
       agent.walkPlan = null
+      agent.crosswalkWaitTimer = 0
+      agent.lastCrosswalkWaitAt = 0
       agent.needErrand = null
       agent.needErrandCooldown = 0
       agent.needs.hunger = Number.isFinite(Number(detail.hunger)) ? clampValue(Number(detail.hunger), 0, 1) : 0.91
@@ -3747,6 +3844,101 @@ function NPCs({ city }) {
         reason: agent.needErrand.reason,
         targetName: agent.needErrand.targetName,
       } : false
+    }
+
+    const debugCrosswalkWait = (detail = {}) => {
+      if (!import.meta.env.DEV) return false
+      const store = useCityStore.getState()
+      const agent = agents.find(item => item.id === detail.id) || agents[0]
+      const road = city.roads.find(item => item.id === detail.roadId) ||
+        city.roads.find(item => item.main && item.axis === (detail.axis || 'x')) ||
+        city.roads.find(item => item.main) ||
+        city.roads[0]
+      if (!agent || !road) return false
+      const cross = city.roads.find(item => item.axis !== road.axis && item.main) ||
+        city.roads.find(item => item.axis !== road.axis)
+      if (!cross) return false
+      const side = Number(detail.side) === -1 ? -1 : 1
+      const curb = road.width / 2 + 4.2
+      const approach = road.axis === 'x'
+        ? { x: clampValue(cross.x, road.from + 6, road.to - 6), z: road.z + side * curb, name: `${road.name} crosswalk approach` }
+        : { x: road.x + side * curb, z: clampValue(cross.z, road.from + 6, road.to - 6), name: `${road.name} crosswalk approach` }
+      const exit = road.axis === 'x'
+        ? { x: approach.x, z: road.z - side * curb, name: `${road.name} crosswalk exit` }
+        : { x: road.x - side * curb, z: approach.z, name: `${road.name} crosswalk exit` }
+      const [ax, az] = resolveBuildingCollision(city, approach.x, approach.z, approach.x, approach.z, 0.68)
+      const destination = {
+        ...exit,
+        y: terrainHeight(exit.x, exit.z),
+        entryRule: 'crosswalk-signal-test',
+      }
+      agent.pos.set(ax, terrainHeight(ax, az) + 0.95, az)
+      agent.heading = Math.atan2(exit.x - approach.x, exit.z - approach.z)
+      agent.mission = {
+        id: `debug_crosswalk_${Date.now()}`,
+        mode: 'walk',
+        phase: 'leading',
+        destination,
+        request: 'Debug crosswalk signal compliance',
+      }
+      agent.selfTaxi = null
+      agent.boardingTaxi = null
+      agent.taxiCooldown = 0
+      agent.walkRoute = {
+        targetKey: walkTargetKey(destination),
+        targetName: destination.name,
+        activity: 'debug crosswalk signal compliance',
+        waypoints: [routePoint(destination, 'crosswalk-crossing', {
+          roadId: road.id,
+          roadName: road.name,
+          roadAxis: road.axis,
+          name: destination.name,
+          crosswalk: road.axis === 'x' ? { x: exit.x, z: road.z } : { x: road.x, z: exit.z },
+        })],
+        index: 0,
+        createdAt: nowMs(),
+        replanCount: 0,
+        final: { x: destination.x, z: destination.z },
+      }
+      agent.walkPlan = null
+      agent.crosswalkWaitTimer = 0
+      agent.lastCrosswalkWaitAt = 0
+      agent.bumpTimer = 0
+      agent.fallTimer = 0
+      agent.bumpVelocity.set(0, 0)
+      agent.needErrand = null
+      agent.needErrandCooldown = 0
+      agent.talkTimer = 0
+      agent.talkPartnerId = null
+      agent.talkPartnerName = null
+      agent.talkTopicLabel = null
+      agent.visualGesture = null
+      agent.renderFacingPartner = false
+      agent.facingPartnerAngle = null
+      agent.debugSocialConversation = false
+      agent.glanceCooldown = 0
+      agent.debugSpeedScale = Number.isFinite(Number(detail.speedScale)) ? Math.max(1, Number(detail.speedScale)) : 1
+      agent.activity = 'approaching crosswalk signal'
+      agent.placeName = road.name
+      agent.currentIntent = `waiting to cross ${road.name} by signal`
+      store.addCityEvent({
+        id: `debug_crosswalk_setup_${agent.id}_${Date.now()}`,
+        kind: 'crosswalk',
+        agentId: agent.id,
+        agentName: agent.name,
+        placeName: road.name,
+        topic: 'signal compliance setup',
+        text: `${agent.name} approaches ${road.name} crosswalk and checks the signal before entering the lane.`,
+      })
+      return {
+        id: agent.id,
+        name: agent.name,
+        roadId: road.id,
+        roadName: road.name,
+        roadAxis: road.axis,
+        approach: { ...approach, x: ax, z: az },
+        exit: destination,
+      }
     }
 
     const debugSocialPair = (detail = {}) => {
@@ -3776,6 +3968,8 @@ function NPCs({ city }) {
         agent.boardingTaxi = null
         agent.walkRoute = null
         agent.walkPlan = { mode: 'dwelling', targetName: 'verification sidewalk', waypointName: 'conversation spot', stableRoute: true, routePoints: 1 }
+        agent.crosswalkWaitTimer = 0
+        agent.lastCrosswalkWaitAt = 0
         agent.activity = 'talking on the sidewalk'
         agent.placeName = 'verification sidewalk'
         agent.bumpTimer = 0
@@ -3797,12 +3991,14 @@ function NPCs({ city }) {
     const onDebugPlaceNpc = event => debugPlaceNpc(event.detail || {})
     const onDebugSocialPair = event => debugSocialPair(event.detail || {})
     const onDebugNeedErrand = event => debugNeedErrand(event.detail || {})
+    const onDebugCrosswalkWait = event => debugCrosswalkWait(event.detail || {})
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
-      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair, startNeedErrand: debugNeedErrand }
+      window.__REALCITY_NPC_DEBUG__ = { placeNpc: debugPlaceNpc, startConversation: debugSocialPair, startNeedErrand: debugNeedErrand, startCrosswalkWait: debugCrosswalkWait }
       window.addEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
       window.addEventListener('realcity:debug-social-pair', onDebugSocialPair)
       window.addEventListener('realcity:debug-need-errand', onDebugNeedErrand)
+      window.addEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('realcity:npc-request', onNpcRequest)
@@ -3813,6 +4009,7 @@ function NPCs({ city }) {
         window.removeEventListener('realcity:debug-place-npc', onDebugPlaceNpc)
         window.removeEventListener('realcity:debug-social-pair', onDebugSocialPair)
         window.removeEventListener('realcity:debug-need-errand', onDebugNeedErrand)
+        window.removeEventListener('realcity:debug-crosswalk-wait', onDebugCrosswalkWait)
         if (window.__REALCITY_NPC_DEBUG__?.placeNpc === debugPlaceNpc) delete window.__REALCITY_NPC_DEBUG__
       }
       window.removeEventListener('keydown', onKey)

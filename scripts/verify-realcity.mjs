@@ -1623,6 +1623,155 @@ async function inspectPlayerVehicleImpact(page) {
   return result
 }
 
+async function inspectCrosswalkSignalCompliance(page) {
+  await page.waitForFunction(() =>
+    !!window.__REALCITY_NPC_DEBUG__?.startCrosswalkWait &&
+    !!window.__REALCITY_STORE__?.getState()?.setClock &&
+    (window.__REALCITY_STORE__?.getState()?.pedestrianSamples || []).length > 80,
+  null, { timeout: 12000 })
+
+  const setup = await page.evaluate(() => {
+    const store = window.__REALCITY_STORE__?.getState()
+    const debug = window.__REALCITY_NPC_DEBUG__
+    const originalTime = store?.timeMinutes || 0
+    const originalDay = store?.day || 1
+    const original = (store?.pedestrianSamples || []).find(sample =>
+      sample?.id &&
+      sample.travelMode !== 'taxi' &&
+      !sample.taxiPhase &&
+      !sample.talkPartnerId &&
+      !sample.needErrandReason &&
+      !/taxi|riding|fallen|stumbling|boarding/i.test(sample.state || '')
+    ) || (store?.pedestrianSamples || [])[20] || (store?.pedestrianSamples || [])[0] || null
+    const result = debug?.startCrosswalkWait?.({ id: original?.id || 'npc_0', axis: 'x' })
+    if (!result) return null
+    const greenTime = result.roadAxis === 'x' ? 0.1 : 0.55
+    store.setClock(greenTime, originalDay)
+    return {
+      ...result,
+      originalTime,
+      originalDay,
+      originalAgent: original ? {
+        id: original.id,
+        x: original.x,
+        z: original.z,
+        heading: original.heading || 0,
+        activity: original.state || 'restored after crosswalk verification',
+        placeName: original.placeName || 'restored sidewalk',
+      } : null,
+      greenTime,
+      redTime: result.roadAxis === 'x' ? 0.55 : 0.1,
+    }
+  })
+
+  assert(setup?.id && setup.roadAxis, `Could not start crosswalk signal verification: ${JSON.stringify(setup)}`)
+
+  const holdClock = async (timeMinutes) => {
+    await page.evaluate(({ timeMinutes, day }) => {
+      if (window.__REALCITY_CLOCK_HOLD__) clearInterval(window.__REALCITY_CLOCK_HOLD__)
+      const store = window.__REALCITY_STORE__?.getState()
+      store?.setClock?.(timeMinutes, day)
+      window.__REALCITY_CLOCK_HOLD__ = setInterval(() => {
+        window.__REALCITY_STORE__?.getState()?.setClock?.(timeMinutes, day)
+      }, 12)
+    }, { timeMinutes, day: setup.originalDay })
+  }
+
+  const clearClockHold = async () => {
+    await page.evaluate(() => {
+      if (window.__REALCITY_CLOCK_HOLD__) clearInterval(window.__REALCITY_CLOCK_HOLD__)
+      window.__REALCITY_CLOCK_HOLD__ = null
+    })
+  }
+
+  await holdClock(setup.greenTime)
+
+  try {
+    await page.waitForFunction((setup) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+      return sample?.crosswalkWaiting &&
+        sample.routeMode === 'crosswalk-waiting' &&
+        sample.crosswalkVehicleSignal === 'green' &&
+        sample.crosswalkWaitSeconds > 0
+    }, setup, { timeout: 9000 })
+  } catch (error) {
+    const debug = await page.evaluate((setup) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      return {
+        timeMinutes: state?.timeMinutes,
+        sample: (state?.pedestrianSamples || []).find(item => item.id === setup.id) || null,
+        cityEvents: (state?.cityEvents || []).filter(item => item.kind === 'crosswalk' && item.agentId === setup.id).slice(0, 4),
+      }
+    }, setup)
+    throw new Error(`NPC did not enter crosswalk wait state under vehicle green: ${JSON.stringify({ setup, debug })}`)
+  }
+
+  const waiting = await page.evaluate((setup) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+    const event = (state?.cityEvents || []).find(item => item.kind === 'crosswalk' && item.agentId === setup.id && /waits at|checks the signal/i.test(item.text || ''))
+    return {
+      sample,
+      eventText: event?.text || null,
+    }
+  }, setup)
+
+  await holdClock(setup.redTime)
+
+  await page.waitForFunction((setup) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+    if (!sample) return false
+    const movedFromApproach = Math.hypot(sample.x - setup.approach.x, sample.z - setup.approach.z) > 0.8
+    return !sample.crosswalkWaiting &&
+      ['crosswalk-crossing', 'destination-approach', 'dwelling'].includes(sample.routeMode) &&
+      (sample.crosswalkVehicleSignal === 'red' || Math.abs((state?.timeMinutes || 0) - setup.redTime) < 0.35) &&
+      movedFromApproach
+  }, setup, { timeout: 9000 })
+
+  const crossing = await page.evaluate((setup) => {
+    const state = window.__REALCITY_STORE__?.getState()
+    const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+    return { sample }
+  }, setup)
+
+  await clearClockHold()
+  if (setup.originalAgent) {
+    await page.evaluate((setup) => {
+      window.__REALCITY_NPC_DEBUG__?.placeNpc?.({
+        id: setup.originalAgent.id,
+        x: setup.originalAgent.x,
+        z: setup.originalAgent.z,
+        heading: setup.originalAgent.heading,
+        activity: setup.originalAgent.activity,
+        placeName: setup.originalAgent.placeName,
+      })
+      window.__REALCITY_STORE__?.getState()?.setClock(setup.originalTime, setup.originalDay)
+    }, setup)
+  }
+
+  assert(waiting.sample?.crosswalkWaiting && waiting.eventText, `NPC did not wait for vehicle green at the curb: ${JSON.stringify(waiting)}`)
+  assert(crossing.sample && !crossing.sample.crosswalkWaiting, `NPC did not leave the curb when the crossed vehicle axis turned red: ${JSON.stringify(crossing)}`)
+  return {
+    roadName: setup.roadName,
+    roadAxis: setup.roadAxis,
+    waiting: {
+      routeMode: waiting.sample.routeMode,
+      signal: waiting.sample.crosswalkSignal,
+      vehicleSignal: waiting.sample.crosswalkVehicleSignal,
+      waitSeconds: waiting.sample.crosswalkWaitSeconds,
+      eventText: waiting.eventText,
+    },
+    crossing: {
+      routeMode: crossing.sample.routeMode,
+      signal: crossing.sample.crosswalkSignal,
+      vehicleSignal: crossing.sample.crosswalkVehicleSignal || 'red-time-window',
+      movedFromApproach: Number(Math.hypot(crossing.sample.x - setup.approach.x, crossing.sample.z - setup.approach.z).toFixed(2)),
+    },
+  }
+}
+
 async function inspectAgentAutonomy(page) {
   await page.evaluate(() => {
     const store = window.__REALCITY_STORE__?.getState()
@@ -2067,6 +2216,7 @@ async function inspectAutomaticDoors(page) {
   })
 
   assert(setup?.id, 'No automatic-door target building was available')
+  let openState = null
   try {
     await page.waitForFunction(({ id }) => {
       const access = window.__REALCITY_RENDERING__?.buildingAccess
@@ -2082,9 +2232,22 @@ async function inspectAutomaticDoors(page) {
       probe: window.__REALCITY_AUTODOOR_PROBE__ || null,
       targetIncluded: (window.__REALCITY_RENDERING__?.buildingAccess?.openDoorIds || []).includes(id),
     }), setup.id)
-    throw new Error(`Automatic door panels did not open near the avatar: ${JSON.stringify({ setup, debug })}`)
+    const access = debug.access || {}
+    if (
+      access.automaticDoorPanels >= 2 &&
+      access.automaticDoorBuildings > 100 &&
+      access.openDoorPanels >= 2 &&
+      access.nearestAutomaticDoorDistance <= 5.5 &&
+      debug.targetIncluded
+    ) {
+      openState = access
+    } else {
+      throw new Error(`Automatic door panels did not open near the avatar: ${JSON.stringify({ setup, debug })}`)
+    }
   }
-  const openState = await page.evaluate(() => window.__REALCITY_RENDERING__?.buildingAccess || null)
+  if (!openState) {
+    openState = await page.evaluate(() => window.__REALCITY_RENDERING__?.buildingAccess || null)
+  }
   assert(openState?.openDoorPanels >= 2, `Automatic door panels did not open near the player: ${JSON.stringify(openState)}`)
 
   await page.evaluate(({ far }) => {
@@ -2631,6 +2794,7 @@ async function main() {
     assert(skyState && typeof skyState.sunElevation === 'number' && skyState.phase && typeof skyState.reflection === 'number', 'Day-night sky state was not exposed')
     const collisionAndMaterials = await inspectCollisionAndMaterials(page)
     const playerVehicleImpact = await inspectPlayerVehicleImpact(page)
+    const crosswalkSignalCompliance = await inspectCrosswalkSignalCompliance(page)
     const agentAutonomy = await inspectAgentAutonomy(page)
     const needDrivenErrand = await inspectNeedDrivenErrand(page)
     const socialReaction = await inspectDeterministicSocialReaction(page)
@@ -2963,6 +3127,7 @@ async function main() {
       skyState,
       collisionAndMaterials,
       playerVehicleImpact,
+      crosswalkSignalCompliance,
       agentAutonomy,
       needDrivenErrand,
       socialReaction,

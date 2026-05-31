@@ -2,8 +2,26 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+function finitePoint(point, fallback = { x: 0, z: 40 }) {
+  return {
+    x: finiteNumber(point?.x, fallback.x),
+    z: finiteNumber(point?.z, fallback.z),
+  }
+}
+
+function hasFinitePoint(point) {
+  return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.z))
+}
+
 function pointDistance(a, b) {
-  return Math.hypot(a.x - b.x, a.z - b.z)
+  const safeA = finitePoint(a)
+  const safeB = finitePoint(b)
+  return Math.hypot(safeA.x - safeB.x, safeA.z - safeB.z)
 }
 
 function routeDistance(points = []) {
@@ -163,12 +181,13 @@ function smoothRouteCorners(points = [], radius = 12) {
 }
 
 export function nearestRoadProjection(pos, roads = []) {
+  const safePos = finitePoint(pos)
   const hintedRoad = pos?.road || (pos?.roadId ? roads.find(road => road.id === pos.roadId) : null)
   if (hintedRoad) {
     const point = hintedRoad.axis === 'x'
-      ? { x: clamp(pos.x, hintedRoad.from, hintedRoad.to), z: hintedRoad.z }
-      : { x: hintedRoad.x, z: clamp(pos.z, hintedRoad.from, hintedRoad.to) }
-    return { ...point, road: hintedRoad, distance: pointDistance(pos, point) }
+      ? { x: clamp(safePos.x, hintedRoad.from, hintedRoad.to), z: hintedRoad.z }
+      : { x: hintedRoad.x, z: clamp(safePos.z, hintedRoad.from, hintedRoad.to) }
+    return { ...point, road: hintedRoad, distance: pointDistance(safePos, point) }
   }
 
   let best = null
@@ -176,9 +195,9 @@ export function nearestRoadProjection(pos, roads = []) {
 
   for (const road of roads) {
     const point = road.axis === 'x'
-      ? { x: clamp(pos.x, road.from, road.to), z: road.z }
-      : { x: road.x, z: clamp(pos.z, road.from, road.to) }
-    const distance = pointDistance(pos, point)
+      ? { x: clamp(safePos.x, road.from, road.to), z: road.z }
+      : { x: road.x, z: clamp(safePos.z, road.from, road.to) }
+    const distance = pointDistance(safePos, point)
     if (distance < bestDistance) {
       bestDistance = distance
       best = { ...point, road, distance }
@@ -222,14 +241,16 @@ function nearestCoord(startRoad, endRoad, axis) {
 }
 
 export function buildTaxiRoute(from, to, roads = []) {
-  const start = nearestRoadProjection(from, roads)
-  const end = nearestRoadProjection(to, roads)
+  const safeFrom = finitePoint(from)
+  const safeTo = finitePoint(to, safeFrom)
+  const start = nearestRoadProjection({ ...from, ...safeFrom }, roads)
+  const end = nearestRoadProjection({ ...to, ...safeTo }, roads)
   if (!start || !end) {
-    const fallback = cleanRoute([from, to])
+    const fallback = cleanRoute([safeFrom, safeTo])
     return {
       points: fallback,
       routeMeters: routeDistance(fallback),
-      directMeters: pointDistance(from, to),
+      directMeters: pointDistance(safeFrom, safeTo),
       roadNames: [],
       turns: 0,
     }
@@ -267,7 +288,7 @@ export function buildTaxiRoute(from, to, roads = []) {
   return {
     points: cleaned,
     routeMeters: routeDistance(cleaned),
-    directMeters: pointDistance(from, to),
+    directMeters: pointDistance(safeFrom, safeTo),
     roadNames: [...roadNames],
     turns,
   }
@@ -295,18 +316,19 @@ export function taxiSpawnForPickup(pickup, roads = [], distance = 230) {
 }
 
 function positionAtRouteDistance(points = [], distance = 0) {
-  if (!points.length) return { x: 0, z: 0, heading: 0, t: 1 }
-  if (points.length === 1) return { ...points[0], heading: 0, t: 1 }
+  const safePoints = points.filter(hasFinitePoint).map(point => ({ ...point, x: Number(point.x), z: Number(point.z) }))
+  if (!safePoints.length) return { x: 0, z: 40, heading: 0, t: 1 }
+  if (safePoints.length === 1) return { ...safePoints[0], heading: finiteNumber(safePoints[0].heading, 0), t: 1 }
 
-  const total = Math.max(0.001, routeDistance(points))
+  const total = Math.max(0.001, routeDistance(safePoints))
   let remaining = clamp(distance, 0, total)
 
-  for (let i = 1; i < points.length; i += 1) {
-    const a = points[i - 1]
-    const b = points[i]
+  for (let i = 1; i < safePoints.length; i += 1) {
+    const a = safePoints[i - 1]
+    const b = safePoints[i]
     const segment = pointDistance(a, b)
     if (segment <= 0.001) continue
-    if (remaining <= segment || i === points.length - 1) {
+    if (remaining <= segment || i === safePoints.length - 1) {
       const t = clamp(remaining / segment, 0, 1)
       const x = a.x + (b.x - a.x) * t
       const z = a.z + (b.z - a.z) * t
@@ -321,8 +343,8 @@ function positionAtRouteDistance(points = [], distance = 0) {
     remaining -= segment
   }
 
-  const a = points[points.length - 2]
-  const b = points[points.length - 1]
+  const a = safePoints[safePoints.length - 2]
+  const b = safePoints[safePoints.length - 1]
   return {
     ...b,
     t: 1,
@@ -332,13 +354,15 @@ function positionAtRouteDistance(points = [], distance = 0) {
 }
 
 export function sampleRoute(points = [], distance = 0) {
-  const position = positionAtRouteDistance(points, distance)
-  if (!points.length || points.length === 1) return position
+  const safePoints = points.filter(hasFinitePoint).map(point => ({ ...point, x: Number(point.x), z: Number(point.z) }))
+  const position = positionAtRouteDistance(safePoints, finiteNumber(distance, 0))
+  if (!safePoints.length || safePoints.length === 1) return position
 
-  const total = Math.max(0.001, routeDistance(points))
+  const total = Math.max(0.001, routeDistance(safePoints))
   const lookDistance = Math.min(6, Math.max(2.4, total * 0.012))
-  const behind = positionAtRouteDistance(points, Math.max(0, distance - lookDistance))
-  const ahead = positionAtRouteDistance(points, Math.min(total, distance + lookDistance))
+  const safeDistance = finiteNumber(distance, 0)
+  const behind = positionAtRouteDistance(safePoints, Math.max(0, safeDistance - lookDistance))
+  const ahead = positionAtRouteDistance(safePoints, Math.min(total, safeDistance + lookDistance))
   const dx = ahead.x - behind.x
   const dz = ahead.z - behind.z
   const heading = Math.hypot(dx, dz) > 0.001
@@ -350,11 +374,13 @@ export function sampleRoute(points = [], distance = 0) {
 export function taxiPassengerDoorPoint(taxi, role = 'player') {
   const pose = taxi?.pose || taxi?.pickupStop || taxi?.dropoffStop
   const curb = taxi?.passengerPickup || taxi?.pickup || taxi?.dropoff || pose
-  if (!pose) return { x: 0, z: 0 }
+  if (!pose) return { x: 0, z: 40, heading: 0 }
 
-  const heading = pose.heading ?? pose.yaw ?? 0
-  let sideX = (curb?.x || pose.x) - pose.x
-  let sideZ = (curb?.z || pose.z) - pose.z
+  const safePose = finitePoint(pose)
+  const safeCurb = finitePoint(curb, safePose)
+  const heading = finiteNumber(pose.heading ?? pose.yaw, 0)
+  let sideX = safeCurb.x - safePose.x
+  let sideZ = safeCurb.z - safePose.z
   const sideLength = Math.hypot(sideX, sideZ)
   if (sideLength > 0.001) {
     sideX /= sideLength
@@ -368,8 +394,8 @@ export function taxiPassengerDoorPoint(taxi, role = 'player') {
   const foreAft = role === 'agent' ? -0.95 : 0.35
   const side = role === 'inside' ? 0.28 : 1.82
   return {
-    x: pose.x + sideX * side + forwardX * foreAft,
-    z: pose.z + sideZ * side + forwardZ * foreAft,
+    x: safePose.x + sideX * side + forwardX * foreAft,
+    z: safePose.z + sideZ * side + forwardZ * foreAft,
     heading,
   }
 }

@@ -324,7 +324,8 @@ function clamp(value, min, max) {
 }
 
 function preventDefaultIfCancelable(event) {
-  if (event?.cancelable) event.preventDefault()
+  if (!event?.cancelable || event.type === 'wheel') return
+  event.preventDefault()
 }
 
 function clampMapCenter(center, zoom) {
@@ -352,6 +353,7 @@ function roadTextTransform(road) {
 
 function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, vehicleSamples }) {
   const container = useRef(null)
+  const wheelShield = useRef(null)
   const map = useRef(null)
   const safePlayer = finitePoint(player, { x: 0, z: 40 })
   const viewHeading = finiteNumber(player.viewHeading ?? player.heading, Math.PI)
@@ -494,7 +496,7 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
     map.current.doubleClickZoom?.disable()
     map.current.touchZoomRotate?.disable()
 
-    const minimapNode = container.current
+    const minimapNode = wheelShield.current || container.current
     const stopMinimapWheel = (event) => {
       preventDefaultIfCancelable(event)
       event.stopPropagation()
@@ -537,6 +539,7 @@ function Minimap({ city, player, mission, ride, mapRoute, pedestrianSamples, veh
   return (
     <div className="minimap">
       <div ref={container} className="minimap-map" />
+      <div ref={wheelShield} className="minimap-hit-shield" aria-hidden="true" />
       <div className="minimap-grid" />
       <div className="minimap-gps">
         <strong>GPS</strong>

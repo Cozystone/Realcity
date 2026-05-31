@@ -1589,8 +1589,18 @@ button.key-prompt {
   inset: 0;
 }
 
+.minimap-hit-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 50%;
+  background: transparent;
+  touch-action: none;
+}
+
 .minimap-player {
   position: absolute;
+  z-index: 3;
   top: 50%;
   left: 50%;
   width: 0;
@@ -1605,6 +1615,7 @@ button.key-prompt {
 .minimap-grid {
   position: absolute;
   inset: 0;
+  z-index: 3;
   pointer-events: none;
   background:
     radial-gradient(circle at center, transparent 0 38%, rgba(74, 173, 255, 0.18) 39% 40%, transparent 41%),
@@ -1618,6 +1629,7 @@ button.key-prompt {
 .minimap-status {
   pointer-events: none;
   position: absolute;
+  z-index: 4;
   left: 50%;
   width: 130px;
   transform: translateX(-50%);
