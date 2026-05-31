@@ -288,26 +288,31 @@ function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, c
       }]
     : []
 
-  for (const vehicle of [...(store.vehicleSamples || []), ...missionTaxi]) {
-    if (!vehicle?.id) continue
-    const result = resolveVehicleCollision(px, pz, vehicle, playerRadius, vehiclePadding)
-    if (!result) continue
-    px = result.x
-    pz = result.z
-    emitCollisionOnce(cooldowns, `vehicle:${vehicle.id}`, 900, () => {
-      const intensity = Math.min(1.8, 0.72 + result.penetration * 0.44 + movement * 6 + (vehicle.speed || 0) * 0.025)
-      store.registerPlayerImpact?.({
-        kind: 'vehicle',
-        sourceId: vehicle.id,
-        sourceName: vehicle.driverName || (vehicle.kind === 'taxi' ? 'taxi driver' : 'driver'),
-        intensity,
-        x: px,
-        z: pz,
-        nx: result.nx,
-        nz: result.nz,
-        text: `${vehicle.kind === 'taxi' ? 'The taxi' : 'The car'} brakes and pushes you clear of its solid body.`,
+  const vehicles = [...(store.vehicleSamples || []), ...missionTaxi].filter(vehicle => vehicle?.id)
+  for (let pass = 0; pass < 3; pass += 1) {
+    let hadVehicleContact = false
+    for (const vehicle of vehicles) {
+      const result = resolveVehicleCollision(px, pz, vehicle, playerRadius, vehiclePadding)
+      if (!result) continue
+      hadVehicleContact = true
+      px = result.x
+      pz = result.z
+      emitCollisionOnce(cooldowns, `vehicle:${vehicle.id}`, 900, () => {
+        const intensity = Math.min(1.8, 0.72 + result.penetration * 0.44 + movement * 6 + (vehicle.speed || 0) * 0.025)
+        store.registerPlayerImpact?.({
+          kind: 'vehicle',
+          sourceId: vehicle.id,
+          sourceName: vehicle.driverName || (vehicle.kind === 'taxi' ? 'taxi driver' : 'driver'),
+          intensity,
+          x: px,
+          z: pz,
+          nx: result.nx,
+          nz: result.nz,
+          text: `${vehicle.kind === 'taxi' ? 'The taxi' : 'The car'} brakes and pushes you clear of its solid body.`,
+        })
       })
-    })
+    }
+    if (!hadVehicleContact) break
   }
 
   return [px, pz]

@@ -329,6 +329,124 @@ function TrafficSignals({ roads }) {
   )
 }
 
+function PedestrianSignals({ roads }) {
+  const poleRef = useRef()
+  const headRef = useRef()
+  const waitRef = useRef()
+  const walkRef = useRef()
+  const plateRef = useRef()
+  const metadataFrameRef = useRef(0)
+  const { mainVertical, mainHorizontal } = useRoadLayout(roads)
+  const signals = useMemo(() => {
+    const items = []
+    for (const h of mainHorizontal) {
+      for (const v of mainVertical) {
+        if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.94) continue
+        const hCurb = h.width * 0.76
+        const vCurb = v.width * 0.76
+        const offset = 5.6
+        items.push({ x: v.x - offset, z: h.z - hCurb, yaw: 0, crossedAxis: 'x', roadName: h.name, crossRoadName: v.name })
+        items.push({ x: v.x + offset, z: h.z + hCurb, yaw: Math.PI, crossedAxis: 'x', roadName: h.name, crossRoadName: v.name })
+        items.push({ x: v.x - vCurb, z: h.z + offset, yaw: Math.PI / 2, crossedAxis: 'z', roadName: v.name, crossRoadName: h.name })
+        items.push({ x: v.x + vCurb, z: h.z - offset, yaw: -Math.PI / 2, crossedAxis: 'z', roadName: v.name, crossRoadName: h.name })
+      }
+    }
+    return items
+  }, [mainHorizontal, mainVertical])
+
+  useEffect(() => {
+    exposeRenderingMetadata({
+      pedestrianSignals: {
+        heads: signals.length,
+        labeledHeads: Math.min(24, signals.length),
+        placement: 'curb-side crosswalk approach heads',
+        rule: 'WALK lights activate only when the crossed vehicle axis is red',
+      },
+    })
+  }, [signals.length])
+
+  useLayoutEffect(() => {
+    if (!poleRef.current || !headRef.current || !waitRef.current || !walkRef.current || !plateRef.current) return
+    const dummy = new THREE.Object3D()
+    signals.forEach((signal, i) => {
+      setInstance(poleRef.current, i, dummy, [signal.x, CITY_BASE_Y + 1.42, signal.z], [0.052, 2.84, 0.052])
+      setInstance(headRef.current, i, dummy, [signal.x, CITY_BASE_Y + 2.92, signal.z], [0.58, 0.78, 0.16], signal.yaw)
+      setInstance(plateRef.current, i, dummy, [signal.x, CITY_BASE_Y + 2.25, signal.z], [0.7, 0.2, 0.08], signal.yaw)
+      setInstance(waitRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.1, signal.z], [0.16, 0.16, 0.16])
+      setInstance(walkRef.current, i, dummy, [signal.x, CITY_BASE_Y + 2.74, signal.z], [0.13, 0.13, 0.13])
+    })
+    poleRef.current.instanceMatrix.needsUpdate = true
+    headRef.current.instanceMatrix.needsUpdate = true
+    plateRef.current.instanceMatrix.needsUpdate = true
+    waitRef.current.instanceMatrix.needsUpdate = true
+    walkRef.current.instanceMatrix.needsUpdate = true
+  }, [signals])
+
+  useFrame(() => {
+    if (!waitRef.current || !walkRef.current || !signals.length) return
+    const timeMinutes = useCityStore.getState().timeMinutes
+    const dummy = new THREE.Object3D()
+    let walkHeads = 0
+    let waitHeads = 0
+    for (let i = 0; i < signals.length; i += 1) {
+      const signal = signals[i]
+      const canWalk = trafficSignalForAxis(signal.crossedAxis, timeMinutes) === 'red'
+      if (canWalk) walkHeads += 1
+      else waitHeads += 1
+      const waitScale = canWalk ? 0.055 : 0.17
+      const walkScale = canWalk ? 0.17 : 0.055
+      setInstance(waitRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.1, signal.z], [waitScale, waitScale, waitScale])
+      setInstance(walkRef.current, i, dummy, [signal.x, CITY_BASE_Y + 2.74, signal.z], [walkScale * 0.86, walkScale * 1.18, walkScale * 0.86])
+    }
+    waitRef.current.instanceMatrix.needsUpdate = true
+    walkRef.current.instanceMatrix.needsUpdate = true
+    metadataFrameRef.current += 1
+    if (metadataFrameRef.current % 18 === 0) {
+      exposeRenderingMetadata({
+        pedestrianSignals: {
+          ...(typeof window !== 'undefined' ? window.__REALCITY_RENDERING__?.pedestrianSignals || {} : {}),
+          heads: signals.length,
+          walkHeads,
+          waitHeads,
+          liveSignalCoupling: 'crossed-road-vehicle-red-gives-pedestrian-walk',
+        },
+      })
+    }
+  })
+
+  return (
+    <>
+      <instancedMesh ref={poleRef} args={[undefined, undefined, signals.length]} castShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 8]} />
+        <meshStandardMaterial color="#23272b" roughness={0.46} metalness={0.54} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[undefined, undefined, signals.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#101315" roughness={0.34} metalness={0.22} />
+      </instancedMesh>
+      <instancedMesh ref={plateRef} args={[undefined, undefined, signals.length]} castShadow frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#2f3b42" roughness={0.38} metalness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={waitRef} args={[undefined, undefined, signals.length]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ff766d" emissive="#ff302b" emissiveIntensity={1.35} roughness={0.28} />
+      </instancedMesh>
+      <instancedMesh ref={walkRef} args={[undefined, undefined, signals.length]} frustumCulled={false}>
+        <capsuleGeometry args={[1, 0.9, 4, 8]} />
+        <meshStandardMaterial color="#7cffad" emissive="#1ede70" emissiveIntensity={1.28} roughness={0.28} />
+      </instancedMesh>
+      {signals.slice(0, 24).map((signal, index) => (
+        <Billboard key={`ped-signal-label-${index}-${signal.x}-${signal.z}`} position={[signal.x, CITY_BASE_Y + 2.25, signal.z]}>
+          <Text fontSize={0.13} maxWidth={1.8} textAlign="center" color="#f8fbff" outlineWidth={0.012} outlineColor="#07111c">
+            WALK
+          </Text>
+        </Billboard>
+      ))}
+    </>
+  )
+}
+
 function RoadNameSigns({ roads }) {
   const { mainVertical, mainHorizontal } = useRoadLayout(roads)
   const signs = useMemo(() => {
@@ -1092,7 +1210,7 @@ function BuildingInteriorHints({ buildings }) {
     doorRef.current.instanceMatrix.needsUpdate = true
 
     metadataFrameRef.current += 1
-    if (metadataFrameRef.current % 12 === 0) {
+    if (doorProbe || metadataFrameRef.current % 12 === 0) {
       exposeRenderingMetadata({
         buildingAccess: {
           ...(typeof window !== 'undefined' ? window.__REALCITY_RENDERING__?.buildingAccess || {} : {}),
@@ -1108,6 +1226,7 @@ function BuildingInteriorHints({ buildings }) {
           openDoorPanels: openPanels,
           openDoorBuildings: openDoorIds.size,
           openDoorIds: [...openDoorIds],
+          autoDoorProbeActive: !!doorProbe,
           nearestAutomaticDoorId: nearestDoorId,
           nearestAutomaticDoorDistance: Number(nearestDoorDistance.toFixed(2)),
         },
@@ -1246,6 +1365,7 @@ export default function UrbanDetails({ city }) {
       <Crosswalks roads={city.roads} />
       <StreetLights roads={city.roads} />
       <TrafficSignals roads={city.roads} />
+      <PedestrianSignals roads={city.roads} />
       <LaneReflectors roads={city.roads} />
       <RoadNameSigns roads={city.roads} />
       <TransitAndTaxiStops roads={city.roads} />

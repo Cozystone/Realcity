@@ -41,6 +41,9 @@ audit has a clear finish line.
   for pedestrian/traffic/address rules; NPCs wait at curb approaches while the
   crossed vehicle axis has green/yellow and enter the crosswalk only when that
   vehicle axis turns red.
+- Pedestrian signals: crosswalk approaches expose visible curb-side WALK/WAIT
+  signal heads, and their WALK state is coupled to the crossed vehicle axis
+  being red.
 - Traffic visual reactions: vehicle samples expose brake-light intensity, amber
   caution/turn signals, and driver reaction text when yielding, stopping, or
   following another car.

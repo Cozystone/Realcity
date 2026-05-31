@@ -2153,7 +2153,10 @@ async function inspectDailyRoutineTimeShift(page) {
 async function inspectStreetRendering(page) {
   await page.waitForFunction(() => {
     const rendering = window.__REALCITY_RENDERING__
-    return rendering?.streetHierarchy?.segmentedSidewalks && rendering?.crosswalks?.zebraStripes > 0 && rendering?.facades?.proceduralWindowTexture
+    return rendering?.streetHierarchy?.segmentedSidewalks &&
+      rendering?.crosswalks?.zebraStripes > 0 &&
+      rendering?.pedestrianSignals?.heads > 0 &&
+      rendering?.facades?.proceduralWindowTexture
   }, null, { timeout: 15000 })
 
   const result = await page.evaluate(() => window.__REALCITY_RENDERING__ || null)
@@ -2164,6 +2167,10 @@ async function inspectStreetRendering(page) {
   assert(result.streetHierarchy.roadMaterial === 'dark asphalt' && result.streetHierarchy.sidewalkMaterial === 'raised light pavers', 'Road/sidewalk material hierarchy is unclear')
   assert(result.crosswalks?.zebraStripes >= 300 && result.crosswalks?.crossingPads >= 40 && result.crosswalks?.stopBars >= 40, 'Crosswalk zebra pads or stop bars are too sparse')
   assert(result.crosswalks.raisedAboveRoad && result.crosswalks.separatedFromSidewalks, 'Crosswalks are not explicitly separated from sidewalks')
+  assert(result.pedestrianSignals?.heads >= result.crosswalks.crossingPads, `Pedestrian signal heads do not cover crosswalk approaches: ${JSON.stringify(result.pedestrianSignals)}`)
+  assert(result.pedestrianSignals?.labeledHeads >= 20 && /curb-side/i.test(result.pedestrianSignals?.placement || ''), `Pedestrian signal placement metadata is incomplete: ${JSON.stringify(result.pedestrianSignals)}`)
+  assert(result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0, `Pedestrian signals are not exposing simultaneous WALK/WAIT states: ${JSON.stringify(result.pedestrianSignals)}`)
+  assert(/vehicle-red/i.test(result.pedestrianSignals?.liveSignalCoupling || '') || /crossed vehicle axis is red/i.test(result.pedestrianSignals?.rule || ''), `Pedestrian signal rule is not coupled to traffic lights: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.facades?.proceduralWindowTexture && result.facades?.hasMullions && result.facades?.hasLitWindows, 'Facade texture/window system is incomplete')
   assert(result.facades.wallPalettes?.length >= 4, 'Facade wall palettes are not diverse enough')
   assert(result.facadeDetails?.physicalMullions >= 1000 && result.facadeDetails?.windowSills >= 1000, `Facade physical window detail is too sparse: ${JSON.stringify(result.facadeDetails)}`)
