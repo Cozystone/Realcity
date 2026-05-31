@@ -22,6 +22,98 @@ export const TRAFFIC_SIGNAL_YELLOW_SECONDS = 4.5
 export const TRAFFIC_SIGNAL_ALL_RED_SECONDS = 2.5
 export const BUILDING_ROAD_SETBACK = 8.5
 
+export const SUMO_TL_LOGIC = [
+  {
+    id: 'x-protected-green',
+    kind: 'green',
+    duration: 20,
+    activeAxis: 'x',
+    nextAxis: 'z',
+    sumoState: 'GGrr',
+    vehicleLinks: { x: 'G', z: 'r' },
+    pedestrianLinks: { crossX: 'r', crossZ: 'G' },
+    rule: 'east-west vehicles have protected green; pedestrians may cross north-south roads only',
+  },
+  {
+    id: 'x-yellow-clearance',
+    kind: 'yellow',
+    duration: TRAFFIC_SIGNAL_YELLOW_SECONDS,
+    activeAxis: 'x',
+    nextAxis: 'z',
+    sumoState: 'yyrr',
+    vehicleLinks: { x: 'y', z: 'r' },
+    pedestrianLinks: { crossX: 'r', crossZ: 'r' },
+    rule: 'east-west close vehicles clear; no pedestrian starts',
+  },
+  {
+    id: 'x-all-red-clearance',
+    kind: 'all-red',
+    duration: TRAFFIC_SIGNAL_ALL_RED_SECONDS,
+    activeAxis: null,
+    clearingAxis: 'x',
+    nextAxis: 'z',
+    sumoState: 'rrrr',
+    vehicleLinks: { x: 'r', z: 'r' },
+    pedestrianLinks: { crossX: 'r', crossZ: 'r' },
+    rule: 'all vehicles hold for intersection clearance; no new pedestrian starts',
+  },
+  {
+    id: 'z-protected-green',
+    kind: 'green',
+    duration: 20,
+    activeAxis: 'z',
+    nextAxis: 'x',
+    sumoState: 'rrGG',
+    vehicleLinks: { x: 'r', z: 'G' },
+    pedestrianLinks: { crossX: 'G', crossZ: 'r' },
+    rule: 'north-south vehicles have protected green; pedestrians may cross east-west roads only',
+  },
+  {
+    id: 'z-yellow-clearance',
+    kind: 'yellow',
+    duration: TRAFFIC_SIGNAL_YELLOW_SECONDS,
+    activeAxis: 'z',
+    nextAxis: 'x',
+    sumoState: 'rryy',
+    vehicleLinks: { x: 'r', z: 'y' },
+    pedestrianLinks: { crossX: 'r', crossZ: 'r' },
+    rule: 'north-south close vehicles clear; no pedestrian starts',
+  },
+  {
+    id: 'z-all-red-clearance',
+    kind: 'all-red',
+    duration: TRAFFIC_SIGNAL_ALL_RED_SECONDS,
+    activeAxis: null,
+    clearingAxis: 'z',
+    nextAxis: 'x',
+    sumoState: 'rrrr',
+    vehicleLinks: { x: 'r', z: 'r' },
+    pedestrianLinks: { crossX: 'r', crossZ: 'r' },
+    rule: 'all vehicles hold for intersection clearance; no new pedestrian starts',
+  },
+]
+
+export const SMART_MOBILITY_STANDARDS = {
+  sumo: {
+    reference: 'Eclipse SUMO static tlLogic',
+    linkOrder: ['x_vehicle_forward', 'x_vehicle_reverse', 'z_vehicle_forward', 'z_vehicle_reverse', 'ped_cross_x', 'ped_cross_z'],
+    pedestrianRule: 'pedestrian crossings are modeled as separate controlled links after vehicle links',
+  },
+  gbfs: {
+    reference: 'MobilityData GBFS station_information, station_status, vehicle_types, geofencing_zones',
+    updateCadenceSeconds: 20,
+    feeds: ['system_information', 'station_information', 'station_status', 'vehicle_types', 'geofencing_zones'],
+  },
+  smartCities: {
+    reference: 'smart-data-models SmartCities / Transportation',
+    entities: ['TrafficFlowObserved', 'RoadSegment', 'ParkingSpot', 'BikeHireDockingStation', 'RestrictedTrafficArea'],
+  },
+  gatsim: {
+    reference: 'qiliuchn/GATSim generative-agent transport loop',
+    cognitionLoop: ['perceive traffic state', 'retrieve travel memory', 'adapt departure/mode/route', 'reflect after trip'],
+  },
+}
+
 const ROLE_LIBRARY = [
   { role: 'banker', job: 'Banker', workplace: 'aster_exchange', color: '#2c5f8a', pace: 1.05 },
   { role: 'doctor', job: 'ER Doctor', workplace: 'hanbit_hospital', color: '#e8f4ff', pace: 1.18 },
@@ -270,46 +362,40 @@ export function terrainTone(x, z) {
 }
 
 export function trafficPhaseAt(timeMinutes = 0) {
-  const second = ((timeMinutes * 60) % TRAFFIC_SIGNAL_CYCLE_SECONDS + TRAFFIC_SIGNAL_CYCLE_SECONDS) % TRAFFIC_SIGNAL_CYCLE_SECONDS
-  const half = TRAFFIC_SIGNAL_CYCLE_SECONDS / 2
-  const activeAxis = second < half ? 'x' : 'z'
-  const nextAxis = activeAxis === 'x' ? 'z' : 'x'
-  const phaseSecond = second % half
-  const greenDuration = Math.max(8, half - TRAFFIC_SIGNAL_YELLOW_SECONDS - TRAFFIC_SIGNAL_ALL_RED_SECONDS)
-  if (phaseSecond < greenDuration) {
-    return {
-      kind: 'green',
-      activeAxis,
-      protectedAxis: activeAxis,
-      nextAxis,
-      phaseSecond,
-      secondsRemaining: greenDuration - phaseSecond,
-      label: `${activeAxis.toUpperCase()} protected green`,
-      sumoState: activeAxis === 'x' ? 'GGrr' : 'rrGG',
+  const cycle = SUMO_TL_LOGIC.reduce((sum, phase) => sum + phase.duration, 0)
+  const second = ((timeMinutes * 60) % cycle + cycle) % cycle
+  let elapsed = 0
+  for (let index = 0; index < SUMO_TL_LOGIC.length; index += 1) {
+    const phase = SUMO_TL_LOGIC[index]
+    const nextElapsed = elapsed + phase.duration
+    if (second < nextElapsed || index === SUMO_TL_LOGIC.length - 1) {
+      const phaseSecond = second - elapsed
+      return {
+        ...phase,
+        index,
+        protectedAxis: phase.kind === 'green' ? phase.activeAxis : null,
+        phaseSecond,
+        cycleSecond: second,
+        cycleSeconds: cycle,
+        secondsRemaining: Math.max(0, phase.duration - phaseSecond),
+        label: phase.id.replaceAll('-', ' '),
+        noPedestrianStart: phase.kind !== 'green',
+        pedestrianLinkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder.slice(-2),
+      }
     }
-  }
-  if (phaseSecond < greenDuration + TRAFFIC_SIGNAL_YELLOW_SECONDS) {
-    return {
-      kind: 'yellow',
-      activeAxis,
-      protectedAxis: activeAxis,
-      nextAxis,
-      phaseSecond,
-      secondsRemaining: greenDuration + TRAFFIC_SIGNAL_YELLOW_SECONDS - phaseSecond,
-      label: `${activeAxis.toUpperCase()} yellow clearance`,
-      sumoState: activeAxis === 'x' ? 'yyrr' : 'rryy',
-    }
+    elapsed = nextElapsed
   }
   return {
-    kind: 'all-red',
-    activeAxis: null,
-    protectedAxis: null,
-    nextAxis,
-    clearingAxis: activeAxis,
-    phaseSecond,
-    secondsRemaining: half - phaseSecond,
-    label: `all-red clearance before ${nextAxis.toUpperCase()}`,
-    sumoState: 'rrrr',
+    ...SUMO_TL_LOGIC[0],
+    index: 0,
+    protectedAxis: 'x',
+    phaseSecond: 0,
+    cycleSecond: 0,
+    cycleSeconds: cycle,
+    secondsRemaining: SUMO_TL_LOGIC[0].duration,
+    label: SUMO_TL_LOGIC[0].id.replaceAll('-', ' '),
+    noPedestrianStart: false,
+    pedestrianLinkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder.slice(-2),
   }
 }
 
@@ -323,13 +409,20 @@ export function trafficSignalForAxis(axis, timeMinutes = 0) {
 export function pedestrianSignalForAxis(crossedAxis, timeMinutes = 0) {
   const phase = trafficPhaseAt(timeMinutes)
   const vehicleSignal = trafficSignalForAxis(crossedAxis, timeMinutes)
-  const protectedWalk = phase.kind === 'green' && phase.activeAxis && phase.activeAxis !== crossedAxis && vehicleSignal === 'red'
+  const pedestrianKey = crossedAxis === 'x' ? 'crossX' : 'crossZ'
+  const pedestrianLinkState = phase.pedestrianLinks?.[pedestrianKey] || 'r'
+  const protectedWalk = pedestrianLinkState === 'G' && phase.kind === 'green' && phase.activeAxis && phase.activeAxis !== crossedAxis && vehicleSignal === 'red'
   const clearance = !protectedWalk && vehicleSignal === 'red' && (phase.kind === 'yellow' || phase.kind === 'all-red')
   return {
     vehicleSignal,
     walk: !!protectedWalk,
     clearance,
+    noStart: !protectedWalk,
+    pedestrianLinkState,
+    secondsRemaining: Number((phase.secondsRemaining || 0).toFixed(2)),
+    sourceProgram: 'SUMO_TL_LOGIC',
     phase: phase.kind,
+    phaseId: phase.id,
     activeVehicleAxis: phase.activeAxis,
     label: protectedWalk
       ? 'protected walk'
@@ -1008,6 +1101,207 @@ function createTraffic(rng, roads) {
   })
 }
 
+function nearestRoadToPoint(roads, x, z, predicate = () => true) {
+  let best = null
+  let bestDistance = Infinity
+  for (const road of roads) {
+    if (!predicate(road)) continue
+    const distance = roadDistanceToPoint(road, x, z)
+    if (distance < bestDistance) {
+      best = road
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
+function curbPointForRoad(road, ratio = 0.5, side = 1) {
+  const along = road.from + (road.to - road.from) * clamp(ratio, 0.04, 0.96)
+  const curb = road.width / 2 + 4.6
+  if (road.axis === 'x') return { x: along, z: road.z + side * curb }
+  return { x: road.x + side * curb, z: along }
+}
+
+function createIntersectionControllers(roads) {
+  const horizontal = roads.filter(road => road.main && road.axis === 'x')
+  const vertical = roads.filter(road => road.main && road.axis === 'z')
+  const controllers = []
+  for (const h of horizontal) {
+    for (const v of vertical) {
+      if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.94) continue
+      controllers.push({
+        id: `tl_${h.id}_${v.id}`,
+        model: 'SUMO static tlLogic',
+        x: v.x,
+        z: h.z,
+        roads: [h.id, v.id],
+        linkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder,
+        phases: SUMO_TL_LOGIC.map(phase => ({
+          id: phase.id,
+          duration: phase.duration,
+          state: phase.sumoState,
+          vehicleLinks: phase.vehicleLinks,
+          pedestrianLinks: phase.pedestrianLinks,
+          rule: phase.rule,
+        })),
+        stopBars: [
+          { roadId: h.id, direction: 1, x: v.x - v.width * 0.92, z: h.z },
+          { roadId: h.id, direction: -1, x: v.x + v.width * 0.92, z: h.z },
+          { roadId: v.id, direction: 1, x: v.x, z: h.z - h.width * 0.92 },
+          { roadId: v.id, direction: -1, x: v.x, z: h.z + h.width * 0.92 },
+        ],
+        pedestrianCrossings: [
+          { crossedAxis: 'x', controlledLink: 'ped_cross_x', rule: 'walk only while z-protected-green is active' },
+          { crossedAxis: 'z', controlledLink: 'ped_cross_z', rule: 'walk only while x-protected-green is active' },
+        ],
+      })
+    }
+  }
+  return controllers
+}
+
+function createMobilitySystem(roads, landmarks) {
+  const mainRoads = roads.filter(road => road.main)
+  const stations = landmarks.slice(0, 10).map((place, index) => {
+    const road = roads.find(item => item.id === place.roadId) || nearestRoadToPoint(roads, place.x, place.z, road => road.main) || roads[0]
+    const ratio = road.axis === 'x'
+      ? (clamp(place.x, road.from, road.to) - road.from) / Math.max(1, road.to - road.from)
+      : (clamp(place.z, road.from, road.to) - road.from) / Math.max(1, road.to - road.from)
+    const side = road.axis === 'x'
+      ? place.z >= road.z ? 1 : -1
+      : place.x >= road.x ? 1 : -1
+    const point = curbPointForRoad(road, ratio, side)
+    const capacity = 10 + (index % 4) * 4
+    const bikes = Math.max(2, Math.round(capacity * (0.36 + (index % 5) * 0.08)))
+    const scooters = Math.max(1, Math.round(capacity * (0.18 + (index % 3) * 0.07)))
+    return {
+      id: `gbfs_station_${place.id}`,
+      name: `${place.name} Mobility Dock`,
+      landmarkId: place.id,
+      roadId: road.id,
+      roadName: road.name,
+      address: place.address,
+      x: Number(point.x.toFixed(2)),
+      z: Number(point.z.toFixed(2)),
+      lonLat: worldToLngLat(point.x, point.z),
+      capacity,
+      numBikesAvailable: Math.min(capacity, bikes),
+      numDocksAvailable: Math.max(0, capacity - bikes),
+      numScootersAvailable: scooters,
+      parkingRule: 'dock-or-painted-parking-box-only',
+      sidewalkClearanceMeters: 2.2,
+      status: 'active',
+    }
+  })
+
+  const curbZones = mainRoads.flatMap((road, roadIndex) => [0.18, 0.5, 0.82].map((ratio, zoneIndex) => {
+    const index = roadIndex * 3 + zoneIndex
+    const point = curbPointForRoad(road, ratio, (roadIndex + zoneIndex) % 2 === 0 ? 1 : -1)
+    const purpose = index % 4 === 0 ? 'taxi-stand' : index % 4 === 1 ? 'delivery-loading' : index % 4 === 2 ? 'bus-stop' : 'short-stay-parking'
+    return {
+      id: `curb_${road.id}_${index}`,
+      type: 'ParkingSpot',
+      roadId: road.id,
+      roadName: road.name,
+      purpose,
+      x: Number(point.x.toFixed(2)),
+      z: Number(point.z.toFixed(2)),
+      maxDwellMinutes: purpose === 'delivery-loading' ? 12 : purpose === 'taxi-stand' ? 6 : purpose === 'bus-stop' ? 1 : 18,
+      enforcement: 'no-stopping-outside-marked-curb-zone',
+    }
+  }))
+
+  const geofencingZones = [
+    {
+      id: 'central-core-slow-ride',
+      type: 'RestrictedTrafficArea',
+      rule: 'shared bikes and scooters are limited to 8 kph and must park at docks',
+      maxSpeedKph: 8,
+      rideAllowed: true,
+      parkingAllowed: false,
+      center: { x: 0, z: 0 },
+      radius: 220,
+    },
+    {
+      id: 'station-crossing-no-parking',
+      type: 'RestrictedTrafficArea',
+      rule: 'no parking within crosswalk approaches and station entrance clear zones',
+      maxSpeedKph: 5,
+      rideAllowed: false,
+      parkingAllowed: false,
+      center: { x: 0, z: -ROAD_SPACING * 2 },
+      radius: 120,
+    },
+    {
+      id: 'outer-hills-low-speed',
+      type: 'RestrictedTrafficArea',
+      rule: 'downhill micromobility traffic slows for winding residential streets',
+      maxSpeedKph: 12,
+      rideAllowed: true,
+      parkingAllowed: true,
+      center: { x: 680, z: 680 },
+      radius: 260,
+    },
+  ]
+
+  return {
+    standards: SMART_MOBILITY_STANDARDS,
+    intersectionControllers: createIntersectionControllers(roads),
+    gbfs: {
+      systemInformation: {
+        systemId: 'realcity-shared-mobility',
+        language: 'en',
+        operator: 'RealCity Mobility Authority',
+        timezone: 'Asia/Seoul',
+      },
+      vehicleTypes: [
+        { vehicleTypeId: 'pedal_bike', formFactor: 'bicycle', propulsionType: 'human', maxPermittedSpeedKph: 18 },
+        { vehicleTypeId: 'e_scooter', formFactor: 'scooter', propulsionType: 'electric', maxPermittedSpeedKph: 18 },
+      ],
+      stationInformation: stations.map(station => ({
+        stationId: station.id,
+        name: station.name,
+        lonLat: station.lonLat,
+        capacity: station.capacity,
+        address: station.address,
+      })),
+      stationStatus: stations.map(station => ({
+        stationId: station.id,
+        numBikesAvailable: station.numBikesAvailable,
+        numScootersAvailable: station.numScootersAvailable,
+        numDocksAvailable: station.numDocksAvailable,
+        isInstalled: true,
+        isRenting: true,
+        isReturning: true,
+      })),
+      geofencingZones,
+      stations,
+    },
+    smartCity: {
+      dataModels: SMART_MOBILITY_STANDARDS.smartCities.entities,
+      curbZones,
+      trafficFlowObserved: mainRoads.slice(0, 18).map((road, index) => ({
+        id: `traffic_flow_${road.id}`,
+        type: 'TrafficFlowObserved',
+        roadId: road.id,
+        roadName: road.name,
+        intensity: Number(clamp(road.trafficWeight + (index % 4) * 0.08, 0.2, 1.8).toFixed(2)),
+        averageVehicleSpeedKph: Math.round(24 + road.trafficWeight * 18),
+        congestionLevel: road.trafficWeight > 1.1 ? 'medium' : 'low',
+      })),
+    },
+    gatsim: {
+      disruptionEvents: [
+        { id: 'school_release', timeWindow: '15:00-16:20', affectedPlace: 'mirae_school', policy: 'students delay crossing until protected WALK and couriers re-route around school curb queues' },
+        { id: 'station_peak', timeWindow: '08:00-09:30', affectedPlace: 'central_station', policy: 'commuters prefer transit sidewalks, taxis queue at marked stands, NPCs update departure time if late' },
+        { id: 'depot_loading', timeWindow: '10:00-12:00', affectedPlace: 'south_depot', policy: 'delivery vehicles use loading curb zones and pedestrians avoid depot driveways' },
+      ],
+      agentDecisionSignals: ['current signal phase', 'curb zone availability', 'shared mobility dock status', 'traffic flow observed', 'personal schedule pressure'],
+      adaptiveBehaviors: ['delay departure', 'walk to mobility dock', 'hail taxi at legal curb zone', 're-route to next crosswalk', 'remember congested segment'],
+    },
+  }
+}
+
 function createAppearance(rng, role, gender, age, index = 0) {
   const palette = pick(rng, FASHION_PALETTES)
   const body = BODY_ARCHETYPES[(index + Math.floor(rng() * BODY_ARCHETYPES.length)) % BODY_ARCHETYPES.length]
@@ -1514,6 +1808,7 @@ export function createRealCity(seed = 20260525) {
   const tiles = createTiles(buildings, landmarks, roads)
   const tileset = createTileset(tiles)
   const geojson = createGeoJSON(roads, landmarks)
+  const mobilitySystem = createMobilitySystem(roads, landmarks)
   const getNearbyBuildings = buildCollisionIndex(buildings)
 
   return {
@@ -1528,12 +1823,14 @@ export function createRealCity(seed = 20260525) {
     tiles,
     tileset,
     geojson,
+    mobilitySystem,
     worldToLngLat,
     districtAt,
     getNearbyBuildings,
     socialNorms: {
       pedestrian: 'NPCs prefer sidewalks, building entrances, plazas, and crosswalks; drive lanes are avoided except at crossings, and pedestrians wait at curb approaches until the crossed vehicle axis has a red signal.',
       traffic: 'Cars use right-hand lanes, obey alternating traffic lights at main intersections, yield near pedestrians, and taxis use named-road addresses for pickup and drop-off.',
+      sharedMobility: 'GBFS-shaped bike and scooter docks expose station information, station status, vehicle types, geofenced slow/no-park zones, and sidewalk clearance rules.',
       planting: 'Trees and planters stay outside the road reserve so streets remain drivable and readable.',
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
       zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
@@ -1557,18 +1854,28 @@ export function createRealCity(seed = 20260525) {
       drivingSide: 'right-hand',
       laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',
       signalModel: 'SUMO-inspired static tlLogic',
-      signalPhases: ['x-protected-green', 'x-yellow-clearance', 'all-red-clearance', 'z-protected-green', 'z-yellow-clearance', 'all-red-clearance'],
+      signalProgram: SUMO_TL_LOGIC,
+      signalPhases: SUMO_TL_LOGIC.map(phase => phase.id),
       signalCycleSeconds: TRAFFIC_SIGNAL_CYCLE_SECONDS,
       yellowSeconds: TRAFFIC_SIGNAL_YELLOW_SECONDS,
       allRedSeconds: TRAFFIC_SIGNAL_ALL_RED_SECONDS,
-      signals: `Main intersections use a SUMO-style static phase sequence: protected green, yellow clearance, all-red clearance, then the orthogonal axis. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
+      linkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder,
+      intersectionControllers: mobilitySystem.intersectionControllers.length,
+      pedestrianCrossingLinks: 'Pedestrian crossings are controlled as separate links after vehicle links and expose crossX/crossZ WALK states.',
+      signals: `Main intersections use a SUMO-style static tlLogic program with protected green, yellow clearance, all-red clearance, and separate pedestrian crossing links. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
       yielding: 'Drivers brake for pedestrians in or near a lane and stop at stop bars for red/all-red signal approaches; yellow allows close vehicles to clear but makes far vehicles decelerate.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
+      smartCityCurbZones: mobilitySystem.smartCity.curbZones.length,
+      gbfsStations: mobilitySystem.gbfs.stations.length,
+      gatsimDisruptions: mobilitySystem.gatsim.disruptionEvents.length,
     },
     integrations: {
       mapLibre: 'live procedural GeoJSON layer',
       cesium3DTiles: `${tiles.length} procedural tiles with 3D Tiles 1.1 bounding volumes, content URIs, metadata schema, and runtime LOD telemetry`,
       tripo3D: `${landmarks.length} landmark prompts ready for asset replacement`,
+      gbfs: `${mobilitySystem.gbfs.stations.length} dock stations with station_information, station_status, vehicle_types, and geofencing_zones`,
+      smartCities: `${mobilitySystem.smartCity.curbZones.length} curb/parking/loading zones plus TrafficFlowObserved road segments`,
+      gatsim: `${mobilitySystem.gatsim.disruptionEvents.length} generative-agent transport disruption policies for rerouting, delay, and mode choice`,
     },
   }
 }

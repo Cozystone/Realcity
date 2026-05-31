@@ -1130,6 +1130,21 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
   }, [city, safePlayer.x, safePlayer.z, player.district])
   const visibleVehicles = useMemo(() => vehicleSamples.filter(hasFinitePoint).slice(0, 140), [vehicleSamples])
   const visiblePedestrians = useMemo(() => pedestrianSamples.filter(hasFinitePoint).slice(0, 120), [pedestrianSamples])
+  const mobilitySummary = useMemo(() => {
+    const mobility = city.mobilitySystem || {}
+    const stations = mobility.gbfs?.stations || []
+    const nearestDock = stations
+      .filter(hasFinitePoint)
+      .map(station => ({ ...station, distance: distance2d(station, safePlayer) }))
+      .sort((a, b) => a.distance - b.distance)[0] || null
+    return {
+      stationCount: stations.length,
+      curbZones: mobility.smartCity?.curbZones?.length || 0,
+      geofences: mobility.gbfs?.geofencingZones?.length || 0,
+      disruptions: mobility.gatsim?.disruptionEvents?.length || 0,
+      nearestDock,
+    }
+  }, [city.mobilitySystem, safePlayer.x, safePlayer.z])
   const primaryRoads = useMemo(() => city.roads.filter(road => road.main), [city.roads])
   const routePoints = useMemo(() => route.filter(hasFinitePoint), [route])
   const activeRoutePoints = useMemo(() => routePoints.map(point => `${point.x},${point.z}`).join(' '), [routePoints])
@@ -1499,6 +1514,16 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
               </article>
             )) : (
               <p>NPC memories and relationships will appear as they meet around the city.</p>
+            )}
+          </aside>
+          <aside className="full-map-mobility-card" data-smart-mobility="true">
+            <span>Smart mobility</span>
+            <strong>{mobilitySummary.stationCount} GBFS docks / {mobilitySummary.curbZones} curb rules</strong>
+            <small>{mobilitySummary.geofences} geofences / {mobilitySummary.disruptions} GATSim events</small>
+            {mobilitySummary.nearestDock ? (
+              <p>{mobilitySummary.nearestDock.name}: {formatMeters(mobilitySummary.nearestDock.distance)} / {mobilitySummary.nearestDock.numBikesAvailable} bikes / {mobilitySummary.nearestDock.numScootersAvailable} scooters</p>
+            ) : (
+              <p>Shared mobility stations appear near major landmarks and legal curb zones.</p>
             )}
           </aside>
           {selectedPlace ? (

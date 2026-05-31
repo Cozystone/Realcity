@@ -46,6 +46,13 @@ audit has a clear finish line.
   sequence with protected green, yellow clearance, all-red clearance, stop-bar
   vehicle stopping, and protected pedestrian WALK instead of allowing ambiguous
   simultaneous starts.
+- SUMO link model: the signal program must expose vehicle links, separate
+  pedestrian crossing links, no-start clearance phases, countdown metadata,
+  stop bars, and per-intersection controller records.
+- Shared mobility and curb policy: the city exposes GBFS-shaped station
+  information/status, vehicle types, geofencing zones, SmartCities-style curb
+  and traffic-flow data models, and GATSim-style disruption policies that can
+  influence agent route/mode choices.
 - Procedural 3D Tiles: the city exposes a 3D Tiles 1.1-style tileset root,
   child bounding volumes, procedural content URIs, terrain/road/building content
   metadata schema, and runtime near/mid/far LOD telemetry for visible city tiles.

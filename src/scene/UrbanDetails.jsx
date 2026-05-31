@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
-import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH, pedestrianSignalForAxis, trafficPhaseAt, trafficSignalForAxis } from '../engine/cityEngine'
+import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH, SUMO_TL_LOGIC, pedestrianSignalForAxis, trafficPhaseAt, trafficSignalForAxis } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
 
 function setInstance(mesh, index, dummy, position, scale, rotationY = 0) {
@@ -272,7 +272,10 @@ function TrafficSignals({ roads }) {
       trafficSignals: {
         heads: signals.length,
         controller: 'SUMO-inspired static tlLogic',
-        phases: ['x-protected-green', 'x-yellow-clearance', 'all-red-clearance', 'z-protected-green', 'z-yellow-clearance', 'all-red-clearance'],
+        phases: SUMO_TL_LOGIC.map(phase => phase.id),
+        program: SUMO_TL_LOGIC.map(phase => ({ id: phase.id, duration: phase.duration, state: phase.sumoState })),
+        linkOrder: ['x_vehicle_forward', 'x_vehicle_reverse', 'z_vehicle_forward', 'z_vehicle_reverse', 'ped_cross_x', 'ped_cross_z'],
+        pedestrianLinks: ['ped_cross_x', 'ped_cross_z'],
         stopRule: 'vehicles stop at crosswalk stop bars on red/all-red; yellow decelerates when far and clears when close',
       },
     })
@@ -324,8 +327,12 @@ function TrafficSignals({ roads }) {
         ...(typeof window !== 'undefined' ? window.__REALCITY_RENDERING__?.trafficSignals || {} : {}),
         heads: signals.length,
         currentPhase: phase.kind,
+        currentPhaseId: phase.id,
         currentLabel: phase.label,
         sumoState: phase.sumoState,
+        vehicleLinks: phase.vehicleLinks,
+        pedestrianLinks: phase.pedestrianLinks,
+        noPedestrianStart: phase.noPedestrianStart,
         redHeads,
         yellowHeads,
         greenHeads,

@@ -2083,7 +2083,7 @@ button.key-prompt {
 .full-map-social-card {
   position: absolute;
   right: 16px;
-  top: 168px;
+  top: 310px;
   width: min(292px, calc(100% - 32px));
   max-height: 250px;
   display: grid;
@@ -2095,6 +2095,43 @@ button.key-prompt {
   background: rgba(8, 13, 18, 0.86);
   color: rgba(238, 244, 255, 0.76);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.full-map-mobility-card {
+  position: absolute;
+  right: 16px;
+  top: 172px;
+  width: min(292px, calc(100% - 32px));
+  display: grid;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid rgba(158, 228, 147, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.86);
+  color: rgba(238, 244, 255, 0.76);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.full-map-mobility-card span {
+  color: #9ee493;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.full-map-mobility-card strong {
+  color: #f8fbff;
+  font-size: 13px;
+}
+
+.full-map-mobility-card small,
+.full-map-mobility-card p {
+  margin: 0;
+  overflow: hidden;
+  color: rgba(238, 244, 255, 0.68);
+  font-size: 11px;
+  line-height: 1.34;
+  text-overflow: ellipsis;
 }
 
 .full-map-social-card span {
@@ -2637,7 +2674,8 @@ button.key-prompt {
     display: none;
   }
 
-  .full-map-social-card {
+  .full-map-social-card,
+  .full-map-mobility-card {
     display: none;
   }
 

@@ -827,6 +827,10 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
         crosswalkWaiting: true,
         crosswalkSignal: signal.label,
         crosswalkVehicleSignal: signal.vehicleSignal,
+        crosswalkPhaseId: signal.phaseId,
+        crosswalkNoStart: signal.noStart,
+        crosswalkCountdown: signal.secondsRemaining,
+        crosswalkProgram: signal.sourceProgram,
         roadId: crossingRoad?.id || agent.walkPlan?.roadId || null,
         roadName: crossingRoad?.name || agent.walkPlan?.roadName || null,
         roadAxis: crossingRoad?.axis || agent.walkPlan?.roadAxis || null,
@@ -842,7 +846,7 @@ function moveAgentToward(agent, target, delta, speed, cityOrRoads) {
           agentName: agent.name,
           placeName: crossingRoad?.name || agent.placeName,
           topic: 'walk signal wait',
-          text: `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because vehicle traffic still has ${signal.vehicleSignal}.`,
+          text: `${agent.name} waits at ${crossingRoad?.name || 'a crosswalk'} because ${signal.phaseId || 'the signal phase'} gives ${signal.vehicleSignal} to vehicle traffic and no pedestrian start.`,
         })
       }
       return Math.hypot(safeTarget.x - agent.pos.x, safeTarget.z - agent.pos.z)
@@ -2734,7 +2738,7 @@ function signalCornerActive(signalSide, corner) {
   return false
 }
 
-function Traffic({ cars, roads }) {
+function Traffic({ cars, roads, mobilitySystem }) {
   const bodyRef = useRef()
   const cabinRef = useRef()
   const windshieldRef = useRef()
@@ -2777,8 +2781,12 @@ function Traffic({ cars, roads }) {
       signalRules: ['hazard-all', 'right-side-pull-over', 'rear-caution'],
       behaviorCues: ['braking-forward-lean', 'checking-curb-mirror', 'hands-on-wheel'],
       vehicleCount: cars.length,
+      sumoProgram: mobilitySystem?.standards?.sumo?.reference || 'Eclipse SUMO static tlLogic',
+      gbfsStations: mobilitySystem?.gbfs?.stations?.length || 0,
+      smartCityCurbZones: mobilitySystem?.smartCity?.curbZones?.length || 0,
+      gatsimDisruptions: mobilitySystem?.gatsim?.disruptionEvents?.length || 0,
     }
-  }, [cars.length])
+  }, [cars.length, mobilitySystem])
 
   useFrame((state, delta) => {
     if (!bodyRef.current || !cabinRef.current || !windshieldRef.current || !sideWindowRef.current || !wheelRef.current || !wheelHubRef.current || !headlightRef.current || !tailLightRef.current || !bumperRef.current || !grilleRef.current || !mirrorRef.current || !licenseRef.current || !taxiSignRef.current || !driverRef.current || !driverTorsoRef.current || !driverHandRef.current || !steeringRef.current || !brakeGlowRef.current || !signalRef.current) return
@@ -2810,6 +2818,7 @@ function Traffic({ cars, roads }) {
       const playerContact = pointInVehicleBody(currentPose, dim, store.player, 0.74)
       const hazard = assignedPose ? null : shouldYieldToPedestrian(trafficCar, currentPose, pedestrians)
       const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes)
+      const phase = trafficPhaseAt(store.timeMinutes)
       const follow = assignedPose ? null : frontVehicleFor(trafficState, trafficStates)
       const brakingReason = playerContact
         ? 'player-contact'
@@ -2876,9 +2885,19 @@ function Traffic({ cars, roads }) {
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
         brakingReason,
-        signalPhase: signalStop?.phase || trafficPhaseAt(store.timeMinutes).kind,
+        signalPhase: signalStop?.phase || phase.kind,
+        signalPhaseId: phase.id,
+        sumoState: phase.sumoState,
+        sumoVehicleLinkState: phase.vehicleLinks?.[trafficState.road.axis] || 'r',
+        sumoPedestrianLinks: phase.pedestrianLinks || null,
+        noPedestrianStart: !!phase.noPedestrianStart,
         stopBarDistance: signalStop?.stopDistance ? Number(signalStop.stopDistance.toFixed(2)) : null,
         signalStopRule: signalStop?.rule || null,
+        rightOfWay: phase.kind === 'green' && phase.activeAxis === trafficState.road.axis ? 'protected-vehicle-link' : 'yield-or-stop',
+        yellowDecision: signalStop?.rule === 'yellow-far-decelerate' ? 'decelerate-before-stop-bar' : phase.kind === 'yellow' ? 'clear-if-close' : null,
+        smartCityCurbRule: mobilitySystem?.smartCity?.curbZones?.length ? 'stop, taxi, load, and park only in marked curb zones' : null,
+        gbfsNearbyDockCount: mobilitySystem?.gbfs?.stations?.length || 0,
+        gatsimDecisionSignals: mobilitySystem?.gatsim?.agentDecisionSignals?.slice(0, 5) || [],
         signalIntent,
         signalSide,
         signalBlink,
@@ -4176,6 +4195,10 @@ function NPCs({ city }) {
           crosswalkWaiting: !!agent.walkPlan?.crosswalkWaiting,
           crosswalkSignal: agent.walkPlan?.crosswalkSignal || null,
           crosswalkVehicleSignal: agent.walkPlan?.crosswalkVehicleSignal || null,
+          crosswalkPhaseId: agent.walkPlan?.crosswalkPhaseId || null,
+          crosswalkNoStart: agent.walkPlan?.crosswalkNoStart ?? null,
+          crosswalkCountdown: agent.walkPlan?.crosswalkCountdown ?? null,
+          crosswalkProgram: agent.walkPlan?.crosswalkProgram || null,
           crosswalkWaitSeconds: Number((agent.crosswalkWaitTimer || 0).toFixed(2)),
           routeRoadId: agent.walkPlan?.roadId || null,
           routeRoadName: agent.walkPlan?.roadName || null,
@@ -4892,7 +4915,7 @@ function NPCs({ city }) {
 export default function Actors({ city }) {
   return (
     <>
-      <Traffic cars={city.cars} roads={city.roads} />
+      <Traffic cars={city.cars} roads={city.roads} mobilitySystem={city.mobilitySystem} />
       <PlayerTaxiController city={city} />
       <TaxiRouteRibbon />
       <MissionTaxi />

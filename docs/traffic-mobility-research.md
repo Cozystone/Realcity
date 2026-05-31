@@ -51,15 +51,29 @@ This note tracks the traffic-rule pass for RealCity.
 - Runtime metadata exposes phase names, SUMO-like four-character states, stop
   rules, vehicle stop-bar samples, and pedestrian signal coupling for automated
   verification.
+- The runtime now exposes the full six-phase `SUMO_TL_LOGIC` array, explicit
+  vehicle links, separate `ped_cross_x` and `ped_cross_z` crossing links, and a
+  controller record for every main-road intersection. Pedestrian route samples
+  carry no-start, countdown, and source-program telemetry while they wait.
+- A GBFS-shaped shared mobility layer now exists in `city.mobilitySystem.gbfs`:
+  system information, vehicle types, station information, station status, and
+  geofencing zones are generated near meaningful landmarks.
+- A SmartCities-shaped policy layer now exists in `city.mobilitySystem.smartCity`:
+  curb zones, parking/loading/taxi/bus purposes, TrafficFlowObserved segments,
+  and parking enforcement rules are data rather than hidden constants.
+- A GATSim-shaped transport policy layer now exists in `city.mobilitySystem.gatsim`:
+  disruption events such as school release, station peak, and depot loading
+  publish the decision signals and adaptive behaviors NPC mobility planners
+  can use in later LLM prompts.
 
 ## Next Traffic Targets
 
 - Add explicit turn lanes and turn intentions.
 - Add queue length and detector-like pressure so green splits can become
   actuated in high-traffic areas.
-- Add GBFS-like bike/scooter stations and geofenced no-ride/no-parking zones.
-- Add parking/loading rules from Smart Data Models and route taxis/deliveries
-  through legal curb zones.
-- Add GATSim-like mobility disruption events that make NPCs delay, re-route, or
-  change mode.
-
+- Use the GBFS/SmartCities/GATSim layers as live inputs in the local LLM
+  autonomy prompt for choosing bike/scooter/taxi/walk mode.
+- Render the shared mobility docks and curb-zone markings as physical street
+  objects, not only map/HUD telemetry.
+- Add queue length and detector-like pressure so green splits can become
+  actuated in high-traffic areas.
