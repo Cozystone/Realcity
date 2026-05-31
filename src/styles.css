@@ -1828,6 +1828,23 @@ button.key-prompt {
   stroke-width: 1.5;
 }
 
+.full-map-live-pedestrians circle.known {
+  fill: rgba(158, 228, 147, 0.94);
+}
+
+.full-map-live-pedestrians circle.talking {
+  fill: #ff7ab6;
+  stroke: rgba(255, 245, 252, 0.92);
+  stroke-width: 2;
+}
+
+.full-map-social-links line {
+  stroke: rgba(255, 122, 182, 0.72);
+  stroke-width: 2.5;
+  stroke-dasharray: 8 8;
+  vector-effect: non-scaling-stroke;
+}
+
 .full-map-controls {
   position: absolute;
   right: 16px;
@@ -1892,6 +1909,73 @@ button.key-prompt {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
+}
+
+.full-map-social-card {
+  position: absolute;
+  right: 16px;
+  top: 168px;
+  width: min(292px, calc(100% - 32px));
+  max-height: 250px;
+  display: grid;
+  gap: 7px;
+  padding: 12px 13px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 122, 182, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.86);
+  color: rgba(238, 244, 255, 0.76);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.full-map-social-card span {
+  color: #ff7ab6;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.full-map-social-card strong {
+  color: #f8fbff;
+  font-size: 14px;
+}
+
+.full-map-social-card p {
+  margin: 0;
+  color: rgba(238, 244, 255, 0.68);
+  font-size: 11px;
+  line-height: 1.34;
+}
+
+.full-map-social-agent {
+  display: grid;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.full-map-social-agent b,
+.full-map-social-agent small,
+.full-map-social-agent p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.full-map-social-agent b {
+  color: rgba(248, 250, 252, 0.94);
+  font-size: 11px;
+}
+
+.full-map-social-agent small {
+  color: rgba(158, 228, 147, 0.78);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.full-map-social-agent p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .full-map-place-card {
@@ -2227,6 +2311,10 @@ button.key-prompt {
   background: #f8fbff;
 }
 
+.full-map-legend .legend-social {
+  background: #ff7ab6;
+}
+
 .full-map-landmarks .selected circle {
   stroke: #fff7b0;
   stroke-width: 7;
@@ -2352,6 +2440,10 @@ button.key-prompt {
   }
 
   .mission-panel {
+    display: none;
+  }
+
+  .full-map-social-card {
     display: none;
   }
 

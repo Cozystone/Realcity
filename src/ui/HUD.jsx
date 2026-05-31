@@ -190,6 +190,22 @@ function placeActivitySummary(place, pedestrianSamples = [], vehicleSamples = []
   }
 }
 
+function socialSummaryFor(person) {
+  if (!person) return 'No social context'
+  if (person.talkPartnerName && person.talkTopicLabel) return `Talking with ${person.talkPartnerName} about ${person.talkTopicLabel}`
+  if (person.lastInteractionPartner && person.lastInteractionTopic) return `Knows ${person.lastInteractionPartner}: ${person.lastInteractionTopic}`
+  if (person.knownContacts?.[0]) return `Remembers ${person.knownContacts[0].name}: ${person.knownContacts[0].lastTopic || 'recent contact'}`
+  if (person.lastMemory) return person.lastMemory
+  return person.currentIntent || person.autonomyGoal || person.state || 'Following daily routine'
+}
+
+function socialScore(person) {
+  return (person.talkPartnerId ? 80 : 0) +
+    (person.relationshipCount || 0) * 8 +
+    (person.knownContacts?.length || 0) * 5 +
+    (person.lastMemory ? 3 : 0)
+}
+
 function placeAccessSummary(place) {
   if (!place) return 'Unknown access'
   const floors = place.interior?.floorCount || place.interior?.floors || 1
@@ -1066,6 +1082,26 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
     () => placeRhythmFor(selectedPlace, pedestrianSamples, useCityStore.getState().timeMinutes),
     [selectedPlace, pedestrianSamples],
   )
+  const socialLinks = useMemo(() => {
+    const byId = new Map(visiblePedestrians.map(person => [person.id, person]))
+    const links = []
+    for (const person of visiblePedestrians) {
+      if (!person.talkPartnerId || String(person.id) > String(person.talkPartnerId)) continue
+      const partner = byId.get(person.talkPartnerId)
+      if (!partner) continue
+      links.push({
+        id: `${person.id}_${partner.id}`,
+        a: person,
+        b: partner,
+        topic: person.talkTopicLabel || partner.talkTopicLabel || 'conversation',
+      })
+    }
+    return links.slice(0, 12)
+  }, [visiblePedestrians])
+  const socialAgents = useMemo(() => [...visiblePedestrians]
+    .filter(person => socialScore(person) > 0)
+    .sort((a, b) => socialScore(b) - socialScore(a))
+    .slice(0, 5), [visiblePedestrians])
   const selectedPlaceDistance = selectedPlace ? distance2d(selectedPlace, safePlayer) : 0
   const canRequestPlaceTaxi = !!selectedPlace && !mission && !ride
 
@@ -1329,9 +1365,27 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
                 </g>
               ))}
             </g>
+            <g className="full-map-social-links" aria-label="Active NPC social links">
+              {socialLinks.map(link => (
+                <line
+                  key={link.id}
+                  className="full-map-social-link"
+                  x1={link.a.x}
+                  y1={link.a.z}
+                  x2={link.b.x}
+                  y2={link.b.z}
+                />
+              ))}
+            </g>
             <g className="full-map-live-pedestrians">
               {visiblePedestrians.map(person => (
-                <circle key={person.id} cx={person.x} cy={person.z} r={person.state === 'crossing' ? 5.4 : 4.4} />
+                <circle
+                  key={person.id}
+                  className={person.talkPartnerId ? 'talking' : person.relationshipCount > 0 ? 'known' : ''}
+                  cx={person.x}
+                  cy={person.z}
+                  r={person.state === 'crossing' ? 5.4 : person.talkPartnerId ? 5.2 : 4.4}
+                />
               ))}
             </g>
             {taxi ? (
@@ -1355,6 +1409,19 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
             <strong>{gps.label}</strong>
             <small>{gps.address}</small>
             <small>{formatCoordinate(gps.lat)}N / {formatCoordinate(gps.lng)}E</small>
+          </aside>
+          <aside className="full-map-social-card" data-agent-social="true">
+            <span>Agent society</span>
+            <strong>{socialLinks.length ? `${socialLinks.length} live conversations` : `${socialAgents.length} known social traces`}</strong>
+            {socialAgents.length ? socialAgents.slice(0, 3).map(person => (
+              <article key={person.id} className="full-map-social-agent">
+                <b>{person.name}</b>
+                <small>{person.job} / {person.relationshipCount || 0} contacts</small>
+                <p>{socialSummaryFor(person)}</p>
+              </article>
+            )) : (
+              <p>NPC memories and relationships will appear as they meet around the city.</p>
+            )}
           </aside>
           {selectedPlace ? (
             <aside className="full-map-place-card" data-place-id={selectedPlace.id}>
@@ -1435,6 +1502,7 @@ function FullCityMap({ city, player, mission, ride, mapRoute, pedestrianSamples,
             <span><i className="legend-route" />Route</span>
             <span><i className="legend-taxi" />Taxi</span>
             <span><i className="legend-npc" />NPC</span>
+            <span><i className="legend-social" />Social</span>
           </div>
         </div>
       </section>

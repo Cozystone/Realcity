@@ -2404,12 +2404,35 @@ function collectOllamaStatus() {
   }
 }
 
+function isOptionalLocalLlmUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return /\/ollama\/api\/generate$|\/api\/generate$/i.test(parsed.pathname) &&
+      ['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname)
+  } catch {
+    return /\/ollama\/api\/generate|localhost:11434\/api\/generate|127\.0\.0\.1:11434\/api\/generate/i.test(String(url))
+  }
+}
+
+function filterConsoleErrors(consoleErrors, optionalLocalLlmErrors) {
+  let remainingOptional = optionalLocalLlmErrors.length
+  return consoleErrors.filter(text => {
+    if (/Failed to load resource: the server responded with a status of 500/i.test(text) && remainingOptional > 0) {
+      remainingOptional -= 1
+      return false
+    }
+    return true
+  })
+}
+
 async function main() {
   mkdirSync(artifactsDir, { recursive: true })
   const server = startDevServer()
   let browser
   const consoleErrors = []
   const pageErrors = []
+  const serverResponseErrors = []
+  const optionalLocalLlmErrors = []
   let task = randomTasks[Math.floor(Math.random() * randomTasks.length)]
   let addressRoute = null
 
@@ -2430,6 +2453,13 @@ async function main() {
       if (message.type() === 'error' || /Unable to preventDefault inside passive event listener invocation/i.test(text)) consoleErrors.push(text)
     })
     page.on('pageerror', error => pageErrors.push(error.message))
+    page.on('response', response => {
+      const status = response.status()
+      if (status < 500) return
+      const entry = `${status} ${response.url()}`
+      if (isOptionalLocalLlmUrl(response.url())) optionalLocalLlmErrors.push(entry)
+      else serverResponseErrors.push(entry)
+    })
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45000 })
     await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 30000 })
@@ -2472,6 +2502,15 @@ async function main() {
     })
     if (addressRoute?.address) task = `Take me to ${addressRoute.address}. Use a taxi and stay with me until we arrive.`
     const phone = await inspectPhone(page)
+    await page.evaluate(() => {
+      const player = window.__REALCITY_STORE__?.getState()?.player || { x: 0, z: 40 }
+      window.__REALCITY_NPC_DEBUG__?.startConversation?.({
+        x: player.x + 6,
+        z: player.z + 10,
+        spacing: 2.8,
+        seconds: 18,
+      })
+    })
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
     const mapText = await page.locator('.full-map-panel').innerText({ timeout: 5000 })
@@ -2483,6 +2522,11 @@ async function main() {
     assert(await page.locator('.full-map-buildings rect').count() > 20, 'Full map did not render building footprints')
     assert(await page.locator('.full-map-live-vehicles rect').count() > 0, 'Full map did not render live vehicle positions')
     assert(await page.locator('.full-map-live-pedestrians circle').count() > 0, 'Full map did not render live NPC positions')
+    assert(await page.locator('.full-map-social-card[data-agent-social="true"]').count() === 1, 'Full map did not render the NPC social intelligence card')
+    const socialCardText = await page.locator('.full-map-social-card').innerText({ timeout: 5000 })
+    assert(/agent society|conversation|social traces|contacts/i.test(socialCardText), `Full map social card is incomplete: ${socialCardText}`)
+    assert(await page.locator('.full-map-social-agent').count() >= 2, `Full map did not expose named NPC relationship traces: ${socialCardText}`)
+    assert(await page.locator('.full-map-social-link').count() >= 1, `Full map did not render active NPC conversation links: ${socialCardText}`)
     assert(await page.locator('.full-map-navigation-card').count() === 1, 'Full map did not render the live navigation card')
     const idleNavigationText = await page.locator('.full-map-navigation-card').innerText({ timeout: 5000 })
     assert(/live navigation/i.test(idleNavigationText), `Full map navigation card is incomplete: ${idleNavigationText}`)
@@ -2741,7 +2785,9 @@ async function main() {
     const phoneDirectTaxi = await inspectPhoneDirectTaxiDispatch(page)
     const phoneSocialActions = await inspectPhoneSocialActions(page)
     const responsivePerformance = await inspectResponsivePerformance(browser)
-    assert(consoleErrors.length === 0, `Console errors were reported: ${consoleErrors.join(' | ')}`)
+    const fatalConsoleErrors = filterConsoleErrors(consoleErrors, optionalLocalLlmErrors)
+    assert(serverResponseErrors.length === 0, `Server 500 responses were reported: ${serverResponseErrors.join(' | ')}`)
+    assert(fatalConsoleErrors.length === 0, `Console errors were reported: ${fatalConsoleErrors.join(' | ')}`)
     assert(pageErrors.length === 0, `Page errors were reported: ${pageErrors.join(' | ')}`)
 
     const report = {
@@ -2790,6 +2836,9 @@ async function main() {
       travelDistance: positionDistance(finalPlayer, afterMove),
       ollama: collectOllamaStatus(),
       consoleErrors,
+      fatalConsoleErrors,
+      optionalLocalLlmErrors,
+      serverResponseErrors,
       pageErrors,
       serverLogTail: server.logs.join('').split(/\r?\n/).slice(-30),
       initialScreenshotPath,
