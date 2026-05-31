@@ -1,3 +1,5 @@
+import { cognitionPromptLines } from './agentCognition'
+
 const provider = import.meta.env.VITE_LOCAL_LLM_PROVIDER || 'ollama'
 const endpoint = import.meta.env.VITE_LOCAL_LLM_ENDPOINT || '/ollama/api/generate'
 const model = import.meta.env.VITE_LOCAL_LLM_MODEL || 'dolphin3:latest'
@@ -117,6 +119,7 @@ export async function askLocalNPC(agent, context) {
     `Gesture: ${agent.gestureStyle || 'small nod'}`,
     `Current activity: ${agent.activity}`,
     `Current place: ${agent.placeName}`,
+    ...cognitionPromptLines(agent),
     `City state: ${context}`,
     'A player walks up and asks what is happening here.',
   ].join('\n')
@@ -681,6 +684,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     'You are the decision system for one autonomous NPC in a playable virtual city.',
     'The player can ask for realistic favors, guidance, transport, or conversation.',
     'Think about the NPC schedule, job, personality, safety, urgency, and available city actions.',
+    'Use the NPC cognitive state: retrieved memories, reflection, utility policy, and social norms are context, but final actions must be executable by the city simulation.',
     'Return only strict JSON matching this schema:',
     JSON.stringify(schema),
     'Use Korean for speech. Keep steps concrete and executable in a 3D city simulation.',
@@ -705,6 +709,7 @@ export async function planLocalNPCAction(agent, request, context = {}) {
     `Current place: ${agent.placeName}`,
     `Workplace: ${agent.workName || 'unknown'}`,
     `Distance to work: ${Math.round(context.distanceToWork || 0)} meters`,
+    ...cognitionPromptLines(agent),
     `City time: ${context.timeLabel || 'unknown'}`,
     `Player district: ${context.playerDistrict || 'unknown'}`,
     `Known city places:\n${knownPlaces || 'none'}`,

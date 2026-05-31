@@ -315,6 +315,24 @@ function resolveDynamicCollision(store, previousX, previousZ, x, z, isRunning, c
     if (!hadVehicleContact) break
   }
 
+  for (let pass = 0; pass < 2; pass += 1) {
+    let adjusted = false
+    for (const vehicle of vehicles) {
+      const clearance = Math.min(vehicle.width || 2.1, vehicle.length || 4.4) / 2 + playerRadius + vehiclePadding
+      const dx = px - vehicle.x
+      const dz = pz - vehicle.z
+      const distance = Math.hypot(dx, dz)
+      if (distance >= clearance) continue
+      const fallbackYaw = Number.isFinite(vehicle.yaw) ? vehicle.yaw + Math.PI / 2 : 0
+      const nx = distance > 0.001 ? dx / distance : Math.sin(fallbackYaw)
+      const nz = distance > 0.001 ? dz / distance : Math.cos(fallbackYaw)
+      px = vehicle.x + nx * clearance
+      pz = vehicle.z + nz * clearance
+      adjusted = true
+    }
+    if (!adjusted) break
+  }
+
   return [px, pz]
 }
 

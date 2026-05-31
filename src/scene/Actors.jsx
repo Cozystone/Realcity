@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { terrainHeight, trafficSignalForAxis } from '../engine/cityEngine'
+import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalForAxis } from '../engine/cityEngine'
 import { resolveBuildingCollision } from '../engine/collision'
+import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
 import { fallbackLine, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
 import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
@@ -614,12 +615,11 @@ function roadForWaypoint(waypoint, roads = []) {
 }
 
 function pedestrianSignalForCrossing(road, timeMinutes = 0) {
-  if (!road) return { vehicleSignal: 'unknown', walk: true, label: 'unsignalized crossing' }
-  const vehicleSignal = trafficSignalForAxis(road.axis, timeMinutes)
+  if (!road) return { vehicleSignal: 'unknown', walk: true, clearance: false, label: 'unsignalized crossing' }
+  const signal = pedestrianSignalForAxis(road.axis, timeMinutes)
   return {
-    vehicleSignal,
-    walk: vehicleSignal === 'red',
-    label: vehicleSignal === 'red' ? 'walk' : vehicleSignal === 'yellow' ? 'wait yellow' : 'wait green traffic',
+    ...signal,
+    label: signal.label,
   }
 }
 
@@ -1347,6 +1347,15 @@ class Agent {
     this.relationships = {}
     this.relationshipCount = 0
     this.lastInteraction = null
+    this.cognition = buildAgentCognition(this, {
+      trigger: 'spawn',
+      target: data.home,
+      activity: this.activity,
+      placeName: this.placeName,
+    })
+    this.cognitionClock = 1.5 + (hashValue(data.id) % 30) / 10
+    this.lastReflectionText = this.cognition.reflection?.text || ''
+    this.lastReflectionAt = 0
     this.talkTimer = 0
     this.socialCooldown = 4 + Math.random() * 11
     this.playerCooldown = 0
@@ -1378,6 +1387,23 @@ class Agent {
     this.lastRouteDistance = null
     this.blockedContacts = 0
     this.routeStatus = 'scheduled route pending'
+  }
+
+  refreshCognition(context = {}) {
+    this.cognition = buildAgentCognition(this, context)
+    const reflection = this.cognition.reflection
+    const now = performance.now()
+    if (
+      reflection?.text &&
+      reflection.text !== this.lastReflectionText &&
+      reflection.importance >= 0.68 &&
+      now - (this.lastReflectionAt || 0) > 16000
+    ) {
+      this.lastReflectionText = reflection.text
+      this.lastReflectionAt = now
+      this.remember('reflection', reflection.text, this.placeName, reflection.importance)
+    }
+    return this.cognition
   }
 
   update(delta, timeMinutes, places, city) {
@@ -1417,7 +1443,20 @@ class Agent {
 
     if (this.mission) return this.updateMission(delta, city)
 
-    this.updateNeedErrand(timeMinutes, places, roads)
+    this.cognitionClock = Math.max(0, (this.cognitionClock || 0) - delta)
+    const scheduledTarget = targetFor(this, places, timeMinutes, roads)
+    if (this.cognitionClock <= 0) {
+      this.refreshCognition({
+        trigger: 'routine-tick',
+        timeMinutes,
+        target: scheduledTarget,
+        activity: this.activity,
+        placeName: this.placeName,
+      })
+      this.cognitionClock = 3.2 + (hashValue(`${this.id}_${Math.floor(timeMinutes)}`) % 32) / 10
+    }
+
+    this.updateNeedErrand(timeMinutes, places, roads, scheduledTarget)
     const target = targetFor(this, places, timeMinutes, roads)
     if (this.selfTaxi) {
       updateAutonomousNpcTaxi(this, target, delta, city)
@@ -1457,9 +1496,10 @@ class Agent {
     return 'dwelling'
   }
 
-  startNeedErrand(profile, places, timeMinutes, forced = false) {
+  startNeedErrand(profile, places, timeMinutes, forced = false, cognition = null) {
     const place = chooseNeedErrandPlace(this, places, profile)
     if (!place) return false
+    const cognitiveReason = cognition?.selectedPolicy?.reason || `${profile.reason} need crossed the routine threshold`
     this.needErrand = {
       id: `${this.id}_${profile.reason}_${Math.floor(timeMinutes)}`,
       reason: profile.reason,
@@ -1470,12 +1510,14 @@ class Agent {
       startedAt: timeMinutes,
       durationMinutes: forced ? NEED_ERRAND_DURATION_MINUTES + 10 : NEED_ERRAND_DURATION_MINUTES + (hashValue(`${this.id}_${profile.reason}`) % 10),
       forced,
+      cognitiveReason,
+      cognitionPolicy: cognition?.selectedPolicy?.id || 'need-detour',
     }
     this.walkRoute = null
     this.walkPlan = null
     this.routeStatus = `need detour: ${profile.label} at ${place.name}`
     this.currentIntent = `${profile.label} at ${place.name} because ${strongestNeedPhrase(this)}`
-    this.remember('need', `${profile.memory} Detouring to ${place.name}.`, this.placeName, 0.82)
+    this.remember('need', `${profile.memory} Detouring to ${place.name}. Reason: ${cognitiveReason}.`, this.placeName, 0.82)
     useCityStore.getState().addCityEvent({
       id: `need_errand_${this.needErrand.id}_${Date.now()}`,
       kind: 'need',
@@ -1483,12 +1525,12 @@ class Agent {
       agentName: this.name,
       placeName: place.name,
       topic: profile.label,
-      text: `${this.name} changes course for a ${profile.label} at ${place.name} instead of blindly following the schedule.`,
+      text: `${this.name} changes course for a ${profile.label} at ${place.name} after memory/reflection utility scoring instead of blindly following the schedule.`,
     })
     return true
   }
 
-  updateNeedErrand(timeMinutes, places) {
+  updateNeedErrand(timeMinutes, places, roads = [], currentTarget = null) {
     if (this.needErrand) {
       if (this.selfTaxi) return
       const remaining = errandMinutesRemaining(this.needErrand, timeMinutes)
@@ -1517,7 +1559,16 @@ class Agent {
     if (this.needErrandCooldown > 0 || this.selfTaxi || this.talkTimer > 0) return
     const profile = needErrandProfile(this)
     if (!profile) return
-    this.startNeedErrand(profile, places, timeMinutes)
+    const cognition = this.refreshCognition({
+      trigger: 'need-check',
+      timeMinutes,
+      target: currentTarget || targetFor(this, places, timeMinutes, roads),
+      profile,
+      activity: this.activity,
+      placeName: this.placeName,
+    })
+    if (!shouldStartNeedErrandFromCognition(this, profile, cognition)) return
+    this.startNeedErrand(profile, places, timeMinutes, false, cognition)
   }
 
   applyNeedErrandRelief(delta) {
@@ -1809,6 +1860,15 @@ class Agent {
       }
       this.currentIntent = `talking with ${partner.name} about ${conversation.label}`
       this.remember('social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
+      this.refreshCognition({
+        trigger: 'conversation',
+        timeMinutes,
+        partner,
+        topic: conversation,
+        activity: this.activity,
+        placeName: this.placeName,
+        nearbyAgents: 1,
+      })
     }
   }
 
@@ -1830,6 +1890,14 @@ class Agent {
       appearance: this.appearance,
       styleBrief: this.styleBrief,
       autonomy: this.autonomy,
+      cognition: this.cognition ? {
+        architectureId: this.cognition.architecture?.id,
+        selectedPolicy: this.cognition.selectedPolicy,
+        reflection: this.cognition.reflection,
+        retrievedMemories: this.cognition.retrievedMemories,
+        utilityScores: this.cognition.utilityScores?.slice(0, 5),
+        executionContract: this.cognition.executionContract,
+      } : null,
       needs: this.needs,
       memories: this.memories,
       relationships: Object.values(this.relationships).slice(0, 5),
@@ -1862,6 +1930,8 @@ class Agent {
         label: this.needErrand.label,
         targetName: this.needErrand.targetName,
         activity: this.needErrand.activity,
+        cognitiveReason: this.needErrand.cognitiveReason,
+        cognitionPolicy: this.needErrand.cognitionPolicy,
         remainingMinutes: errandMinutesRemaining(this.needErrand, useCityStore.getState().timeMinutes),
       } : null,
       mission: this.mission ? { mode: this.mission.mode, phase: this.mission.phase } : null,
@@ -2251,11 +2321,13 @@ function distanceToSignalStop(car, pose, roads) {
   for (const cross of crossRoads) {
     if (car.road.axis === 'x') {
       if (cross.x < car.road.from || cross.x > car.road.to) continue
-      const distance = car.direction > 0 ? cross.x - pose.x : pose.x - cross.x
+      const stopLine = cross.x - car.direction * cross.width * 0.92
+      const distance = car.direction > 0 ? stopLine - pose.x : pose.x - stopLine
       if (distance > 0 && distance < nearest) nearest = distance
     } else {
       if (cross.z < car.road.from || cross.z > car.road.to) continue
-      const distance = car.direction > 0 ? cross.z - pose.z : pose.z - cross.z
+      const stopLine = cross.z - car.direction * cross.width * 0.92
+      const distance = car.direction > 0 ? stopLine - pose.z : pose.z - stopLine
       if (distance > 0 && distance < nearest) nearest = distance
     }
   }
@@ -2264,9 +2336,21 @@ function distanceToSignalStop(car, pose, roads) {
 
 function shouldStopForSignal(car, pose, roads, timeMinutes) {
   const signal = trafficSignalForAxis(car.road.axis, timeMinutes)
+  const phase = trafficPhaseAt(timeMinutes)
   if (signal === 'green') return null
   const stopDistance = distanceToSignalStop(car, pose, roads)
-  if (stopDistance > 4 && stopDistance < 30) return { signal, stopDistance }
+  if (signal === 'yellow') {
+    if (stopDistance > 10 && stopDistance < 34) return { signal, stopDistance, phase: phase.kind, rule: 'yellow-far-decelerate' }
+    return null
+  }
+  if (stopDistance > 1.6 && stopDistance < 36) {
+    return {
+      signal: phase.kind === 'all-red' ? 'all-red' : signal,
+      stopDistance,
+      phase: phase.kind,
+      rule: phase.kind === 'all-red' ? 'all-red-clearance-stop' : 'red-stop-at-stop-bar',
+    }
+  }
   return null
 }
 
@@ -2470,6 +2554,10 @@ function Traffic({ cars, roads }) {
       car.brake = shouldBrake
         ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
+      if (signalStop?.signal === 'red' || signalStop?.signal === 'all-red') {
+        const stopHold = clampValue((8 - signalStop.stopDistance) / 6, 0, 1)
+        car.brake = Math.max(car.brake || 0, stopHold)
+      }
       if (playerContact && yieldPulse.current <= 0) {
         yieldPulse.current = 3.5
         store.setPulse(`${car.kind === 'taxi' ? 'A taxi driver' : 'A driver'} hits the brakes as you crowd the lane.`)
@@ -2480,7 +2568,7 @@ function Traffic({ cars, roads }) {
       }
       if (signalStop && yieldPulse.current <= 0) {
         yieldPulse.current = 4
-        store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'Traffic'} stops for a ${signalStop.signal} light on ${car.road.name}.`)
+        store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'Traffic'} stops at the bar for ${signalStop.signal} on ${car.road.name}.`)
       }
       if (follow && follow.distance < follow.desiredGap * 0.62 && yieldPulse.current <= 0) {
         yieldPulse.current = 4.5
@@ -2515,6 +2603,9 @@ function Traffic({ cars, roads }) {
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
         brakingReason,
+        signalPhase: signalStop?.phase || trafficPhaseAt(store.timeMinutes).kind,
+        stopBarDistance: signalStop?.stopDistance ? Number(signalStop.stopDistance.toFixed(2)) : null,
+        signalStopRule: signalStop?.rule || null,
         signalIntent,
         signalSide,
         signalBlink,
@@ -3531,6 +3622,15 @@ function NPCs({ city }) {
           })),
           memoryCount: agent.memories?.length || 0,
           lastMemory: agent.memories?.[0]?.text || null,
+          cognitionArchitecture: agent.cognition?.architecture?.id || null,
+          cognitionPolicy: agent.cognition?.selectedPolicy?.id || null,
+          cognitionPolicyScore: agent.cognition?.selectedPolicy?.score ?? null,
+          cognitionReflection: agent.cognition?.reflection?.text || null,
+          cognitionRetrievedMemories: agent.cognition?.retrievedMemories?.length || 0,
+          cognitionUtilityScores: (agent.cognition?.utilityScores || []).slice(0, 4).map(item => ({
+            id: item.id,
+            score: item.score,
+          })),
           energy: agent.needs ? Number(agent.needs.energy.toFixed(2)) : null,
           hunger: agent.needs ? Number(agent.needs.hunger.toFixed(2)) : null,
           socialNeed: agent.needs ? Number(agent.needs.social.toFixed(2)) : null,
@@ -3538,6 +3638,8 @@ function NPCs({ city }) {
           needErrandReason: agent.needErrand?.reason || null,
           needErrandLabel: agent.needErrand?.label || null,
           needErrandTargetName: agent.needErrand?.targetName || null,
+          needErrandCognitiveReason: agent.needErrand?.cognitiveReason || null,
+          needErrandCognitionPolicy: agent.needErrand?.cognitionPolicy || null,
           needErrandRemainingMinutes: agent.needErrand ? Number(errandMinutesRemaining(agent.needErrand, time).toFixed(1)) : null,
           targetName: agent.walkPlan?.targetName || agent.placeName || null,
           travelMode: agent.selfTaxi ? 'taxi' : 'walk',
@@ -3578,6 +3680,30 @@ function NPCs({ city }) {
       store.setNearbyAgent(nearestAgent && nearestDistance <= 24
         ? { ...nearestAgent.snapshot(places), distance: nearestDistance }
         : null)
+      if (typeof window !== 'undefined') {
+        const cognitionSamples = agents.slice(0, 18).map(agent => ({
+          id: agent.id,
+          name: agent.name,
+          policy: agent.cognition?.selectedPolicy?.id || null,
+          policyScore: agent.cognition?.selectedPolicy?.score ?? null,
+          reflection: agent.cognition?.reflection?.text || null,
+          retrievedMemories: agent.cognition?.retrievedMemories?.length || 0,
+          utilityScores: (agent.cognition?.utilityScores || []).slice(0, 4).map(item => ({ id: item.id, score: item.score })),
+          contract: agent.cognition?.executionContract || null,
+        }))
+        window.__REALCITY_NPC_COGNITION__ = {
+          architectureId: NPC_COGNITION_ARCHITECTURE.id,
+          modules: NPC_COGNITION_ARCHITECTURE.modules,
+          researchBasis: NPC_COGNITION_ARCHITECTURE.researchBasis,
+          agentCount: agents.length,
+          sampledAgents: cognitionSamples.length,
+          samplesWithReflection: cognitionSamples.filter(sample => sample.reflection).length,
+          samplesWithRetrievedMemories: cognitionSamples.filter(sample => sample.retrievedMemories > 0).length,
+          policyKinds: [...new Set(cognitionSamples.map(sample => sample.policy).filter(Boolean))],
+          executionContract: cognitionSamples.find(sample => sample.contract)?.contract || null,
+          sourceNote: 'Derived from intelligent NPC article themes plus generative-agent, LLM game-agent, GOBT, navigation, norm, and steering research.',
+        }
+      }
     }
 
     hipsRef.current.instanceMatrix.needsUpdate = true

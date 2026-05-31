@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Billboard, Text } from '@react-three/drei'
 import * as THREE from 'three'
-import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH, trafficSignalForAxis } from '../engine/cityEngine'
+import { CITY_BASE_Y, CITY_GRID_HALF, ROAD_SPACING, ROAD_WIDTH, pedestrianSignalForAxis, trafficPhaseAt, trafficSignalForAxis } from '../engine/cityEngine'
 import { useCityStore } from '../engine/cityStore'
 
 function setInstance(mesh, index, dummy, position, scale, rotationY = 0) {
@@ -257,7 +257,7 @@ function TrafficSignals({ roads }) {
     const items = []
     for (const h of mainHorizontal) {
       for (const v of mainVertical) {
-        if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.86) continue
+        if (Math.hypot(v.x, h.z) > CITY_GRID_HALF * 0.94) continue
         items.push({ x: v.x - v.width * 0.68, z: h.z - h.width * 0.68, yaw: Math.PI / 2, axis: 'x' })
         items.push({ x: v.x + v.width * 0.68, z: h.z + h.width * 0.68, yaw: -Math.PI / 2, axis: 'x' })
         items.push({ x: v.x + v.width * 0.68, z: h.z - h.width * 0.68, yaw: 0, axis: 'z' })
@@ -266,6 +266,17 @@ function TrafficSignals({ roads }) {
     }
     return items
   }, [mainHorizontal, mainVertical])
+
+  useEffect(() => {
+    exposeRenderingMetadata({
+      trafficSignals: {
+        heads: signals.length,
+        controller: 'SUMO-inspired static tlLogic',
+        phases: ['x-protected-green', 'x-yellow-clearance', 'all-red-clearance', 'z-protected-green', 'z-yellow-clearance', 'all-red-clearance'],
+        stopRule: 'vehicles stop at crosswalk stop bars on red/all-red; yellow decelerates when far and clears when close',
+      },
+    })
+  }, [signals.length])
 
   useLayoutEffect(() => {
     if (!poleRef.current || !headRef.current || !redRef.current || !yellowRef.current || !greenRef.current) return
@@ -287,10 +298,17 @@ function TrafficSignals({ roads }) {
   useFrame(() => {
     if (!redRef.current || !yellowRef.current || !greenRef.current) return
     const timeMinutes = useCityStore.getState().timeMinutes
+    const phase = trafficPhaseAt(timeMinutes)
     const dummy = new THREE.Object3D()
+    let redHeads = 0
+    let yellowHeads = 0
+    let greenHeads = 0
     for (let i = 0; i < signals.length; i += 1) {
       const signal = signals[i]
       const state = trafficSignalForAxis(signal.axis, timeMinutes)
+      if (state === 'red') redHeads += 1
+      if (state === 'yellow') yellowHeads += 1
+      if (state === 'green') greenHeads += 1
       const redScale = state === 'red' ? 1 : 0.26
       const yellowScale = state === 'yellow' ? 1 : 0.18
       const greenScale = state === 'green' ? 1 : 0.26
@@ -301,6 +319,18 @@ function TrafficSignals({ roads }) {
     redRef.current.instanceMatrix.needsUpdate = true
     yellowRef.current.instanceMatrix.needsUpdate = true
     greenRef.current.instanceMatrix.needsUpdate = true
+    exposeRenderingMetadata({
+      trafficSignals: {
+        ...(typeof window !== 'undefined' ? window.__REALCITY_RENDERING__?.trafficSignals || {} : {}),
+        heads: signals.length,
+        currentPhase: phase.kind,
+        currentLabel: phase.label,
+        sumoState: phase.sumoState,
+        redHeads,
+        yellowHeads,
+        greenHeads,
+      },
+    })
   })
 
   return (
@@ -360,7 +390,7 @@ function PedestrianSignals({ roads }) {
         heads: signals.length,
         labeledHeads: Math.min(24, signals.length),
         placement: 'curb-side crosswalk approach heads',
-        rule: 'WALK lights activate only when the crossed vehicle axis is red',
+        rule: 'WALK lights activate only during the protected phase where the crossed vehicle axis is red; yellow/all-red are clearance waits',
       },
     })
   }, [signals.length])
@@ -388,11 +418,16 @@ function PedestrianSignals({ roads }) {
     const dummy = new THREE.Object3D()
     let walkHeads = 0
     let waitHeads = 0
+    let clearanceHeads = 0
     for (let i = 0; i < signals.length; i += 1) {
       const signal = signals[i]
-      const canWalk = trafficSignalForAxis(signal.crossedAxis, timeMinutes) === 'red'
+      const pedestrianSignal = pedestrianSignalForAxis(signal.crossedAxis, timeMinutes)
+      const canWalk = pedestrianSignal.walk
       if (canWalk) walkHeads += 1
-      else waitHeads += 1
+      else {
+        waitHeads += 1
+        if (pedestrianSignal.clearance) clearanceHeads += 1
+      }
       const waitScale = canWalk ? 0.055 : 0.17
       const walkScale = canWalk ? 0.17 : 0.055
       setInstance(waitRef.current, i, dummy, [signal.x, CITY_BASE_Y + 3.1, signal.z], [waitScale, waitScale, waitScale])
@@ -408,7 +443,8 @@ function PedestrianSignals({ roads }) {
           heads: signals.length,
           walkHeads,
           waitHeads,
-          liveSignalCoupling: 'crossed-road-vehicle-red-gives-pedestrian-walk',
+          clearanceHeads,
+          liveSignalCoupling: 'protected-walk-only-when-crossed-road-vehicle-red-and-opposing-axis-green',
         },
       })
     }

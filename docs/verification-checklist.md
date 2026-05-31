@@ -41,6 +41,10 @@ audit has a clear finish line.
   for pedestrian/traffic/address rules; NPCs wait at curb approaches while the
   crossed vehicle axis has green/yellow and enter the crosswalk only when that
   vehicle axis turns red.
+- Traffic signal law: main intersections use a SUMO-inspired static `tlLogic`
+  sequence with protected green, yellow clearance, all-red clearance, stop-bar
+  vehicle stopping, and protected pedestrian WALK instead of allowing ambiguous
+  simultaneous starts.
 - Pedestrian signals: crosswalk approaches expose visible curb-side WALK/WAIT
   signal heads, and their WALK state is coupled to the crossed vehicle axis
   being red.
@@ -55,10 +59,14 @@ audit has a clear finish line.
 - NPC identity and autonomy metadata: all NPCs must expose unique names,
   persona signatures, appearance signatures, jobs, speech styles, home/work/
   third-place schedule data, needs, memories, and relationship state.
+- NPC cognition architecture: runtime NPC samples expose a generative-agent
+  inspired memory stream, recency/importance/relevance retrieval, reflection,
+  utility-scored policy selection, behavior-tree execution contract, and local
+  LLM prompt context grounded in executable city affordances.
 - Need-driven autonomy: NPC hunger, energy, and social need thresholds can
   trigger a short real detour to a suitable cafe, park, retail, or social place;
-  the detour must appear in pedestrian samples, city events, and the nearby
-  agent card instead of remaining as invisible flavor text.
+  the detour must appear in pedestrian samples, city events, nearby agent card,
+  and cognition metadata instead of remaining as invisible flavor text.
 - NPC social life and reactions: the harness verifies live NPC-to-NPC
   conversation events, relationship memory, and a deterministic nearby NPC
   glance/turn reaction that also surfaces in the city pulse.

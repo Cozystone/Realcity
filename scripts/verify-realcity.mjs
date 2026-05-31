@@ -484,6 +484,10 @@ async function inspectCityNorms(page) {
       npc.autonomy?.dailyGoal &&
       npc.autonomy?.relationshipStyle &&
       npc.autonomy?.memoryStyle &&
+      npc.autonomy?.cognitiveArchitecture === 'realcity-generative-gobt-v1' &&
+      /recency/i.test(npc.autonomy?.memoryPolicy || '') &&
+      /utility/i.test(npc.autonomy?.planningPolicy || '') &&
+      /constrain/i.test(npc.autonomy?.normPolicy || '') &&
       typeof npc.autonomy?.routineTolerance === 'number' &&
       ['energy', 'hunger', 'social', 'urgency'].every(key => typeof npc.autonomy?.needProfile?.[key] === 'number')
     )
@@ -573,7 +577,16 @@ async function inspectCityNorms(page) {
   assert(norms.houseRoofs.length >= 3, `House roof styles are not diverse enough: ${norms.houseRoofs.join(', ')}`)
   assert(norms.houseAccessoryCount >= 20, 'Houses did not receive enough porches, garages, chimneys, or wings')
   assert(norms.laneViolations === 0, `${norms.laneViolations} cars violate right-hand lane placement`)
-  assert(norms.trafficRules?.drivingSide === 'right-hand' && norms.trafficRules?.signals && norms.trafficRules?.followingDistance, 'Traffic rule metadata is incomplete')
+  assert(
+    norms.trafficRules?.drivingSide === 'right-hand' &&
+    norms.trafficRules?.signalModel === 'SUMO-inspired static tlLogic' &&
+    norms.trafficRules?.signalPhases?.includes('all-red-clearance') &&
+    norms.trafficRules?.allRedSeconds > 0 &&
+    /stop bars/i.test(norms.trafficRules?.yielding || '') &&
+    norms.trafficRules?.signals &&
+    norms.trafficRules?.followingDistance,
+    'Traffic rule metadata is incomplete',
+  )
   assert(norms.detailedCars === 120, 'Vehicle style/dimension metadata is incomplete')
   assert(norms.carBodyStyles >= 5, `Vehicle body style variation is too low: ${norms.carBodyStyles}`)
   assert(norms.appearanceReady === norms.npcCount, 'NPC appearance metadata is incomplete')
@@ -593,7 +606,7 @@ async function inspectCityNorms(page) {
   assert(norms.autonomyGoals >= 20, `NPC daily goal variation is too low: ${norms.autonomyGoals}`)
   assert(norms.relationshipStyles >= 6, `NPC relationship style variation is too low: ${norms.relationshipStyles}`)
   assert(norms.treeRoadConflicts === 0, `${norms.treeRoadConflicts} trees overlap road reserves`)
-  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && norms.socialNorms?.npcAutonomy && norms.socialNorms?.npcMobility && norms.socialNorms?.humanReactions && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
+  assert(norms.socialNorms?.pedestrian && norms.socialNorms?.traffic && norms.socialNorms?.addressSystem && norms.socialNorms?.zoning && norms.socialNorms?.npcDiversity && /memory\/reflection\/planning|generative-agent/i.test(norms.socialNorms?.npcAutonomy || '') && norms.socialNorms?.npcMobility && norms.socialNorms?.humanReactions && norms.socialNorms?.collision && norms.socialNorms?.streetHierarchy && norms.socialNorms?.facadeSystem, 'Social norm metadata is incomplete')
   return norms
 }
 
@@ -1489,6 +1502,8 @@ async function inspectCollisionAndMaterials(page) {
       vehicleFollowingBrakes: (state?.vehicleSamples || []).filter(sample => sample.brakingReason === 'following-vehicle').length,
       vehicleBrakeLightSamples: (state?.vehicleSamples || []).filter(sample => sample.brakingReason && sample.visualSafetyCue === 'brake-lights-and-driver-yield' && sample.brakeLightIntensity > 0).length,
       vehicleSignalIntentSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.driverReaction).length,
+      vehicleStopBarSamples: (state?.vehicleSamples || []).filter(sample => sample.signalStopRule && typeof sample.stopBarDistance === 'number' && sample.stopBarDistance <= 36).length,
+      vehicleSignalPhaseSamples: (state?.vehicleSamples || []).filter(sample => ['green', 'yellow', 'all-red'].includes(sample.signalPhase)).length,
       vehicleSignalSideSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.signalSide && typeof sample.signalLampCount === 'number').length,
       vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
       vehicleDriverCabinSamples: (state?.vehicleSamples || []).filter(sample => sample.driverCabinCue === 'visible-driver-hands-wheel' && ['hands-on-wheel', 'braking-forward-lean', 'checking-curb-mirror'].includes(sample.driverPose)).length,
@@ -1518,6 +1533,8 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleFollowingBrakes >= 1, `No vehicles are braking for the car ahead: ${result.vehicleFollowingBrakes}`)
   assert(result.vehicleBrakeLightSamples >= 1, `No braking vehicles expose brake-light safety cues: ${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleSignalIntentSamples >= 1, `No vehicles expose turn/hazard signal intent: ${result.vehicleSignalIntentSamples}`)
+  assert(result.vehicleStopBarSamples >= 1, `No vehicles expose SUMO-style stop-bar signal stopping: ${result.vehicleStopBarSamples}`)
+  assert(result.vehicleSignalPhaseSamples === result.vehicleSamples, `Vehicle signal phase metadata is incomplete: ${result.vehicleSignalPhaseSamples}/${result.vehicleSamples}`)
   assert(result.vehicleSignalSideSamples >= result.vehicleSignalIntentSamples, `Vehicle signal side/lamp metadata is incomplete: ${result.vehicleSignalSideSamples}/${result.vehicleSignalIntentSamples}`)
   assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleDriverCabinSamples === result.vehicleSamples, `Visible driver cabin metadata is incomplete: ${result.vehicleDriverCabinSamples}/${result.vehicleSamples}`)
@@ -1791,6 +1808,8 @@ async function inspectAgentAutonomy(page) {
       (state?.cityEvents || []).some(event => event.kind === 'conversation' && event.partnerName && event.topic) &&
       samples.length > 100 &&
       samples.some(sample => sample.autonomyGoal && sample.currentIntent && sample.memoryCount > 0) &&
+      samples.filter(sample => sample.cognitionArchitecture === 'realcity-generative-gobt-v1' && sample.cognitionPolicy && sample.cognitionReflection && sample.cognitionRetrievedMemories > 0).length > 80 &&
+      window.__REALCITY_NPC_COGNITION__?.modules?.includes('reflection') &&
       samples.filter(sample => sample.talkPartnerId && sample.visualGesture && sample.renderFacingPartner && sample.facingPartnerAngle < 0.9).length >= 2 &&
       samples.filter(sample => sample.relationshipCount > 0 && sample.lastInteractionTopic).length >= 6 &&
       (samples.some(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName) ||
@@ -1808,6 +1827,15 @@ async function inspectAgentAutonomy(page) {
     const taxiCommuters = samples.filter(sample => sample.travelMode === 'taxi' && sample.taxiDriverName && sample.taxiTargetName)
     const autonomousTaxiVehicles = (state?.vehicleSamples || []).filter(sample => sample.routeMode === 'npc-autonomous-taxi' && sample.npcTaxiPhase && sample.npcTaxiTarget)
     const socialVisualSamples = samples.filter(sample => sample.talkPartnerId && sample.visualGesture && sample.renderFacingPartner && sample.facingPartnerAngle < 0.9)
+    const cognitionSamples = samples.filter(sample =>
+      sample.cognitionArchitecture === 'realcity-generative-gobt-v1' &&
+      sample.cognitionPolicy &&
+      sample.cognitionReflection &&
+      sample.cognitionRetrievedMemories > 0 &&
+      Array.isArray(sample.cognitionUtilityScores) &&
+      sample.cognitionUtilityScores.length >= 3
+    )
+    const cognition = window.__REALCITY_NPC_COGNITION__ || null
     return {
       cityEvents: cityEvents.length,
       eventKinds: [...new Set(cityEvents.map(event => event.kind).filter(Boolean))],
@@ -1833,6 +1861,17 @@ async function inspectAgentAutonomy(page) {
         text: event.text,
       })),
       autonomousSamples: autonomousSamples.length,
+      cognitionSamples: cognitionSamples.length,
+      cognitionPolicyKinds: [...new Set(cognitionSamples.map(sample => sample.cognitionPolicy).filter(Boolean))],
+      cognitionMetadata: cognition,
+      cognitionExamples: cognitionSamples.slice(0, 5).map(sample => ({
+        id: sample.id,
+        policy: sample.cognitionPolicy,
+        score: sample.cognitionPolicyScore,
+        reflection: sample.cognitionReflection,
+        memories: sample.cognitionRetrievedMemories,
+        utilities: sample.cognitionUtilityScores,
+      })),
       relationshipSamples: relationshipSamples.length,
       taxiCommuters: taxiCommuters.length,
       autonomousTaxiVehicles: autonomousTaxiVehicles.length,
@@ -1865,6 +1904,9 @@ async function inspectAgentAutonomy(page) {
 
   assert(result.cityEvents >= 3, `Live city event feed is too sparse: ${result.cityEvents}`)
   assert(result.autonomousSamples > 100, `NPC runtime autonomy samples are incomplete: ${result.autonomousSamples}`)
+  assert(result.cognitionSamples > 80, `NPC cognition samples are incomplete: ${JSON.stringify(result.cognitionExamples)}`)
+  assert(result.cognitionMetadata?.architectureId === 'realcity-generative-gobt-v1' && result.cognitionMetadata?.modules?.includes('memory-stream') && result.cognitionMetadata?.modules?.includes('utility-goal-selection'), `NPC cognition metadata is incomplete: ${JSON.stringify(result.cognitionMetadata)}`)
+  assert(result.cognitionPolicyKinds.length >= 2, `NPC cognition policies are too uniform: ${JSON.stringify(result.cognitionExamples)}`)
   assert(result.memorySamples > 100, `NPC memory samples are incomplete: ${result.memorySamples}`)
   assert(result.needSamples > 100, `NPC need samples are incomplete: ${result.needSamples}`)
   assert(result.relationshipStyles.length >= 6, `Runtime relationship styles are too sparse: ${result.relationshipStyles.join(', ')}`)
@@ -1913,6 +1955,8 @@ async function inspectNeedDrivenErrand(page) {
     return sample?.needErrandReason &&
       sample.needErrandLabel &&
       sample.needErrandTargetName &&
+      sample.needErrandCognitiveReason &&
+      sample.needErrandCognitionPolicy === 'need-detour' &&
       sample.needErrandRemainingMinutes > 0 &&
       event
   }, setup.id, { timeout: 10000 })
@@ -1933,6 +1977,8 @@ async function inspectNeedDrivenErrand(page) {
       reason: sample?.needErrandReason || null,
       label: sample?.needErrandLabel || null,
       targetName: sample?.needErrandTargetName || null,
+      cognitiveReason: sample?.needErrandCognitiveReason || null,
+      cognitionPolicy: sample?.needErrandCognitionPolicy || null,
       remainingMinutes: sample?.needErrandRemainingMinutes || null,
       routeStatus: sample?.routeStatus || null,
       strongestNeed: sample?.strongestNeed || null,
@@ -1941,7 +1987,7 @@ async function inspectNeedDrivenErrand(page) {
   }, setup.id)
   result.cardText = cardText
 
-  assert(result.reason && result.targetName && result.eventText, `Need-driven errand result is incomplete: ${JSON.stringify(result)}`)
+  assert(result.reason && result.targetName && result.cognitiveReason && result.cognitionPolicy === 'need-detour' && /utility scoring|memory\/reflection/i.test(result.eventText || ''), `Need-driven errand result is incomplete: ${JSON.stringify(result)}`)
   return result
 }
 
@@ -2155,6 +2201,7 @@ async function inspectStreetRendering(page) {
     const rendering = window.__REALCITY_RENDERING__
     return rendering?.streetHierarchy?.segmentedSidewalks &&
       rendering?.crosswalks?.zebraStripes > 0 &&
+      rendering?.trafficSignals?.heads > 0 &&
       rendering?.pedestrianSignals?.heads > 0 &&
       rendering?.facades?.proceduralWindowTexture
   }, null, { timeout: 15000 })
@@ -2167,10 +2214,13 @@ async function inspectStreetRendering(page) {
   assert(result.streetHierarchy.roadMaterial === 'dark asphalt' && result.streetHierarchy.sidewalkMaterial === 'raised light pavers', 'Road/sidewalk material hierarchy is unclear')
   assert(result.crosswalks?.zebraStripes >= 300 && result.crosswalks?.crossingPads >= 40 && result.crosswalks?.stopBars >= 40, 'Crosswalk zebra pads or stop bars are too sparse')
   assert(result.crosswalks.raisedAboveRoad && result.crosswalks.separatedFromSidewalks, 'Crosswalks are not explicitly separated from sidewalks')
+  assert(result.trafficSignals?.heads >= result.crosswalks.crossingPads && /SUMO/i.test(result.trafficSignals?.controller || ''), `Traffic signal controller metadata is incomplete: ${JSON.stringify(result.trafficSignals)}`)
+  assert(result.trafficSignals?.phases?.includes('all-red-clearance') && /stop bars/i.test(result.trafficSignals?.stopRule || ''), `Traffic signal phase/stop rules are incomplete: ${JSON.stringify(result.trafficSignals)}`)
+  assert(['green', 'yellow', 'all-red'].includes(result.trafficSignals?.currentPhase) && /^([GgyrsuOo]{4}|rrrr)$/.test(result.trafficSignals?.sumoState || ''), `Traffic signal live SUMO state is incomplete: ${JSON.stringify(result.trafficSignals)}`)
   assert(result.pedestrianSignals?.heads >= result.crosswalks.crossingPads, `Pedestrian signal heads do not cover crosswalk approaches: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.labeledHeads >= 20 && /curb-side/i.test(result.pedestrianSignals?.placement || ''), `Pedestrian signal placement metadata is incomplete: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0, `Pedestrian signals are not exposing simultaneous WALK/WAIT states: ${JSON.stringify(result.pedestrianSignals)}`)
-  assert(/vehicle-red/i.test(result.pedestrianSignals?.liveSignalCoupling || '') || /crossed vehicle axis is red/i.test(result.pedestrianSignals?.rule || ''), `Pedestrian signal rule is not coupled to traffic lights: ${JSON.stringify(result.pedestrianSignals)}`)
+  assert(/protected-walk/i.test(result.pedestrianSignals?.liveSignalCoupling || '') || /yellow\/all-red are clearance/i.test(result.pedestrianSignals?.rule || ''), `Pedestrian signal rule is not coupled to traffic lights: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.facades?.proceduralWindowTexture && result.facades?.hasMullions && result.facades?.hasLitWindows, 'Facade texture/window system is incomplete')
   assert(result.facades.wallPalettes?.length >= 4, 'Facade wall palettes are not diverse enough')
   assert(result.facadeDetails?.physicalMullions >= 1000 && result.facadeDetails?.windowSills >= 1000, `Facade physical window detail is too sparse: ${JSON.stringify(result.facadeDetails)}`)

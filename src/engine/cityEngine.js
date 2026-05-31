@@ -12,6 +12,7 @@ export const DAY_MINUTES = 24 * 60
 export const CITY_BASE_Y = 0
 export const TRAFFIC_SIGNAL_CYCLE_SECONDS = 54
 export const TRAFFIC_SIGNAL_YELLOW_SECONDS = 4.5
+export const TRAFFIC_SIGNAL_ALL_RED_SECONDS = 2.5
 export const BUILDING_ROAD_SETBACK = 8.5
 
 const ROLE_LIBRARY = [
@@ -261,13 +262,78 @@ export function terrainTone(x, z) {
   return [0.19, 0.36, 0.22]
 }
 
-export function trafficSignalForAxis(axis, timeMinutes = 0) {
-  const second = (timeMinutes * 60) % TRAFFIC_SIGNAL_CYCLE_SECONDS
+export function trafficPhaseAt(timeMinutes = 0) {
+  const second = ((timeMinutes * 60) % TRAFFIC_SIGNAL_CYCLE_SECONDS + TRAFFIC_SIGNAL_CYCLE_SECONDS) % TRAFFIC_SIGNAL_CYCLE_SECONDS
   const half = TRAFFIC_SIGNAL_CYCLE_SECONDS / 2
   const activeAxis = second < half ? 'x' : 'z'
-  const phaseSecond = second < half ? second : second - half
-  if (axis !== activeAxis) return 'red'
-  return phaseSecond > half - TRAFFIC_SIGNAL_YELLOW_SECONDS ? 'yellow' : 'green'
+  const nextAxis = activeAxis === 'x' ? 'z' : 'x'
+  const phaseSecond = second % half
+  const greenDuration = Math.max(8, half - TRAFFIC_SIGNAL_YELLOW_SECONDS - TRAFFIC_SIGNAL_ALL_RED_SECONDS)
+  if (phaseSecond < greenDuration) {
+    return {
+      kind: 'green',
+      activeAxis,
+      protectedAxis: activeAxis,
+      nextAxis,
+      phaseSecond,
+      secondsRemaining: greenDuration - phaseSecond,
+      label: `${activeAxis.toUpperCase()} protected green`,
+      sumoState: activeAxis === 'x' ? 'GGrr' : 'rrGG',
+    }
+  }
+  if (phaseSecond < greenDuration + TRAFFIC_SIGNAL_YELLOW_SECONDS) {
+    return {
+      kind: 'yellow',
+      activeAxis,
+      protectedAxis: activeAxis,
+      nextAxis,
+      phaseSecond,
+      secondsRemaining: greenDuration + TRAFFIC_SIGNAL_YELLOW_SECONDS - phaseSecond,
+      label: `${activeAxis.toUpperCase()} yellow clearance`,
+      sumoState: activeAxis === 'x' ? 'yyrr' : 'rryy',
+    }
+  }
+  return {
+    kind: 'all-red',
+    activeAxis: null,
+    protectedAxis: null,
+    nextAxis,
+    clearingAxis: activeAxis,
+    phaseSecond,
+    secondsRemaining: half - phaseSecond,
+    label: `all-red clearance before ${nextAxis.toUpperCase()}`,
+    sumoState: 'rrrr',
+  }
+}
+
+export function trafficSignalForAxis(axis, timeMinutes = 0) {
+  const phase = trafficPhaseAt(timeMinutes)
+  if (phase.kind === 'all-red') return 'red'
+  if (axis !== phase.activeAxis) return 'red'
+  return phase.kind === 'yellow' ? 'yellow' : 'green'
+}
+
+export function pedestrianSignalForAxis(crossedAxis, timeMinutes = 0) {
+  const phase = trafficPhaseAt(timeMinutes)
+  const vehicleSignal = trafficSignalForAxis(crossedAxis, timeMinutes)
+  const protectedWalk = phase.kind === 'green' && phase.activeAxis && phase.activeAxis !== crossedAxis && vehicleSignal === 'red'
+  const clearance = !protectedWalk && vehicleSignal === 'red' && (phase.kind === 'yellow' || phase.kind === 'all-red')
+  return {
+    vehicleSignal,
+    walk: !!protectedWalk,
+    clearance,
+    phase: phase.kind,
+    activeVehicleAxis: phase.activeAxis,
+    label: protectedWalk
+      ? 'protected walk'
+      : clearance
+        ? 'clearance wait'
+        : vehicleSignal === 'yellow'
+          ? 'wait yellow'
+          : vehicleSignal === 'green'
+            ? 'wait vehicle green'
+            : 'wait',
+  }
 }
 
 function districtAt(x, z) {
@@ -1089,6 +1155,11 @@ function createNPCs(rng, buildings, landmarks, roads) {
         needProfile,
         relationshipStyle: RELATIONSHIP_STYLES[(i + Math.floor(rng() * RELATIONSHIP_STYLES.length)) % RELATIONSHIP_STYLES.length],
         memoryStyle: personality,
+        cognitiveArchitecture: 'realcity-generative-gobt-v1',
+        memoryPolicy: 'score by recency, importance, and current-place/request relevance',
+        reflectionPolicy: 'summarize needs, recent memories, relationships, and selected utility policy',
+        planningPolicy: 'choose a utility-scored GOAP-like goal, then execute through route/taxi/social behavior-tree leaves',
+        normPolicy: 'traffic, crosswalk, collision, and building affordances constrain every language plan',
         routineTolerance: clamp(0.35 + rng() * 0.56, 0.18, 0.96),
       },
       personaSignature: `${personality}-${speechStyle.signature}`,
@@ -1222,7 +1293,7 @@ export function createRealCity(seed = 20260525) {
       addressSystem: 'Virtual road-name addresses use numbered lots on named roads, e.g. 83 Station-daero, and resolve to sidewalk frontage points.',
       zoning: `Buildings are restricted to per-block buildable envelopes with a ${BUILDING_ROAD_SETBACK}m setback from road reserves.`,
       npcDiversity: 'Every NPC carries a distinct name, body archetype, walking cadence, outfit/accessory signature, voice register, gesture style, and speech flavor.',
-      npcAutonomy: 'Every NPC has a daily goal, mutable needs, relationship style, and short memory feed that can surface as live city events.',
+      npcAutonomy: 'Every NPC has a daily goal, mutable needs, relationship style, short memory feed, and a generative-agent style memory/reflection/planning layer that selects behavior-tree actions through utility scores.',
       npcMobility: 'Long-distance late commuters can autonomously hail a cruising fleet taxi, wait curbside, board from the passenger side, ride lane-following routes, and continue from the dropoff curb.',
       humanReactions: 'Idle NPCs within conversational distance turn toward the player, expose a glancing-at-player state, and may pulse a short social acknowledgement.',
       collision: 'Buildings, landmark interiors, pedestrians, and vehicles are treated as solid bodies; contacts push actors apart, make pedestrians stumble or fall, and force drivers to brake.',
@@ -1237,8 +1308,13 @@ export function createRealCity(seed = 20260525) {
     trafficRules: {
       drivingSide: 'right-hand',
       laneRule: 'Opposite lanes carry opposite directions; east-west positive traffic uses the south/right lane, north-south positive traffic uses the west/right lane.',
-      signals: `Main intersections alternate east-west and north-south green phases every ${TRAFFIC_SIGNAL_CYCLE_SECONDS / 2} seconds with a ${TRAFFIC_SIGNAL_YELLOW_SECONDS} second yellow interval; pedestrian crosswalk movement is allowed only while the crossed vehicle axis is red unless already in the road.`,
-      yielding: 'Drivers brake for pedestrians in or near a lane and stop at red/yellow signal approaches.',
+      signalModel: 'SUMO-inspired static tlLogic',
+      signalPhases: ['x-protected-green', 'x-yellow-clearance', 'all-red-clearance', 'z-protected-green', 'z-yellow-clearance', 'all-red-clearance'],
+      signalCycleSeconds: TRAFFIC_SIGNAL_CYCLE_SECONDS,
+      yellowSeconds: TRAFFIC_SIGNAL_YELLOW_SECONDS,
+      allRedSeconds: TRAFFIC_SIGNAL_ALL_RED_SECONDS,
+      signals: `Main intersections use a SUMO-style static phase sequence: protected green, yellow clearance, all-red clearance, then the orthogonal axis. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
+      yielding: 'Drivers brake for pedestrians in or near a lane and stop at stop bars for red/all-red signal approaches; yellow allows close vehicles to clear but makes far vehicles decelerate.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
     },
     integrations: {
