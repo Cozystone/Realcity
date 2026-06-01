@@ -336,6 +336,10 @@ function TrafficSignals({ roads, mobilitySystem }) {
         detectorPressure: phase.detectorPressure,
         sumoState: phase.sumoState,
         vehicleLinks: phase.vehicleLinks,
+        movementLinks: phase.movementLinks,
+        movementPriority: phase.movementPriority,
+        protectedLeftTurnWindow: !!phase.leftTurnProtected,
+        leftTurnWindowSeconds: phase.leftTurnWindowSeconds || 0,
         pedestrianLinks: phase.pedestrianLinks,
         noPedestrianStart: phase.noPedestrianStart,
         redHeads,
@@ -402,7 +406,7 @@ function PedestrianSignals({ roads, mobilitySystem }) {
         heads: signals.length,
         labeledHeads: Math.min(24, signals.length),
         placement: 'curb-side crosswalk approach heads',
-        rule: 'WALK lights activate only during the actuated protected phase where the crossed vehicle axis is red; yellow/all-red are clearance waits',
+        rule: 'WALK lights activate only during the actuated protected phase where the crossed vehicle axis is red; yellow/all-red and protected-left-turn windows are clearance/no-start waits',
       },
     })
   }, [signals.length])
@@ -457,7 +461,7 @@ function PedestrianSignals({ roads, mobilitySystem }) {
           waitHeads,
           clearanceHeads,
           signalModel: trafficPhaseAt(timeMinutes, mobilitySystem).signalModel,
-          liveSignalCoupling: 'protected-walk-only-when-crossed-road-vehicle-red-and-opposing-axis-green',
+          liveSignalCoupling: 'protected-walk-only-when-crossed-road-vehicle-red-and-opposing-axis-green-not-in-protected-left-window',
         },
       })
     }

@@ -136,7 +136,35 @@ function laneRouteFromCenterRoute(points, roads = [], from, to) {
   return cleanRoute(lanePoints)
 }
 
-function smoothRouteCorners(points = [], radius = 12) {
+function headingDelta(a, b, c) {
+  const first = Math.atan2(b.x - a.x, b.z - a.z)
+  const second = Math.atan2(c.x - b.x, c.z - b.z)
+  return Math.abs(Math.atan2(Math.sin(second - first), Math.cos(second - first)))
+}
+
+export function routeCurveMetadata(points = [], originalPointCount = points.length) {
+  const safePoints = points.filter(hasFinitePoint)
+  let maxHeadingDelta = 0
+  for (let i = 1; i < safePoints.length - 1; i += 1) {
+    const a = safePoints[i - 1]
+    const b = safePoints[i]
+    const c = safePoints[i + 1]
+    if (pointDistance(a, b) < 0.4 || pointDistance(b, c) < 0.4) continue
+    maxHeadingDelta = Math.max(maxHeadingDelta, headingDelta(a, b, c))
+  }
+  const curveSamples = safePoints.filter(point => point.cornerCurve).length
+  return {
+    model: 'taxi-route-bezier-corner-smoothing',
+    source: 'taxiRouting.smoothRouteCorners',
+    originalPointCount,
+    smoothedPointCount: safePoints.length,
+    curveSamples,
+    curvedCorners: Math.ceil(curveSamples / 6),
+    maxHeadingDelta: Number(maxHeadingDelta.toFixed(3)),
+  }
+}
+
+export function smoothRouteCorners(points = [], radius = 12) {
   if (points.length < 3) return points
   const smoothed = [points[0]]
   for (let i = 1; i < points.length - 1; i += 1) {
@@ -163,8 +191,15 @@ function smoothRouteCorners(points = [], radius = 12) {
     }
 
     const turnRadius = Math.min(radius, inLen * 0.42, outLen * 0.42)
-    const start = { x: current.x + inDir.x * turnRadius, z: current.z + inDir.z * turnRadius }
-    const end = { x: current.x + outDir.x * turnRadius, z: current.z + outDir.z * turnRadius }
+    const curveMeta = {
+      cornerCurve: true,
+      curveModel: 'quadratic-bezier-corner',
+      curveCenterX: current.x,
+      curveCenterZ: current.z,
+      curveRadius: Number(turnRadius.toFixed(2)),
+    }
+    const start = { x: current.x + inDir.x * turnRadius, z: current.z + inDir.z * turnRadius, ...curveMeta, curveT: 0 }
+    const end = { x: current.x + outDir.x * turnRadius, z: current.z + outDir.z * turnRadius, ...curveMeta, curveT: 1 }
     if (!samePoint(smoothed[smoothed.length - 1], start)) smoothed.push(start)
     for (let step = 1; step <= 4; step += 1) {
       const t = step / 5
@@ -172,6 +207,8 @@ function smoothRouteCorners(points = [], radius = 12) {
       smoothed.push({
         x: inv * inv * start.x + 2 * inv * t * current.x + t * t * end.x,
         z: inv * inv * start.z + 2 * inv * t * current.z + t * t * end.z,
+        ...curveMeta,
+        curveT: Number(t.toFixed(2)),
       })
     }
     smoothed.push(end)
@@ -285,11 +322,13 @@ export function buildTaxiRoute(from, to, roads = []) {
   points.push({ x: end.x, z: end.z })
   const laneRoute = laneRouteFromCenterRoute(points, roads, from, to)
   const cleaned = smoothRouteCorners(laneRoute)
+  const smoothing = routeCurveMetadata(cleaned, laneRoute.length)
   return {
     points: cleaned,
     routeMeters: routeDistance(cleaned),
     directMeters: pointDistance(safeFrom, safeTo),
     roadNames: [...roadNames],
+    smoothing,
     turns,
   }
 }
@@ -368,7 +407,18 @@ export function sampleRoute(points = [], distance = 0) {
   const heading = Math.hypot(dx, dz) > 0.001
     ? Math.atan2(dx, dz)
     : position.segmentHeading || 0
-  return { ...position, heading }
+  return {
+    ...position,
+    heading,
+    routeCurve: position.cornerCurve
+      ? {
+          model: position.curveModel || 'quadratic-bezier-corner',
+          radius: position.curveRadius || null,
+          t: position.curveT ?? null,
+          source: 'taxiRouting.sampleRoute',
+        }
+      : null,
+  }
 }
 
 export function taxiPassengerDoorPoint(taxi, role = 'player') {

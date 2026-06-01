@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalForAxis } from '../engine/cityEngine'
+import { pedestrianSignalForAxis, terrainHeight, trafficPhaseAt, trafficSignalForAxis, trafficSignalForMovement } from '../engine/cityEngine'
 import { resolveBuildingCollision } from '../engine/collision'
 import { buildAgentCognition, NPC_COGNITION_ARCHITECTURE, shouldStartNeedErrandFromCognition } from '../engine/agentCognition'
 import { useCityStore } from '../engine/cityStore'
 import { askLocalAutonomy, askLocalNPC, askLocalNPCConversation, fallbackLine, includesPlaceCandidate, llmStatus, matchRequestedPlace, planLocalNPCAction, styleNpcSpeech } from '../engine/localLLM'
-import { buildTaxiRoute, routeDistance, sampleRoute, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
+import { buildTaxiRoute, routeCurveMetadata, routeDistance, sampleRoute, smoothRouteCorners, taxiPassengerDoorPoint, taxiSpawnForPickup } from '../engine/taxiRouting'
 import { DIGITAL_HUMAN_SOURCE, makeHumanStyleRig } from './digitalHumanRig'
 import { makeProceduralTexture } from './proceduralTextures'
 
@@ -1038,7 +1038,8 @@ function advanceTaxi(taxi, delta) {
   taxi.lastAdvancedAt = now
   taxi.progress = Math.min(taxi.routeMeters, (taxi.progress || 0) + taxi.speed * elapsed)
   const pose = sampleRoute(taxi.path, taxi.progress)
-  taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+  taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading, routeCurve: pose.routeCurve || null }
+  taxi.routeCurve = pose.routeCurve || null
   return pose
 }
 
@@ -1251,15 +1252,45 @@ function taxiLoopForCar(car, roads = [], index = 0) {
   const northEnd = roadLanePoint(north, west.x, -1)
   const westStart = roadLanePoint(west, north.z, -1)
   const westEnd = roadLanePoint(west, south.z, -1)
-  const points = [southStart, southEnd, eastStart, eastEnd, northStart, northEnd, westStart, westEnd, southStart]
+  const rawPoints = [southStart, southEnd, eastStart, eastEnd, northStart, northEnd, westStart, westEnd, southStart]
+  const points = smoothRouteCorners(rawPoints, 19)
+  const smoothing = routeCurveMetadata(points, rawPoints.length)
   return {
     points,
     routeMeters: routeDistance(points),
     ring,
+    smoothing,
     roads: [south, south, east, east, north, north, west, west],
     directions: [1, 1, 1, 1, -1, -1, -1, -1],
     roadNames: [south.name, east.name, north.name, west.name].filter(Boolean),
   }
+}
+
+function roadForTaxiPose(pose, roads = [], fallback = null) {
+  if (!pose || !roads.length) return fallback
+  const heading = pose.heading ?? pose.yaw ?? 0
+  const preferredAxis = Math.abs(Math.sin(heading)) >= Math.abs(Math.cos(heading)) ? 'x' : 'z'
+  let best = null
+  let bestScore = Infinity
+  for (const road of roads) {
+    const along = road.axis === 'x' ? pose.x : pose.z
+    if (along < road.from - 6 || along > road.to + 6) continue
+    const offset = road.axis === 'x' ? Math.abs(pose.z - road.z) : Math.abs(pose.x - road.x)
+    const axisPenalty = road.axis === preferredAxis ? 0 : 5.5
+    const score = offset + axisPenalty
+    if (score < bestScore) {
+      best = road
+      bestScore = score
+    }
+  }
+  return best || fallback
+}
+
+function taxiDirectionForPose(road, pose, fallback = 1) {
+  if (!road || !pose) return fallback
+  const heading = pose.heading ?? pose.yaw ?? 0
+  if (road.axis === 'x') return Math.sin(heading) >= 0 ? 1 : -1
+  return Math.cos(heading) >= 0 ? 1 : -1
 }
 
 function ensureTaxiCruise(car, roads = [], index = 0) {
@@ -1273,6 +1304,7 @@ function ensureTaxiCruise(car, roads = [], index = 0) {
       car.cruiseProgress = (car.t || 0) * loop.routeMeters
       car.cruiseRouteMode = 'city-ring-loop'
       car.cruiseRoadNames = loop.roadNames
+      car.cruiseRouteSmoothing = loop.smoothing
     }
   }
   return car.cruiseLoop || null
@@ -1283,9 +1315,9 @@ function taxiCruisePose(car, roads = [], index = 0) {
   if (!loop?.points?.length || !car.cruiseMeters) return null
   const pose = sampleRoute(loop.points, ((car.cruiseProgress || 0) % car.cruiseMeters + car.cruiseMeters) % car.cruiseMeters)
   const segment = Math.max(0, Math.min(loop.roads.length - 1, pose.segmentIndex || 0))
-  car.activeRoad = loop.roads[segment] || car.road
-  car.activeDirection = loop.directions[segment] || car.direction
-  return { x: pose.x, z: pose.z, yaw: pose.heading, heading: pose.heading, road: car.activeRoad, direction: car.activeDirection }
+  car.activeRoad = roadForTaxiPose(pose, roads, loop.roads[segment] || car.road)
+  car.activeDirection = taxiDirectionForPose(car.activeRoad, pose, loop.directions[segment] || car.direction)
+  return { x: pose.x, z: pose.z, yaw: pose.heading, heading: pose.heading, road: car.activeRoad, direction: car.activeDirection, routeCurve: pose.routeCurve || null }
 }
 
 function taxiPoseForCar(car, roads = [], index = 0) {
@@ -1300,7 +1332,7 @@ function assignedTaxiPose(car, store) {
   const rideTaxi = store.ride?.taxiId === car.id ? store.ride.taxiPose : null
   const npcTaxi = car.npcTaxi?.pose || null
   const pose = rideTaxi || missionTaxi || npcTaxi
-  return pose ? { x: pose.x, z: pose.z, yaw: pose.heading ?? pose.yaw ?? 0, heading: pose.heading ?? pose.yaw ?? 0 } : null
+  return pose ? { x: pose.x, z: pose.z, yaw: pose.heading ?? pose.yaw ?? 0, heading: pose.heading ?? pose.yaw ?? 0, routeCurve: pose.routeCurve || null } : null
 }
 
 function nearestAvailableTaxi(pickup, cars = [], roads = [], maxDistance = Infinity) {
@@ -1347,7 +1379,12 @@ function startTaxiRideFromMission(mission, store, roads) {
   const fallbackDropoff = mission.dropoff || taxi.dropoff || nearestRoadPickup(destination, roads)
   const dropoffStop = taxi.dropoffStop || taxiStopForPickup(fallbackDropoff, roads)
   const route = taxi.destinationPath?.length >= 2
-    ? { points: taxi.destinationPath, routeMeters: taxi.destinationMeters, roadNames: taxi.routeNames }
+    ? {
+        points: taxi.destinationPath,
+        routeMeters: taxi.destinationMeters,
+        roadNames: taxi.routeNames,
+        smoothing: taxi.destinationSmoothing || routeCurveMetadata(taxi.destinationPath, taxi.destinationRawPointCount || taxi.destinationPath.length),
+      }
     : buildTaxiRoute(pickupStop, dropoffStop, roads)
   const routeMeters = Math.max(1, route.routeMeters || 0)
   const rideSpeed = TAXI_RIDE_SPEED
@@ -1357,6 +1394,7 @@ function startTaxiRideFromMission(mission, store, roads) {
   taxi.routeMeters = routeMeters
   taxi.progress = 0
   taxi.routeNames = route.roadNames || taxi.routeNames || []
+  taxi.routeSmoothing = route.smoothing || taxi.routeSmoothing || null
   store.updateMission({
     phase: 'taxi_ride',
     route: route.points,
@@ -1372,6 +1410,7 @@ function startTaxiRideFromMission(mission, store, roads) {
     path: route.points,
     routeMeters,
     routeNames: taxi.routeNames || [],
+    routeSmoothing: route.smoothing || taxi.routeSmoothing || null,
     duration: Math.min(TAXI_MAX_RIDE_SECONDS, Math.max(TAXI_MIN_RIDE_SECONDS, routeMeters / rideSpeed)),
     label: mission.agentName
       ? `${mission.agentName} and you are taking a taxi to ${destination.name}${destination.address ? `, ${destination.address}` : ''}.`
@@ -1398,6 +1437,8 @@ function attachTaxiDestination(mission, destination, roads, store) {
   mission.taxi.destinationMeters = routeToDestination.routeMeters
   mission.taxi.directMeters = routeToDestination.directMeters
   mission.taxi.routeNames = routeToDestination.roadNames
+  mission.taxi.destinationSmoothing = routeToDestination.smoothing
+  mission.taxi.destinationRawPointCount = routeToDestination.smoothing?.originalPointCount || routeToDestination.points.length
   store.updateMission({
     destination,
     dropoff,
@@ -1460,6 +1501,9 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
     routeMeters: routeToPickup.routeMeters,
     destinationMeters: routeToDestination.routeMeters,
     directMeters: routeToDestination.directMeters,
+    routeSmoothing: routeToPickup.smoothing,
+    destinationSmoothing: routeToDestination.smoothing,
+    destinationRawPointCount: routeToDestination.smoothing?.originalPointCount || routeToDestination.points.length,
     progress: initialProgress,
     initialProgress,
     approachMetersRemaining: Math.max(0, routeToPickup.routeMeters - initialProgress),
@@ -1470,7 +1514,8 @@ function beginTaxiDispatch(agent, mission, store, cityOrRoads) {
     dropoff,
     dropoffStop,
     routeNames: routeToDestination.roadNames,
-    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading },
+    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading, routeCurve: firstPose.routeCurve || null },
+    routeCurve: firstPose.routeCurve || null,
     requestedAt: performance.now(),
   }
 
@@ -1569,6 +1614,9 @@ function startAutonomousNpcTaxi(agent, target, city) {
     routeMeters: routeToPickup.routeMeters,
     destinationMeters: routeToDestination.routeMeters,
     directMeters: routeToDestination.directMeters,
+    routeSmoothing: routeToPickup.smoothing,
+    destinationSmoothing: routeToDestination.smoothing,
+    destinationRawPointCount: routeToDestination.smoothing?.originalPointCount || routeToDestination.points.length,
     progress: initialProgress,
     initialProgress,
     speed: NPC_TAXI_DISPATCH_SPEED,
@@ -1579,7 +1627,8 @@ function startAutonomousNpcTaxi(agent, target, city) {
     dropoffStop,
     targetName: target.name,
     routeNames: routeToDestination.roadNames,
-    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading },
+    pose: { x: firstPose.x, z: firstPose.z, heading: firstPose.heading, yaw: firstPose.heading, routeCurve: firstPose.routeCurve || null },
+    routeCurve: firstPose.routeCurve || null,
     requestedAt: performance.now(),
   }
 
@@ -1625,7 +1674,8 @@ function updateAutonomousNpcTaxi(agent, target, delta, city) {
     if (taxi.progress >= taxi.routeMeters - 0.2) {
       const pose = sampleRoute(taxi.path, taxi.routeMeters)
       taxi.progress = taxi.routeMeters
-      taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading }
+      taxi.pose = { x: pose.x, z: pose.z, heading: pose.heading, yaw: pose.heading, routeCurve: pose.routeCurve || null }
+      taxi.routeCurve = pose.routeCurve || null
       taxi.phase = 'boarding'
       taxi.boardingStartedAt = performance.now()
       agent.boardingTaxi = { missionId: taxi.id, x: agent.pos.x, z: agent.pos.z }
@@ -1648,6 +1698,7 @@ function updateAutonomousNpcTaxi(agent, target, delta, city) {
       taxi.phase = 'ride'
       taxi.path = taxi.destinationPath
       taxi.routeMeters = taxi.destinationMeters
+      taxi.routeSmoothing = taxi.destinationSmoothing || routeCurveMetadata(taxi.destinationPath, taxi.destinationRawPointCount || taxi.destinationPath.length)
       taxi.progress = 0
       taxi.speed = NPC_TAXI_RIDE_SPEED
       agent.boardingTaxi = null
@@ -2188,7 +2239,8 @@ class Agent {
             const stopPose = sampleRoute(taxi.path, taxi.routeMeters)
             taxi.phase = 'waiting_at_pickup'
             taxi.progress = taxi.routeMeters
-            taxi.pose = { x: stopPose.x, z: stopPose.z, heading: stopPose.heading, yaw: stopPose.heading }
+            taxi.pose = { x: stopPose.x, z: stopPose.z, heading: stopPose.heading, yaw: stopPose.heading, routeCurve: stopPose.routeCurve || null }
+            taxi.routeCurve = stopPose.routeCurve || null
             mission.phase = 'taxi_waiting'
             mission.boardingAt = performance.now()
             store.updateMission({
@@ -3361,12 +3413,14 @@ function distanceToSignalStop(car, pose, roads) {
 }
 
 function shouldStopForSignal(car, pose, roads, timeMinutes, mobilitySystem = null) {
-  const signal = trafficSignalForAxis(car.road.axis, timeMinutes, mobilitySystem)
+  const movement = car.turnIntent === 'left' ? 'left' : car.turnIntent === 'right' ? 'right' : 'through'
+  const movementSignal = trafficSignalForMovement(car.road.axis, movement, timeMinutes, mobilitySystem)
+  const signal = movementSignal.signal || trafficSignalForAxis(car.road.axis, timeMinutes, mobilitySystem)
   const phase = trafficPhaseAt(timeMinutes, mobilitySystem)
   if (signal === 'green') return null
   const stopDistance = distanceToSignalStop(car, pose, roads)
   if (signal === 'yellow') {
-    if (stopDistance > 10 && stopDistance < 34) return { signal, stopDistance, phase: phase.kind, rule: 'yellow-far-decelerate' }
+    if (stopDistance > 10 && stopDistance < 34) return { signal, stopDistance, phase: phase.kind, rule: 'yellow-far-decelerate', movementSignal }
     return null
   }
   if (stopDistance > 1.6 && stopDistance < 36) {
@@ -3375,6 +3429,7 @@ function shouldStopForSignal(car, pose, roads, timeMinutes, mobilitySystem = nul
       stopDistance,
       phase: phase.kind,
       rule: phase.kind === 'all-red' ? 'all-red-clearance-stop' : 'red-stop-at-stop-bar',
+      movementSignal,
     }
   }
   return null
@@ -3554,7 +3609,7 @@ function crossingVehicleForTurn(state, turnContext, trafficStates) {
   return nearest
 }
 
-function turnControlForCar(state, turnContext, trafficStates, pedestrians) {
+function turnControlForCar(state, turnContext, trafficStates, pedestrians, phase = null) {
   if (!turnContext?.active || turnContext.direction === 'straight') return null
   if (turnContext.arcActive) {
     return {
@@ -3579,6 +3634,7 @@ function turnControlForCar(state, turnContext, trafficStates, pedestrians) {
   const policy = turnContext.direction === 'left'
     ? 'SUMO green-minor style left turn: slow in the marked pocket and accept a safe oncoming gap before crossing'
     : 'right-turn-yield area: slow before the turn, yield to pedestrians in the corner crosswalk, then merge into the curb lane'
+  const protectedLeftTurn = turnContext.direction === 'left' && phase?.leftTurnProtected && phase?.activeAxis === state.road.axis
 
   const pedestrian = pedestrianInTurnConflictZone(state, turnContext, pedestrians)
   if (pedestrian) {
@@ -3593,6 +3649,21 @@ function turnControlForCar(state, turnContext, trafficStates, pedestrians) {
       priorityRule: 'pedestrian has priority in marked crossing / turn conflict box',
       policy,
       source: 'SUMO pedestrian crossing + GATSim gap acceptance',
+    }
+  }
+
+  if (protectedLeftTurn) {
+    return {
+      type: 'protected-left-turn-window',
+      reason: 'protected-left-turn-slowdown',
+      intensity: Number(Math.max(0.12, baseIntensity * 0.62).toFixed(3)),
+      mustYield: false,
+      targetId: null,
+      targetName: null,
+      distance: Number(distance.toFixed(2)),
+      priorityRule: 'SUMO G protected-left window gives the left-turn pocket priority over oncoming through links',
+      policy: 'the late green window disables pedestrian starts and upgrades the left turn from permissive g to protected G',
+      source: 'Eclipse SUMO Traffic_Lights g/G priority relationship',
     }
   }
 
@@ -3719,9 +3790,11 @@ function Traffic({ cars, roads, mobilitySystem }) {
       vehicleCount: cars.length,
       sumoProgram: mobilitySystem?.standards?.sumo?.reference || 'Eclipse SUMO actuated tlLogic',
       signalActuation: 'actuated TrafficFlowObserved detector pressure changes protected green durations at runtime',
+      movementLinkRules: ['SUMO g/G permissive-left-to-protected-left', '6s protected-left-window', 'pedestrian-no-start-during-left-window'],
       turnIntentRendering: 'vehicles expose left/right/straight turn intent and blink amber side signals before intersections',
-      turnConflictRules: ['left-turn-pocket-slowdown', 'left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'],
+      turnConflictRules: ['left-turn-pocket-slowdown', 'left-turn-gap-yield', 'protected-left-turn-window', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'],
       turnArcRules: ['lane-level-cubic-bezier-arc', 'road-state-transfer-after-turn', 'post-turn-intent-reselection'],
+      taxiRouteSmoothing: 'taxi dispatch, ride, NPC taxi, and cruising loop routes expose Bezier corner smoothing instead of hard 90-degree route corners',
       gbfsStations: mobilitySystem?.gbfs?.stations?.length || 0,
       smartCityCurbZones: mobilitySystem?.smartCity?.curbZones?.length || 0,
       gatsimDisruptions: mobilitySystem?.gatsim?.disruptionEvents?.length || 0,
@@ -3759,9 +3832,11 @@ function Traffic({ cars, roads, mobilitySystem }) {
       const hazard = assignedPose ? null : shouldYieldToPedestrian(trafficCar, currentPose, pedestrians)
       const signalStop = assignedPose ? null : shouldStopForSignal(trafficCar, currentPose, roads, store.timeMinutes, mobilitySystem)
       const phase = trafficPhaseAt(store.timeMinutes, mobilitySystem)
+      const movement = trafficCar.turnIntent === 'left' ? 'left' : trafficCar.turnIntent === 'right' ? 'right' : 'through'
+      const movementSignal = trafficSignalForMovement(trafficState.road.axis, movement, store.timeMinutes, mobilitySystem)
       const follow = assignedPose ? null : frontVehicleFor(trafficState, trafficStates)
       const turnContext = assignedPose ? null : turnContextForCar(trafficState, roads)
-      const turnControl = assignedPose ? null : turnControlForCar(trafficState, turnContext, trafficStates, pedestrians)
+      const turnControl = assignedPose ? null : turnControlForCar(trafficState, turnContext, trafficStates, pedestrians, phase)
       const brakingReason = playerContact
         ? 'player-contact'
         : signalStop
@@ -3826,6 +3901,15 @@ function Traffic({ cars, roads, mobilitySystem }) {
       const activeArc = car.turnArc || null
       const recentArc = !activeArc && car.lastTurnArc && Date.now() - car.lastTurnArc.completedAt < 12000 ? car.lastTurnArc : null
       const arcTelemetry = activeArc || recentArc
+      const assignedTaxiSmoothing = car.assignment
+        ? (store.ride?.taxiId === car.id ? store.ride?.routeSmoothing : store.mission?.taxi?.routeSmoothing)
+        : null
+      const taxiRouteSmoothing = car.kind === 'taxi'
+        ? (assignedTaxiSmoothing || car.npcTaxi?.routeSmoothing || car.cruiseRouteSmoothing || null)
+        : null
+      const taxiRouteCurve = car.kind === 'taxi'
+        ? (finalPose.routeCurve || assignedPose?.routeCurve || car.npcTaxi?.routeCurve || null)
+        : null
 
       vehicleSamples.push({
         id: car.id,
@@ -3841,6 +3925,16 @@ function Traffic({ cars, roads, mobilitySystem }) {
         npcTaxiPhase: car.npcTaxi?.phase || null,
         npcTaxiTarget: car.npcTaxi?.targetName || null,
         cruiseRoutePoints: car.cruisePath?.length || 0,
+        taxiRouteSmoothingModel: taxiRouteSmoothing?.model || null,
+        taxiRouteSmoothingSource: taxiRouteSmoothing?.source || null,
+        taxiRouteSmoothedPointCount: taxiRouteSmoothing?.smoothedPointCount || car.cruisePath?.length || 0,
+        taxiRouteCurveSamples: taxiRouteSmoothing?.curveSamples || 0,
+        taxiRouteCurvedCorners: taxiRouteSmoothing?.curvedCorners || 0,
+        taxiRouteMaxHeadingDelta: taxiRouteSmoothing?.maxHeadingDelta ?? null,
+        taxiRouteCurveActive: !!taxiRouteCurve,
+        taxiRouteCurveModel: taxiRouteCurve?.model || null,
+        taxiRouteCurveRadius: taxiRouteCurve?.radius || null,
+        taxiRouteCurveT: taxiRouteCurve?.t ?? null,
         activeRoadName: trafficState.road.name,
         laneKey: trafficState.laneKey,
         laneRule: trafficState.road.laneModel?.rule || car.laneRule,
@@ -3883,16 +3977,23 @@ function Traffic({ cars, roads, mobilitySystem }) {
         signalPhase: signalStop?.phase || phase.kind,
         signalPhaseId: phase.id,
         signalModel: phase.signalModel || 'SUMO-inspired static tlLogic',
+        signalPhasePurpose: phase.movementPriority || phase.kind,
         actuatedGreenSeconds: phase.actuationPolicy?.mode === 'actuated-detector-pressure' ? phase.duration : null,
         detectorPressure: phase.detectorPressure || null,
         signalCycleSeconds: Number((phase.cycleSeconds || 0).toFixed(2)),
         sumoState: phase.sumoState,
         sumoVehicleLinkState: phase.vehicleLinks?.[trafficState.road.axis] || 'r',
+        sumoVehicleMovement: movementSignal.movement,
+        sumoVehicleMovementLinkState: movementSignal.linkState,
+        sumoTurnPriority: movementSignal.priority,
+        protectedLeftTurnWindow: !!phase.leftTurnProtected,
+        protectedLeftTurnAxis: phase.protectedLeftTurnAxis || null,
+        leftTurnWindowSeconds: phase.leftTurnWindowSeconds || 0,
         sumoPedestrianLinks: phase.pedestrianLinks || null,
         noPedestrianStart: !!phase.noPedestrianStart,
         stopBarDistance: signalStop?.stopDistance ? Number(signalStop.stopDistance.toFixed(2)) : null,
         signalStopRule: signalStop?.rule || null,
-        rightOfWay: phase.kind === 'green' && phase.activeAxis === trafficState.road.axis ? 'protected-vehicle-link' : 'yield-or-stop',
+        rightOfWay: movementSignal.priority || (phase.kind === 'green' && phase.activeAxis === trafficState.road.axis ? 'protected-vehicle-link' : 'yield-or-stop'),
         yellowDecision: signalStop?.rule === 'yellow-far-decelerate' ? 'decelerate-before-stop-bar' : phase.kind === 'yellow' ? 'clear-if-close' : null,
         smartCityCurbRule: mobilitySystem?.smartCity?.curbZones?.length ? 'stop, taxi, load, and park only in marked curb zones' : null,
         gbfsNearbyDockCount: mobilitySystem?.gbfs?.stations?.length || 0,
@@ -4220,7 +4321,8 @@ function PlayerTaxiController({ city }) {
         const stopPose = sampleRoute(taxi.path, taxi.routeMeters)
         taxi.phase = 'waiting_at_pickup'
         taxi.progress = taxi.routeMeters
-        taxi.pose = { x: stopPose.x, z: stopPose.z, heading: stopPose.heading, yaw: stopPose.heading }
+        taxi.pose = { x: stopPose.x, z: stopPose.z, heading: stopPose.heading, yaw: stopPose.heading, routeCurve: stopPose.routeCurve || null }
+        taxi.routeCurve = stopPose.routeCurve || null
         mission.phase = 'taxi_waiting'
         mission.boardingAt = performance.now()
         store.updateMission({

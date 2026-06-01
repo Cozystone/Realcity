@@ -327,6 +327,8 @@ async function getTaxiRouteState(page) {
       }
     }
     const activeRoute = ride?.path || mission?.taxi?.destinationPath || mission?.route || mission?.taxi?.path || []
+    const dispatchSmoothing = mission?.taxi?.routeSmoothing || null
+    const destinationSmoothing = ride?.routeSmoothing || mission?.taxi?.destinationSmoothing || null
     return {
       missionPhase: mission?.phase || null,
       player: state?.player ? { x: state.player.x, z: state.player.z, indoors: state.player.indoors, placeName: state.player.placeName } : null,
@@ -342,6 +344,11 @@ async function getTaxiRouteState(page) {
       destinationTurns: pathTurns(ride?.path || mission?.taxi?.destinationPath || mission?.route),
       dispatchMaxHeadingDelta: maxHeadingDelta(mission?.taxi?.path),
       destinationMaxHeadingDelta: maxHeadingDelta(activeRoute),
+      dispatchSmoothing,
+      destinationSmoothing,
+      dispatchCurveSamples: dispatchSmoothing?.curveSamples || 0,
+      destinationCurveSamples: destinationSmoothing?.curveSamples || 0,
+      taxiPoseRouteCurve: ride?.taxiPose?.routeCurve || mission?.taxi?.pose?.routeCurve || null,
       dispatchLaneStats: laneStats(mission?.taxi?.path),
       destinationLaneStats: laneStats(activeRoute),
       taxiPose: ride?.taxiPose || mission?.taxi?.pose || null,
@@ -361,6 +368,8 @@ async function getTaxiRouteState(page) {
       assignedVehicleSamples: (state?.vehicleSamples || []).filter(sample => sample.assignment).length,
       taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop').length,
       taxiRoutePointSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.cruiseRoutePoints >= 8).length,
+      taxiLoopSmoothingSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.taxiRouteSmoothingModel === 'taxi-route-bezier-corner-smoothing' && sample.taxiRouteCurveSamples > 0 && sample.taxiRouteSmoothedPointCount > sample.cruiseRoutePoints / 2).length,
+      taxiCurveActiveSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.taxiRouteCurveActive && sample.taxiRouteCurveModel).length,
       rideDuration: ride?.duration || 0,
       rideProgress: ride?.progress || 0,
     }
@@ -577,6 +586,11 @@ async function inspectCityNorms(page) {
     )
     const actuatedProgramDurations = signalProgram.map(phase => phase.duration)
     const greenDurations = signalProgram.filter(phase => phase.kind === 'green').map(phase => phase.duration)
+    const protectedLeftTurnPhases = signalProgram.filter(phase =>
+      phase.kind === 'green' &&
+      phase.protectedLeftTurn?.finalSeconds >= 6 &&
+      phase.movementLinks?.[phase.activeAxis]?.left === 'g'
+    )
     return {
       roads: city.roads.length,
       buildingCount: city.buildings.length,
@@ -648,6 +662,8 @@ async function inspectCityNorms(page) {
       signalProgramPedestrianLinks: signalProgram.filter(phase => phase.pedestrianLinks?.crossX || phase.pedestrianLinks?.crossZ).length,
       signalProgramActuatedGreens: signalProgram.filter(phase => phase.actuationPolicy?.mode === 'actuated-detector-pressure' && phase.detectorPressure).length,
       signalProgramGreenDurations: greenDurations,
+      signalProgramProtectedLeftTurns: protectedLeftTurnPhases.length,
+      signalProgramMovementLinks: signalProgram.filter(phase => phase.movementLinks?.x && phase.movementLinks?.z).length,
       intersectionControllers: intersectionControllers.length,
       controllerPhaseCoverage: intersectionControllers.filter(controller => controller.phases?.length === signalProgram.length && controller.stopBars?.length === 4 && controller.pedestrianCrossings?.length === 2).length,
       signalDetectorCount,
@@ -711,6 +727,7 @@ async function inspectCityNorms(page) {
   )
   assert(norms.signalProgramLength === 6 && norms.signalProgramStates.includes('GGrr') && norms.signalProgramStates.includes('rrGG') && norms.signalProgramStates.includes('rrrr'), `SUMO tlLogic program is incomplete: ${JSON.stringify(norms.signalProgramStates)}`)
   assert(norms.signalProgramActuatedGreens === 2 && norms.signalProgramGreenDurations.some(duration => duration !== 20) && norms.trafficRules?.actuatedPressureByAxis?.x && norms.trafficRules?.actuatedPressureByAxis?.z, `SUMO actuated green timing is not driven by detector pressure: ${JSON.stringify({ durations: norms.signalProgramGreenDurations, pressure: norms.trafficRules?.actuatedPressureByAxis })}`)
+  assert(norms.signalProgramMovementLinks === norms.signalProgramLength && norms.signalProgramProtectedLeftTurns === 2 && norms.trafficRules?.protectedLeftTurnSeconds >= 6 && /g\/G/i.test(norms.trafficRules?.movementLinkPolicy || ''), `SUMO movement-link/left-turn policy is incomplete: ${JSON.stringify({ movementLinks: norms.signalProgramMovementLinks, protectedLeft: norms.signalProgramProtectedLeftTurns, policy: norms.trafficRules?.movementLinkPolicy })}`)
   assert(norms.signalProgramPedestrianLinks === norms.signalProgramLength && norms.trafficRules?.linkOrder?.includes('ped_cross_x') && norms.trafficRules?.linkOrder?.includes('ped_cross_z'), `Pedestrian links are not explicit in the signal program: ${JSON.stringify(norms.trafficRules)}`)
   assert(norms.intersectionControllers >= 20 && norms.controllerPhaseCoverage === norms.intersectionControllers, `Intersection controllers are missing SUMO phase/stop-bar/crossing data: ${norms.controllerPhaseCoverage}/${norms.intersectionControllers}`)
   assert(norms.signalDetectorCount >= norms.intersectionControllers * 4 && norms.actuatedControllers === norms.intersectionControllers, `SUMO detector/actuated metadata is incomplete: ${JSON.stringify({ detectors: norms.signalDetectorCount, controllers: norms.intersectionControllers, actuated: norms.actuatedControllers })}`)
@@ -1675,6 +1692,8 @@ async function inspectCollisionAndMaterials(page) {
       npcWallViolations: npcWallViolations.map(sample => ({ id: sample.id, x: Number(sample.x.toFixed(2)), z: Number(sample.z.toFixed(2)), state: sample.state })).slice(0, 8),
       vehicleKinds: [...new Set((state?.vehicleSamples || []).map(sample => sample.kind).filter(Boolean))],
       taxiLoopSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.cruiseRoutePoints >= 8).length,
+      taxiLoopSmoothingSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.routeMode === 'city-ring-loop' && sample.taxiRouteSmoothingModel === 'taxi-route-bezier-corner-smoothing' && sample.taxiRouteCurveSamples > 0).length,
+      taxiCurveActiveSamples: (state?.vehicleSamples || []).filter(sample => sample.kind === 'taxi' && sample.taxiRouteCurveActive && sample.taxiRouteCurveModel).length,
       vehicleBoundsReady: (state?.vehicleSamples || []).filter(sample => sample.width > 0 && sample.length > 0 && typeof sample.yaw === 'number').length,
       vehicleDriverSamples: (state?.vehicleSamples || []).filter(sample => sample.driverName && sample.driverTemperament && sample.activeRoadName && sample.laneKey).length,
       vehicleFollowingSamples: (state?.vehicleSamples || []).filter(sample => sample.followingVehicleId && typeof sample.followDistance === 'number' && typeof sample.desiredGap === 'number').length,
@@ -1686,6 +1705,8 @@ async function inspectCollisionAndMaterials(page) {
       vehicleActuatedSignalSamples: (state?.vehicleSamples || []).filter(sample => sample.signalModel === 'SUMO-inspired actuated tlLogic' && typeof sample.signalCycleSeconds === 'number').length,
       vehicleActuatedGreenSamples: (state?.vehicleSamples || []).filter(sample => typeof sample.actuatedGreenSeconds === 'number' && sample.detectorPressure).length,
       vehicleSumoLinkSamples: (state?.vehicleSamples || []).filter(sample => sample.sumoState && sample.sumoVehicleLinkState && sample.signalPhaseId).length,
+      vehicleMovementLinkSamples: (state?.vehicleSamples || []).filter(sample => sample.sumoVehicleMovement && sample.sumoVehicleMovementLinkState && sample.sumoTurnPriority).length,
+      vehicleProtectedLeftPolicySamples: (state?.vehicleSamples || []).filter(sample => typeof sample.leftTurnWindowSeconds === 'number' && sample.signalPhasePurpose && sample.sumoTurnPriority).length,
       vehicleRightOfWaySamples: (state?.vehicleSamples || []).filter(sample => sample.rightOfWay && Array.isArray(sample.gatsimDecisionSignals) && sample.gatsimDecisionSignals.includes('traffic flow observed')).length,
       vehicleSmartCurbSamples: (state?.vehicleSamples || []).filter(sample => sample.smartCityCurbRule && sample.gbfsNearbyDockCount >= 9).length,
       vehicleSignalSideSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.signalSide && typeof sample.signalLampCount === 'number').length,
@@ -1745,6 +1766,7 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleSignalPhaseSamples === result.vehicleSamples, `Vehicle signal phase metadata is incomplete: ${result.vehicleSignalPhaseSamples}/${result.vehicleSamples}`)
   assert(result.vehicleActuatedSignalSamples === result.vehicleSamples && result.vehicleActuatedGreenSamples >= 1, `Vehicle actuated signal telemetry is incomplete: ${JSON.stringify({ all: result.vehicleActuatedSignalSamples, green: result.vehicleActuatedGreenSamples, samples: result.vehicleSamples })}`)
   assert(result.vehicleSumoLinkSamples === result.vehicleSamples, `Vehicle SUMO link-state metadata is incomplete: ${result.vehicleSumoLinkSamples}/${result.vehicleSamples}`)
+  assert(result.vehicleMovementLinkSamples === result.vehicleSamples && result.vehicleProtectedLeftPolicySamples === result.vehicleSamples, `Vehicle movement-link/left-turn telemetry is incomplete: ${JSON.stringify({ movement: result.vehicleMovementLinkSamples, left: result.vehicleProtectedLeftPolicySamples, samples: result.vehicleSamples })}`)
   assert(result.vehicleRightOfWaySamples === result.vehicleSamples, `Vehicle GATSim decision signal metadata is incomplete: ${result.vehicleRightOfWaySamples}/${result.vehicleSamples}`)
   assert(result.vehicleSmartCurbSamples === result.vehicleSamples, `Vehicle SmartCity curb/GBFS context is incomplete: ${result.vehicleSmartCurbSamples}/${result.vehicleSamples}`)
   assert(result.vehicleSignalSideSamples >= result.vehicleSignalIntentSamples, `Vehicle signal side/lamp metadata is incomplete: ${result.vehicleSignalSideSamples}/${result.vehicleSignalIntentSamples}`)
@@ -1757,11 +1779,14 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.trafficRendering?.vehicleBase === 'procedural-driver-visible-traffic', `Traffic rendering metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
   assert(['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'].every(part => result.trafficRendering?.cabinParts?.includes(part)), `Traffic driver cabin parts are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(['hazard-all', 'right-side-pull-over', 'rear-caution', 'left-side-turn', 'right-side-turn'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['SUMO g/G permissive-left-to-protected-left', '6s protected-left-window', 'pedestrian-no-start-during-left-window'].every(rule => result.trafficRendering?.movementLinkRules?.includes(rule)), `Traffic movement-link rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(/actuat/i.test(result.trafficRendering?.signalActuation || '') && /turn/i.test(result.trafficRendering?.turnIntentRendering || ''), `Traffic rendering did not expose actuated signals and turn intents: ${JSON.stringify(result.trafficRendering)}`)
-  assert(['left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'].every(rule => result.trafficRendering?.turnConflictRules?.includes(rule)), `Traffic turn conflict rendering/behavior rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['left-turn-gap-yield', 'protected-left-turn-window', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'].every(rule => result.trafficRendering?.turnConflictRules?.includes(rule)), `Traffic turn conflict rendering/behavior rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(['lane-level-cubic-bezier-arc', 'road-state-transfer-after-turn'].every(rule => result.trafficRendering?.turnArcRules?.includes(rule)), `Traffic turn arc rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(/taxi.*Bezier.*corner/i.test(result.trafficRendering?.taxiRouteSmoothing || ''), `Taxi route smoothing metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
+  assert(result.taxiLoopSmoothingSamples >= 8, `Cruising taxis are not using smoothed route-corner telemetry: ${result.taxiLoopSmoothingSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
   assert(result.clouds.count >= 16 && result.clouds.averagePuffs >= 8, 'Cloud puff composition is too sparse')
   assert(result.clouds.hasFlattenedUndersides && result.clouds.maxVerticalAspect < 0.55, 'Clouds are still vertically stretched or lack flattened undersides')
@@ -3526,6 +3551,8 @@ async function main() {
     assert(taxiDispatch.passengerPickupRoadStatus?.outsideRoad, `Passenger pickup point should stay on the curb/sidewalk, not the vehicle lane: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.dispatchLaneStats.samples > 0 && taxiDispatch.dispatchLaneStats.laneLike > taxiDispatch.dispatchLaneStats.centerline, `Taxi dispatch route still looks centerline-based instead of lane-based: ${JSON.stringify(taxiDispatch)}`)
     assert(taxiDispatch.dispatchMaxHeadingDelta < 1.2, `Taxi dispatch path still has a hard 90-degree corner: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.dispatchSmoothing?.model === 'taxi-route-bezier-corner-smoothing' && taxiDispatch.dispatchCurveSamples > 0, `Taxi dispatch route did not expose Bezier corner smoothing metadata: ${JSON.stringify(taxiDispatch)}`)
+    assert(taxiDispatch.taxiLoopSmoothingSamples >= 8, `Cruising taxi loops are not exposing smoothed corner route telemetry: ${JSON.stringify(taxiDispatch)}`)
 
     await page.locator('.map-shell').click()
     await page.locator('.full-map-panel').waitFor({ state: 'visible', timeout: 10000 })
@@ -3591,6 +3618,7 @@ async function main() {
     assert(taxiRide.taxiPose && Number.isFinite(taxiRide.taxiPose.x) && Number.isFinite(taxiRide.taxiPose.z), `Taxi vehicle pose was not updated during ride: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.destinationLaneStats.samples > 0 && taxiRide.destinationLaneStats.laneLike > taxiRide.destinationLaneStats.centerline, `Taxi ride route still follows road centerlines instead of traffic lanes: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.destinationMaxHeadingDelta < 1.2, `Taxi ride still turns with a hard 90-degree corner: ${JSON.stringify(taxiRide)}`)
+    assert(taxiRide.destinationSmoothing?.model === 'taxi-route-bezier-corner-smoothing' && taxiRide.destinationCurveSamples > 0, `Taxi ride route did not expose Bezier corner smoothing metadata: ${JSON.stringify(taxiRide)}`)
     assert(taxiRide.rideExitPoint, `Taxi ride did not preserve a curbside passenger exit point: ${JSON.stringify(taxiRide)}`)
     await page.waitForTimeout(900)
     const rideCanvas = await inspectCanvas(page, { minDataUrlLength: 18000 })

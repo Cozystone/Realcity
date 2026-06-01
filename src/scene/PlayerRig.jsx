@@ -624,7 +624,8 @@ export default function PlayerRig({ city }) {
         }
         heading.current = finiteNumber(pose.heading, heading.current)
         pos.current.set(pose.x, terrainHeight(pose.x, pose.z) + 1.1, pose.z)
-        ride.taxiPose = { x: pose.x, z: pose.z, heading: heading.current, yaw: heading.current }
+        ride.taxiPose = { x: pose.x, z: pose.z, heading: heading.current, yaw: heading.current, routeCurve: pose.routeCurve || null }
+        ride.routeCurve = pose.routeCurve || null
         ride.progress = t
         moving.current = true
         running.current = false

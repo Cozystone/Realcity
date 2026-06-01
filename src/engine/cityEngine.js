@@ -20,6 +20,7 @@ export const CITY_BASE_Y = 0
 export const TRAFFIC_SIGNAL_CYCLE_SECONDS = 54
 export const TRAFFIC_SIGNAL_YELLOW_SECONDS = 4.5
 export const TRAFFIC_SIGNAL_ALL_RED_SECONDS = 2.5
+export const TRAFFIC_SIGNAL_LEFT_TURN_SECONDS = 6
 export const TRAFFIC_SIGNAL_MIN_GREEN_SECONDS = 12
 export const TRAFFIC_SIGNAL_MAX_GREEN_SECONDS = 34
 export const BUILDING_ROAD_SETBACK = 8.5
@@ -33,8 +34,10 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'z',
     sumoState: 'GGrr',
     vehicleLinks: { x: 'G', z: 'r' },
+    movementLinks: { x: { through: 'G', right: 'G', left: 'g' }, z: { through: 'r', right: 'r', left: 'r' } },
+    protectedLeftTurn: { axis: 'x', finalSeconds: TRAFFIC_SIGNAL_LEFT_TURN_SECONDS, priority: 'late-green protected left-turn G window after permissive g' },
     pedestrianLinks: { crossX: 'r', crossZ: 'G' },
-    rule: 'east-west vehicles have protected green; pedestrians may cross north-south roads only',
+    rule: 'east-west through/right vehicles have protected green; left turns start permissive g and become protected G during the late left-turn window; pedestrians may cross north-south roads only before the left-turn window',
   },
   {
     id: 'x-yellow-clearance',
@@ -44,6 +47,7 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'z',
     sumoState: 'yyrr',
     vehicleLinks: { x: 'y', z: 'r' },
+    movementLinks: { x: { through: 'y', right: 'y', left: 'y' }, z: { through: 'r', right: 'r', left: 'r' } },
     pedestrianLinks: { crossX: 'r', crossZ: 'r' },
     rule: 'east-west close vehicles clear; no pedestrian starts',
   },
@@ -56,6 +60,7 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'z',
     sumoState: 'rrrr',
     vehicleLinks: { x: 'r', z: 'r' },
+    movementLinks: { x: { through: 'r', right: 'r', left: 'r' }, z: { through: 'r', right: 'r', left: 'r' } },
     pedestrianLinks: { crossX: 'r', crossZ: 'r' },
     rule: 'all vehicles hold for intersection clearance; no new pedestrian starts',
   },
@@ -67,8 +72,10 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'x',
     sumoState: 'rrGG',
     vehicleLinks: { x: 'r', z: 'G' },
+    movementLinks: { x: { through: 'r', right: 'r', left: 'r' }, z: { through: 'G', right: 'G', left: 'g' } },
+    protectedLeftTurn: { axis: 'z', finalSeconds: TRAFFIC_SIGNAL_LEFT_TURN_SECONDS, priority: 'late-green protected left-turn G window after permissive g' },
     pedestrianLinks: { crossX: 'G', crossZ: 'r' },
-    rule: 'north-south vehicles have protected green; pedestrians may cross east-west roads only',
+    rule: 'north-south through/right vehicles have protected green; left turns start permissive g and become protected G during the late left-turn window; pedestrians may cross east-west roads only before the left-turn window',
   },
   {
     id: 'z-yellow-clearance',
@@ -78,6 +85,7 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'x',
     sumoState: 'rryy',
     vehicleLinks: { x: 'r', z: 'y' },
+    movementLinks: { x: { through: 'r', right: 'r', left: 'r' }, z: { through: 'y', right: 'y', left: 'y' } },
     pedestrianLinks: { crossX: 'r', crossZ: 'r' },
     rule: 'north-south close vehicles clear; no pedestrian starts',
   },
@@ -90,6 +98,7 @@ export const SUMO_TL_LOGIC = [
     nextAxis: 'x',
     sumoState: 'rrrr',
     vehicleLinks: { x: 'r', z: 'r' },
+    movementLinks: { x: { through: 'r', right: 'r', left: 'r' }, z: { through: 'r', right: 'r', left: 'r' } },
     pedestrianLinks: { crossX: 'r', crossZ: 'r' },
     rule: 'all vehicles hold for intersection clearance; no new pedestrian starts',
   },
@@ -102,6 +111,7 @@ export const SMART_MOBILITY_STANDARDS = {
     pedestrianRule: 'pedestrian crossings are modeled as separate controlled links after vehicle links',
     crossingTypes: ['traffic-light', 'priority-zebra', 'uncontrolled-gap'],
     detectorModel: 'SUMO induction-loop-style pressure sensors feed actuated green splits from TrafficFlowObserved intensity, occupancy, headway, and queue estimates',
+    leftTurnModel: 'SUMO g/G conflict relationship: left turns are permissive g during protected through green, then become protected G in a 6s late-green window with pedestrian no-start',
   },
   gbfs: {
     reference: 'MobilityData GBFS station_information, station_status, vehicle_types, geofencing_zones',
@@ -435,6 +445,7 @@ export function actuatedSignalProgram(mobilitySystem = null) {
             mode: 'actuated-detector-pressure',
             minGreenSeconds: TRAFFIC_SIGNAL_MIN_GREEN_SECONDS,
             maxGreenSeconds: TRAFFIC_SIGNAL_MAX_GREEN_SECONDS,
+            leftTurnWindowSeconds: TRAFFIC_SIGNAL_LEFT_TURN_SECONDS,
             pressureSignals: ['intensity', 'occupancy', 'averageHeadwayTime', 'averageGapDistance', 'queueLengthEstimate'],
           }
         : null,
@@ -452,6 +463,25 @@ export function trafficPhaseAt(timeMinutes = 0, mobilitySystem = null) {
     const nextElapsed = elapsed + phase.duration
     if (second < nextElapsed || index === program.length - 1) {
       const phaseSecond = second - elapsed
+      const leftTurnWindowSeconds = phase.kind === 'green'
+        ? Math.min(TRAFFIC_SIGNAL_LEFT_TURN_SECONDS, Math.max(0, phase.duration * 0.38))
+        : 0
+      const leftTurnProtected = !!(phase.protectedLeftTurn && leftTurnWindowSeconds > 0 && phase.duration - phaseSecond <= leftTurnWindowSeconds)
+      const movementLinks = phase.movementLinks
+        ? {
+            x: { ...phase.movementLinks.x },
+            z: { ...phase.movementLinks.z },
+          }
+        : null
+      if (movementLinks && leftTurnProtected && phase.activeAxis) {
+        movementLinks[phase.activeAxis] = {
+          ...movementLinks[phase.activeAxis],
+          left: 'G',
+        }
+      }
+      const pedestrianLinks = leftTurnProtected
+        ? { crossX: 'r', crossZ: 'r' }
+        : phase.pedestrianLinks
       return {
         ...phase,
         index,
@@ -461,7 +491,13 @@ export function trafficPhaseAt(timeMinutes = 0, mobilitySystem = null) {
         cycleSeconds: cycle,
         secondsRemaining: Math.max(0, phase.duration - phaseSecond),
         label: phase.id.replaceAll('-', ' '),
-        noPedestrianStart: phase.kind !== 'green',
+        noPedestrianStart: phase.kind !== 'green' || leftTurnProtected,
+        movementLinks,
+        pedestrianLinks,
+        leftTurnWindowSeconds,
+        leftTurnProtected,
+        protectedLeftTurnAxis: leftTurnProtected ? phase.activeAxis : null,
+        movementPriority: leftTurnProtected ? 'protected-left-turn-window' : phase.kind === 'green' ? 'protected-through-permissive-left' : phase.kind,
         pedestrianLinkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder.slice(-2),
         signalModel: mobilitySystem ? 'SUMO-inspired actuated tlLogic' : 'SUMO-inspired static tlLogic',
       }
@@ -478,6 +514,11 @@ export function trafficPhaseAt(timeMinutes = 0, mobilitySystem = null) {
     secondsRemaining: program[0].duration,
     label: program[0].id.replaceAll('-', ' '),
     noPedestrianStart: false,
+    movementLinks: program[0].movementLinks,
+    leftTurnWindowSeconds: 0,
+    leftTurnProtected: false,
+    protectedLeftTurnAxis: null,
+    movementPriority: 'protected-through-permissive-left',
     pedestrianLinkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder.slice(-2),
     signalModel: mobilitySystem ? 'SUMO-inspired actuated tlLogic' : 'SUMO-inspired static tlLogic',
   }
@@ -488,6 +529,39 @@ export function trafficSignalForAxis(axis, timeMinutes = 0, mobilitySystem = nul
   if (phase.kind === 'all-red') return 'red'
   if (axis !== phase.activeAxis) return 'red'
   return phase.kind === 'yellow' ? 'yellow' : 'green'
+}
+
+export function trafficSignalForMovement(axis, movement = 'through', timeMinutes = 0, mobilitySystem = null) {
+  const phase = trafficPhaseAt(timeMinutes, mobilitySystem)
+  const normalizedMovement = movement === 'left' ? 'left' : movement === 'right' ? 'right' : 'through'
+  const linkState = phase.movementLinks?.[axis]?.[normalizedMovement] || phase.vehicleLinks?.[axis] || 'r'
+  const signal = linkState === 'y'
+    ? 'yellow'
+    : linkState === 'G' || linkState === 'g'
+      ? 'green'
+      : 'red'
+  return {
+    signal,
+    linkState,
+    movement: normalizedMovement,
+    priority: linkState === 'G'
+      ? normalizedMovement === 'left' && phase.leftTurnProtected
+        ? 'protected-left-turn'
+        : 'protected-vehicle-link'
+      : linkState === 'g'
+        ? 'permissive-left-turn-yield-to-foes'
+        : signal === 'yellow'
+          ? 'yellow-clearance'
+          : phase.kind === 'all-red'
+            ? 'all-red-clearance'
+            : 'stop-or-yield',
+    phaseId: phase.id,
+    phaseKind: phase.kind,
+    sumoState: phase.sumoState,
+    leftTurnProtected: !!phase.leftTurnProtected,
+    leftTurnWindowSeconds: phase.leftTurnWindowSeconds || 0,
+    source: 'SUMO g/G movement-link interpretation',
+  }
 }
 
 export function pedestrianSignalForAxis(crossedAxis, timeMinutes = 0, mobilitySystem = null) {
@@ -1334,6 +1408,8 @@ function createIntersectionControllers(roads, trafficFlowObserved = []) {
           duration: phase.duration,
           state: phase.sumoState,
           vehicleLinks: phase.vehicleLinks,
+          movementLinks: phase.movementLinks,
+          protectedLeftTurn: phase.protectedLeftTurn || null,
           pedestrianLinks: phase.pedestrianLinks,
           rule: phase.rule,
         })),
@@ -1358,6 +1434,7 @@ function createIntersectionControllers(roads, trafficFlowObserved = []) {
           minGreenSeconds: TRAFFIC_SIGNAL_MIN_GREEN_SECONDS,
           maxGreenSeconds: TRAFFIC_SIGNAL_MAX_GREEN_SECONDS,
           extensionSeconds: 3,
+          protectedLeftTurnSeconds: TRAFFIC_SIGNAL_LEFT_TURN_SECONDS,
           pressureSignals: ['intensity', 'occupancy', 'averageHeadwayTime', 'averageGapDistance', 'queueLengthEstimate'],
           activeAlgorithm: 'extend green for the higher detector-pressure axis while preserving yellow/all-red clearance',
           dominantAxis: xPressure.pressure >= zPressure.pressure ? 'x' : 'z',
@@ -2065,16 +2142,18 @@ export function createRealCity(seed = 20260525) {
       signalCycleSeconds: Number(actuatedSignalProgram(mobilitySystem).reduce((sum, phase) => sum + phase.duration, 0).toFixed(2)),
       yellowSeconds: TRAFFIC_SIGNAL_YELLOW_SECONDS,
       allRedSeconds: TRAFFIC_SIGNAL_ALL_RED_SECONDS,
+      protectedLeftTurnSeconds: TRAFFIC_SIGNAL_LEFT_TURN_SECONDS,
       minGreenSeconds: TRAFFIC_SIGNAL_MIN_GREEN_SECONDS,
       maxGreenSeconds: TRAFFIC_SIGNAL_MAX_GREEN_SECONDS,
       linkOrder: SMART_MOBILITY_STANDARDS.sumo.linkOrder,
       intersectionControllers: mobilitySystem.intersectionControllers.length,
       pedestrianCrossingLinks: 'Pedestrian crossings are controlled as separate links after vehicle links and expose crossX/crossZ WALK states.',
-      signals: `Main intersections use a SUMO-style actuated tlLogic program with detector-pressure green extensions, protected green, yellow clearance, all-red clearance, and separate pedestrian crossing links. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
-      yielding: 'Drivers brake for pedestrians in or near a lane, stop at stop bars for red/all-red signal approaches, and treat turning as a separate conflict check: left turns slow in the pocket for oncoming gaps, right turns slow/yield at marked crosswalk corners, and accepted turns follow curved lane-level steering arcs into the receiving road.',
+      signals: `Main intersections use a SUMO-style actuated tlLogic program with detector-pressure green extensions, SUMO g/G movement links, a ${TRAFFIC_SIGNAL_LEFT_TURN_SECONDS}s protected-left window at the end of each main green, yellow clearance, all-red clearance, and separate pedestrian crossing links. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow/protected-left windows are no-start states.`,
+      yielding: 'Drivers brake for pedestrians in or near a lane, stop at stop bars for red/all-red signal approaches, and treat turning as a separate conflict check: left turns slow in the pocket, yield during permissive g, gain protected G priority in the late left-turn window, and accepted turns follow curved lane-level steering arcs into the receiving road.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
       pedestrianGapAcceptance: 'Priority-zebra and uncontrolled crossings use a SUMO-style conservative gap rule: pedestrians wait if an approaching vehicle would reach the crossing before the configured gap window.',
       detectorPolicy: 'Each main intersection exposes four SUMO induction-loop-style detector records and an active actuated policy keyed to TrafficFlowObserved intensity, occupancy, headway, gap distance, and queue pressure.',
+      movementLinkPolicy: SMART_MOBILITY_STANDARDS.sumo.leftTurnModel,
       actuatedPressureByAxis: trafficPressureByAxis(mobilitySystem),
       smartCityCurbZones: mobilitySystem.smartCity.curbZones.length,
       gbfsStations: mobilitySystem.gbfs.stations.length,

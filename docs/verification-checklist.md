@@ -49,6 +49,9 @@ audit has a clear finish line.
 - SUMO link model: the signal program must expose vehicle links, separate
   pedestrian crossing links, no-start clearance phases, countdown metadata,
   stop bars, and per-intersection controller records.
+- SUMO movement links: left-turning traffic must expose permissive `g` and
+  protected `G` priority telemetry, with a late protected-left window that
+  prevents new pedestrian starts.
 - SUMO detector/gap model: each main intersection must expose four detector
   records and an active pressure policy with computed green seconds; NPC
   crosswalk samples must identify traffic-light, priority-zebra, or
@@ -82,6 +85,9 @@ audit has a clear finish line.
 - Turn-lane steering arcs: accepted non-taxi turns expose active or recently
   completed cubic Bezier steering telemetry, including from-road/to-road names,
   radius, curve length, and road-state transfer after the turn.
+- Taxi route smoothing: dispatch paths, ride paths, NPC self-called taxis, and
+  cruising taxi loops expose Bezier corner-smoothing metadata and enough curve
+  samples to prove they are not hard 90-degree corner paths.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - Place meaning: every landmark exposes a gameplay role, address, access plan,

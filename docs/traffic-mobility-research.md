@@ -13,6 +13,9 @@ This note tracks the traffic-rule pass for RealCity.
   - Adopted: detector-driven controllers. Each main intersection exposes
     induction-loop-style detector records and pressure fields, and those
     pressures now change green durations at runtime.
+  - Adopted: SUMO-style `g`/`G` conflict semantics for left turns. Left turns
+    start as permissive `g` during the protected through phase, then upgrade to
+    a protected `G` window at the end of green while pedestrian starts are held.
 - Eclipse SUMO pedestrians:
   https://eclipse.dev/sumo/docs/Simulation/Pedestrians.html
   - Adopted: sidewalks, walking areas, and crossings are distinct routing
@@ -45,9 +48,11 @@ This note tracks the traffic-rule pass for RealCity.
 
 - Vehicle signals now use a SUMO-inspired actuated cycle:
   - X-axis protected green
+  - late X-axis protected-left window
   - X-axis yellow clearance
   - all-red clearance
   - Z-axis protected green
+  - late Z-axis protected-left window
   - Z-axis yellow clearance
   - all-red clearance
 - Vehicles stop against stop bars, not the center of the intersection.
@@ -55,6 +60,10 @@ This note tracks the traffic-rule pass for RealCity.
   intersection.
 - All-red is treated as clearance; vehicles stop and pedestrians do not start a
   new crossing.
+- Protected-left windows are also no-start pedestrian states. Left-turning
+  vehicles still brake for a pedestrian already inside the conflict box, but
+  they no longer wait for oncoming through traffic once the SUMO-style `G`
+  left-turn window is active.
 - Pedestrian WALK now requires a protected phase: the crossed vehicle axis must
   be red while the orthogonal vehicle axis has protected green.
 - Runtime metadata exposes phase names, SUMO-like four-character states, stop
@@ -84,10 +93,18 @@ This note tracks the traffic-rule pass for RealCity.
   vehicles expose a SUMO/GATSim conflict policy, slow differently from through
   traffic, make left-turn oncoming-gap checks, and make right-turn receiving
   lane/crosswalk checks before entering the conflict box.
+- Vehicle samples now expose movement-level signal state in addition to the
+  axis state: `sumoVehicleMovement`, `sumoVehicleMovementLinkState`,
+  `sumoTurnPriority`, `protectedLeftTurnWindow`, and no-start pedestrian
+  telemetry.
 - Non-taxi traffic now commits accepted turns as lane-level steering arcs:
   cars follow a cubic Bezier curve through the intersection, then transfer
   their actual road, direction, and lane state to the receiving road and choose
   a fresh procedural turn intent for the next intersection.
+- Taxi routing now exposes the same "no hard corner" principle in data:
+  dispatch routes, ride routes, NPC self-called taxis, and cruising taxi loops
+  carry Bezier corner-smoothing metadata, curve sample counts, and active curve
+  pose telemetry while sampling the route.
 - NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
   gap-clear status, and nearest approaching vehicle when a conservative gap
   wait is triggered.
@@ -120,6 +137,6 @@ This note tracks the traffic-rule pass for RealCity.
 
 - Add visible dock lock/hand pose animation and conflict handling when another
   NPC takes a reserved return slot.
-- Smooth taxi route geometry around route corners so called taxis, cruising
-  taxis, and ride-along trips visually follow the same curved intersection
-  steering model as regular traffic.
+- Add route-level yield timing for taxis so dispatch and ride routes slow
+  before smoothed corners, crosswalks, and congested receiving lanes instead of
+  relying only on the global vehicle brake factor.
