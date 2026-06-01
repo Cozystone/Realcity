@@ -124,6 +124,10 @@ audit has a clear finish line.
   glance/turn reaction that also surfaces in the city pulse.
 - NPC social visual cues: active conversations expose partner-facing body turns,
   speech cues, phone/hand gesture props, and runtime gesture metadata.
+- Human direction readability: NPC render metadata exposes front cues
+  (eye whites, pupils, nose bridge, mouth, badge/lapels), back cues
+  (hairBack, vertical back seam, shoulder straps, backpack silhouette), and
+  gait cues so street-camera direction is readable.
 - Daily routine: the harness jumps city time through morning commute, workday,
   evening third-place time, and night; tracked NPCs must change scheduled target
   and activity across the day.
@@ -170,7 +174,7 @@ audit has a clear finish line.
   confirm each distinct data profile is readable at normal street distance.
 - Human model readability: confirm player and NPCs have visible front-facing
   face cues, hair/back cues, clothing detail, hands/feet, and readable walking
-  direction at street-camera distance.
+  direction at street-camera distance beyond the automated metadata check.
 - Digital-human source audit: confirm actor metadata reports the
   MakeHuman-style CC0 parametric base, per-agent morph variation, and no copied
   MakeHuman source code or unlicensed external mesh code.

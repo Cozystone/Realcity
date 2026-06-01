@@ -876,6 +876,8 @@ async function inspectActorRendering(page) {
       actor.bodyParts?.includes('eyelids') &&
       actor.bodyParts?.includes('faceMarks') &&
       actor.bodyParts?.includes('lapels') &&
+      actor.bodyParts?.includes('backSeam') &&
+      actor.bodyParts?.includes('shoulderStraps') &&
       actor.bodyParts?.includes('sharedMobilityDeck') &&
       actor.socialVisualCues?.speechCueInstances === actor.variation?.count &&
       actor.variation?.count > 100
@@ -890,14 +892,21 @@ async function inspectActorRendering(page) {
   assert(actor.rigScale?.torsoCapsuleTotalHeight === 0.94, 'NPC torso was not matched to the player avatar torso capsule')
   assert(actor.rigScale?.armCapsuleTotalHeight === 0.53, 'NPC arm capsule proportions do not match the player avatar')
   assert(actor.rigScale?.legCapsuleTotalHeight === 0.65, 'NPC leg capsule proportions do not match the player avatar')
-  assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'eyeWhites', 'pupils', 'eyelids', 'brows', 'nose', 'mouth', 'faceMarks', 'cheeks', 'arms', 'hands', 'legs', 'shoes', 'collar', 'lapels', 'badge', 'cuffs'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
+  assert(['hips', 'torso', 'chest', 'neck', 'head', 'hairCap', 'hairBack', 'ears', 'eyes', 'eyeWhites', 'pupils', 'eyelids', 'brows', 'nose', 'mouth', 'faceMarks', 'cheeks', 'arms', 'hands', 'legs', 'shoes', 'collar', 'lapels', 'badge', 'cuffs', 'backSeam', 'shoulderStraps'].every(part => actor.bodyParts.includes(part)), `NPC humanoid body parts are incomplete: ${actor.bodyParts.join(', ')}`)
   assert(['speechCue', 'phoneProp', 'gestureCue'].every(part => actor.bodyParts.includes(part)), `NPC social rendering cues are incomplete: ${actor.bodyParts.join(', ')}`)
   assert(['sharedMobilityDeck', 'sharedMobilityWheels', 'sharedMobilityHandlebar'].every(part => actor.bodyParts.includes(part)), `NPC shared mobility ride props are incomplete: ${actor.bodyParts.join(', ')}`)
   assert(actor.sharedMobilityVisualCues?.propInstances === actor.variation.count && actor.sharedMobilityVisualCues?.supportedModes?.includes('shared-bike') && /GBFS/i.test(actor.sharedMobilityVisualCues?.source || ''), `NPC shared mobility visual metadata is incomplete: ${JSON.stringify(actor.sharedMobilityVisualCues)}`)
   assert(actor.socialVisualCues?.speechCueInstances === actor.variation.count && actor.socialVisualCues?.phonePropInstances === actor.variation.count, `NPC social cue instances do not match actor count: ${JSON.stringify(actor.socialVisualCues)}`)
   assert(actor.socialVisualCues?.gestureStyleVariants >= 8 && actor.socialVisualCues?.partnerFacingRule, `NPC social gesture metadata is incomplete: ${JSON.stringify(actor.socialVisualCues)}`)
   assert(actor.facialAnimation?.perAgentSeeded && /eye-white|eye whites/i.test(actor.facialAnimation.sharedWithPlayer || '') && /pupil/i.test(actor.facialAnimation.pupilRule || '') && /eyelid|blink/i.test(actor.facialAnimation.blinkRule || ''), `NPC facial animation metadata is incomplete: ${JSON.stringify(actor.facialAnimation)}`)
-  assert(['collar', 'lapels', 'cheeks', 'eye whites', 'pupils', 'blink eyelids', 'front badge', 'pant cuffs'].every(part => actor.streetReadableDetails?.includes(part)), `NPC street-readable detail metadata is incomplete: ${(actor.streetReadableDetails || []).join(', ')}`)
+  assert(['collar', 'lapels', 'cheeks', 'eye whites', 'pupils', 'blink eyelids', 'front badge', 'pant cuffs', 'back seam', 'shoulder straps'].every(part => actor.streetReadableDetails?.includes(part)), `NPC street-readable detail metadata is incomplete: ${(actor.streetReadableDetails || []).join(', ')}`)
+  assert(
+    actor.directionReadability?.frontCues?.includes('nose bridge') &&
+    actor.directionReadability?.backCues?.includes('vertical back seam') &&
+    actor.directionReadability?.backCues?.includes('shoulder straps') &&
+    actor.directionReadability?.gaitCues?.includes('visible forward shoe offset'),
+    `NPC front/back direction readability metadata is incomplete: ${JSON.stringify(actor.directionReadability)}`,
+  )
   assert(actor.variation.heightVariants >= 8, `NPC height variation is too low in actor rendering: ${actor.variation.heightVariants}`)
   assert(actor.variation.bodyVariants >= 7, `NPC body type variation is too low in actor rendering: ${actor.variation.bodyVariants}`)
   assert(actor.variation.ageBands >= 3 && actor.variation.ages >= 40, `NPC age variation is too low in actor rendering: ${JSON.stringify(actor.variation)}`)
@@ -2635,7 +2644,12 @@ async function inspectStreetRendering(page) {
   )
   assert(result.pedestrianSignals?.heads >= result.crosswalks.crossingPads, `Pedestrian signal heads do not cover crosswalk approaches: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.pedestrianSignals?.labeledHeads >= 20 && /curb-side/i.test(result.pedestrianSignals?.placement || ''), `Pedestrian signal placement metadata is incomplete: ${JSON.stringify(result.pedestrianSignals)}`)
-  assert(result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0, `Pedestrian signals are not exposing simultaneous WALK/WAIT states: ${JSON.stringify(result.pedestrianSignals)}`)
+  const pedestrianPhaseIsNoStart = result.trafficSignals?.protectedLeftTurnWindow || result.trafficSignals?.currentPhase === 'yellow' || result.trafficSignals?.currentPhase === 'all-red'
+  assert(
+    (result.pedestrianSignals?.walkHeads > 0 && result.pedestrianSignals?.waitHeads > 0) ||
+      (pedestrianPhaseIsNoStart && result.pedestrianSignals?.walkHeads === 0 && result.pedestrianSignals?.waitHeads > 0),
+    `Pedestrian signals are not exposing valid WALK/WAIT/no-start states: ${JSON.stringify({ pedestrian: result.pedestrianSignals, traffic: result.trafficSignals })}`,
+  )
   assert(/protected-walk/i.test(result.pedestrianSignals?.liveSignalCoupling || '') || /yellow\/all-red are clearance/i.test(result.pedestrianSignals?.rule || ''), `Pedestrian signal rule is not coupled to traffic lights: ${JSON.stringify(result.pedestrianSignals)}`)
   assert(result.sharedMobility?.gbfsStationModels >= 9 && result.sharedMobility?.dockPads >= 9, `Shared mobility docks are not physically rendered: ${JSON.stringify(result.sharedMobility)}`)
   assert(result.sharedMobility?.racks >= 40 && result.sharedMobility?.parkedBikeProps >= 20 && result.sharedMobility?.parkedScooterProps >= 10, `Shared bike/scooter props are too sparse: ${JSON.stringify(result.sharedMobility)}`)
