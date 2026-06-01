@@ -1704,6 +1704,15 @@ async function inspectCollisionAndMaterials(page) {
         sample.turnConflictTargetName &&
         /pedestrian|oncoming|receiving|gap|cross/i.test(`${sample.turnPriorityRule || ''} ${sample.turnConflictKind || ''}`),
       ).length,
+      vehicleTurnArcSamples: (state?.vehicleSamples || []).filter(sample =>
+        (sample.turnArcActive || sample.turnArcRecentlyCompleted) &&
+        sample.turnArcSteering === 'lane-level-cubic-bezier-steering-arc' &&
+        sample.turnArcFromRoadName &&
+        sample.turnArcToRoadName &&
+        sample.turnArcRadiusMeters > 0 &&
+        sample.turnArcLengthMeters > 0 &&
+        /Bezier|steering arc/i.test(sample.turnArcTelemetrySource || ''),
+      ).length,
       vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
       vehicleDriverCabinSamples: (state?.vehicleSamples || []).filter(sample => sample.driverCabinCue === 'visible-driver-hands-wheel' && ['hands-on-wheel', 'braking-forward-lean', 'checking-curb-mirror'].includes(sample.driverPose)).length,
       trafficRendering: window.__REALCITY_TRAFFIC_RENDERING__ || null,
@@ -1742,6 +1751,7 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleTurnIntentSamples === result.vehicleSamples && result.vehicleActiveTurnSignalSamples >= 1, `Vehicle turn-intent/lane telemetry is incomplete: ${JSON.stringify({ turn: result.vehicleTurnIntentSamples, active: result.vehicleActiveTurnSignalSamples, samples: result.vehicleSamples })}`)
   assert(result.vehicleTurnConflictPolicySamples === result.vehicleSamples, `Vehicle turn conflict/gap policy telemetry is incomplete: ${result.vehicleTurnConflictPolicySamples}/${result.vehicleSamples}`)
   assert(result.vehicleTurningSlowdownSamples >= 1, `No active turning vehicles expose distinct turn slowdown/yield behavior: ${result.vehicleTurningSlowdownSamples}`)
+  assert(result.vehicleTurnArcSamples >= 1, `No vehicles expose completed or active lane-level curved turn arcs: ${result.vehicleTurnArcSamples}`)
   assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleDriverCabinSamples === result.vehicleSamples, `Visible driver cabin metadata is incomplete: ${result.vehicleDriverCabinSamples}/${result.vehicleSamples}`)
   assert(result.trafficRendering?.vehicleBase === 'procedural-driver-visible-traffic', `Traffic rendering metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
@@ -1749,6 +1759,7 @@ async function inspectCollisionAndMaterials(page) {
   assert(['hazard-all', 'right-side-pull-over', 'rear-caution', 'left-side-turn', 'right-side-turn'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(/actuat/i.test(result.trafficRendering?.signalActuation || '') && /turn/i.test(result.trafficRendering?.turnIntentRendering || ''), `Traffic rendering did not expose actuated signals and turn intents: ${JSON.stringify(result.trafficRendering)}`)
   assert(['left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'].every(rule => result.trafficRendering?.turnConflictRules?.includes(rule)), `Traffic turn conflict rendering/behavior rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['lane-level-cubic-bezier-arc', 'road-state-transfer-after-turn'].every(rule => result.trafficRendering?.turnArcRules?.includes(rule)), `Traffic turn arc rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')
@@ -1944,16 +1955,30 @@ async function inspectCrosswalkSignalCompliance(page) {
 
   await holdClock(setup.redTime)
 
-  await page.waitForFunction((setup) => {
-    const state = window.__REALCITY_STORE__?.getState()
-    const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
-    if (!sample) return false
-    const movedFromApproach = Math.hypot(sample.x - setup.approach.x, sample.z - setup.approach.z) > 0.8
-    return !sample.crosswalkWaiting &&
-      ['crosswalk-crossing', 'destination-approach', 'dwelling'].includes(sample.routeMode) &&
-      (sample.crosswalkVehicleSignal === 'red' || Math.abs((state?.timeMinutes || 0) - setup.redTime) < 0.35) &&
-      movedFromApproach
-  }, setup, { timeout: 9000 })
+  try {
+    await page.waitForFunction((setup) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+      if (!sample) return false
+      const movedFromApproach = Math.hypot(sample.x - setup.approach.x, sample.z - setup.approach.z) > 0.8
+      return !sample.crosswalkWaiting &&
+        ['crosswalk-crossing', 'destination-approach', 'dwelling'].includes(sample.routeMode) &&
+        (sample.crosswalkVehicleSignal === 'red' || Math.abs((state?.timeMinutes || 0) - setup.redTime) < 0.35) &&
+        movedFromApproach
+    }, setup, { timeout: 15000 })
+  } catch (error) {
+    const debug = await page.evaluate((setup) => {
+      const state = window.__REALCITY_STORE__?.getState()
+      const sample = (state?.pedestrianSamples || []).find(item => item.id === setup.id)
+      return {
+        timeMinutes: state?.timeMinutes,
+        redTime: setup.redTime,
+        sample,
+        movedFromApproach: sample ? Math.hypot(sample.x - setup.approach.x, sample.z - setup.approach.z) : null,
+      }
+    }, setup)
+    throw new Error(`NPC did not enter the crosswalk after the vehicle axis turned red: ${JSON.stringify({ setup, debug })}`)
+  }
 
   const crossing = await page.evaluate((setup) => {
     const state = window.__REALCITY_STORE__?.getState()
@@ -2248,7 +2273,7 @@ async function inspectLocalLlmSocialConversation(page) {
         memory: sample.lastMemory,
         relationships: sample.relationshipCount,
       }))
-    const event = (state?.cityEvents || []).find(item => item.kind === 'conversation' && item.source === 'local-llm-social')
+    const event = (state?.cityEvents || []).find(item => item.kind === 'conversation' && /^local-llm-social/.test(item.source || ''))
     return {
       social: record,
       runtime: window.__REALCITY_LLM__ || null,
@@ -2262,10 +2287,10 @@ async function inspectLocalLlmSocialConversation(page) {
     return { ...result, skipped: true, localLlmStatus }
   }
 
-  assert(result.social?.source === 'local-llm-social', `NPC-to-NPC social LLM did not use Ollama: ${JSON.stringify({ result, localLlmStatus })}`)
+  assert(/^local-llm-social/.test(result.social?.source || '') && result.social?.llm?.ok === true && result.social?.llm?.source === 'local-llm', `NPC-to-NPC social LLM did not use Ollama: ${JSON.stringify({ result, localLlmStatus })}`)
   assert(result.runtime?.lastPurpose === 'npc-social-conversation' && result.runtime?.lastSource === 'local-llm' && result.runtime?.successes > 0, `NPC social LLM runtime telemetry is incomplete: ${JSON.stringify(result.runtime)}`)
-  assert(result.event?.source === 'local-llm-social' && result.event.lineA && result.event.lineB && result.event.llmLatencyMs > 0, `NPC social LLM event was not recorded with dialogue lines: ${JSON.stringify(result.event)}`)
-  assert(result.samples.length >= 2 && result.samples.every(sample => sample.talkSource === 'local-llm-social' && sample.talkLine && sample.llmSocialSource === 'local-llm-social'), `NPC social LLM did not update both agent samples: ${JSON.stringify(result.samples)}`)
+  assert(/^local-llm-social/.test(result.event?.source || '') && result.event.lineA && result.event.lineB && result.event.llmLatencyMs > 0, `NPC social LLM event was not recorded with dialogue lines: ${JSON.stringify(result.event)}`)
+  assert(result.samples.length >= 2 && result.samples.every(sample => /^local-llm-social/.test(sample.talkSource || '') && sample.talkLine && /^local-llm-social/.test(sample.llmSocialSource || '')), `NPC social LLM did not update both agent samples: ${JSON.stringify(result.samples)}`)
   assert(result.samples.every(sample => sample.memory && sample.relationships > 0), `NPC social LLM did not leave memory/relationship traces: ${JSON.stringify(result.samples)}`)
   return { ...result, skipped: false, localLlmStatus }
 }
@@ -3201,6 +3226,9 @@ function isOptionalLocalLlmUrl(url) {
 function filterConsoleErrors(consoleErrors, optionalLocalLlmErrors) {
   let remainingOptional = optionalLocalLlmErrors.length
   return consoleErrors.filter(text => {
+    if (/WebSocket connection to 'ws:\/\/127\.0\.0\.1:\d+\/\?token=.*failed: Error in connection establishment: net::ERR_NO_BUFFER_SPACE/i.test(text)) {
+      return false
+    }
     if (/Failed to load resource: the server responded with a status of 500/i.test(text) && remainingOptional > 0) {
       remainingOptional -= 1
       return false

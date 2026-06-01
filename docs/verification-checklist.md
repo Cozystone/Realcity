@@ -79,6 +79,9 @@ audit has a clear finish line.
 - Turn-lane conflict behavior: active left/right turn samples expose SUMO/GATSim
   priority rules, distinct turn slowdown intensity, and gap/crosswalk conflict
   checks instead of behaving exactly like through traffic.
+- Turn-lane steering arcs: accepted non-taxi turns expose active or recently
+  completed cubic Bezier steering telemetry, including from-road/to-road names,
+  radius, curve length, and road-state transfer after the turn.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - Place meaning: every landmark exposes a gameplay role, address, access plan,

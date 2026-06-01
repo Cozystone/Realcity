@@ -84,6 +84,10 @@ This note tracks the traffic-rule pass for RealCity.
   vehicles expose a SUMO/GATSim conflict policy, slow differently from through
   traffic, make left-turn oncoming-gap checks, and make right-turn receiving
   lane/crosswalk checks before entering the conflict box.
+- Non-taxi traffic now commits accepted turns as lane-level steering arcs:
+  cars follow a cubic Bezier curve through the intersection, then transfer
+  their actual road, direction, and lane state to the receiving road and choose
+  a fresh procedural turn intent for the next intersection.
 - NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
   gap-clear status, and nearest approaching vehicle when a conservative gap
   wait is triggered.
@@ -116,6 +120,6 @@ This note tracks the traffic-rule pass for RealCity.
 
 - Add visible dock lock/hand pose animation and conflict handling when another
   NPC takes a reserved return slot.
-- Add lane-level visual steering arcs so the car body itself follows a curved
-  turning path at selected intersections instead of only slowing/checking the
-  turn conflict while staying on the loop lane.
+- Smooth taxi route geometry around route corners so called taxis, cruising
+  taxis, and ride-along trips visually follow the same curved intersection
+  steering model as regular traffic.

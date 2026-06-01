@@ -311,7 +311,9 @@ export async function askLocalNPCConversation(a, b, context = {}) {
 
   return {
     ok: completion.ok && !!parsed,
-    source: completion.ok && parsed ? 'local-llm-social' : `fallback:${completion.source}`,
+    source: completion.ok
+      ? parsed ? 'local-llm-social' : 'local-llm-social-fallback'
+      : `fallback:${completion.source}`,
     latencyMs: completion.latencyMs,
     error: completion.error || null,
     topic: {

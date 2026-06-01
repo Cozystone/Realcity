@@ -1053,6 +1053,183 @@ function roadLanePoint(road, along, direction) {
   return { x: road.x + lane, z: Math.max(road.from, Math.min(road.to, along)) }
 }
 
+function roadAlongFromPoint(road, point) {
+  return road.axis === 'x' ? point.x : point.z
+}
+
+function tValueForRoadAlong(road, direction, along) {
+  const span = Math.max(1, road.to - road.from)
+  const normalized = clampValue((along - road.from) / span, 0, 1)
+  return direction > 0 ? normalized : 1 - normalized
+}
+
+function vehicleDirectionVector(road, direction) {
+  if (road.axis === 'x') return { x: direction > 0 ? 1 : -1, z: 0 }
+  return { x: 0, z: direction > 0 ? 1 : -1 }
+}
+
+function turnVectorForIntent(vector, intent) {
+  if (intent === 'right') return { x: vector.z, z: -vector.x }
+  if (intent === 'left') return { x: -vector.z, z: vector.x }
+  return vector
+}
+
+function directionForRoadVector(road, vector) {
+  if (road.axis === 'x') return vector.x >= 0 ? 1 : -1
+  return vector.z >= 0 ? 1 : -1
+}
+
+function cubicPoint(a, b, c, d, t) {
+  const u = 1 - t
+  const uu = u * u
+  const tt = t * t
+  return {
+    x: a.x * uu * u + b.x * 3 * uu * t + c.x * 3 * u * tt + d.x * tt * t,
+    z: a.z * uu * u + b.z * 3 * uu * t + c.z * 3 * u * tt + d.z * tt * t,
+  }
+}
+
+function cubicDerivative(a, b, c, d, t) {
+  const u = 1 - t
+  return {
+    x: 3 * u * u * (b.x - a.x) + 6 * u * t * (c.x - b.x) + 3 * t * t * (d.x - c.x),
+    z: 3 * u * u * (b.z - a.z) + 6 * u * t * (c.z - b.z) + 3 * t * t * (d.z - c.z),
+  }
+}
+
+function estimateCubicLength(a, b, c, d) {
+  let length = 0
+  let previous = a
+  for (let i = 1; i <= 12; i += 1) {
+    const point = cubicPoint(a, b, c, d, i / 12)
+    length += Math.hypot(point.x - previous.x, point.z - previous.z)
+    previous = point
+  }
+  return Math.max(1, length)
+}
+
+function applyVehicleTurnIntent(car, intent, road = car.road) {
+  car.turnIntent = intent
+  car.turnLaneRule = intent === 'straight'
+    ? 'through-lane'
+    : intent === 'right'
+      ? 'right-turn-yield-area'
+      : 'left-turn-pocket-before-stop-bar'
+  car.turnSignalDistanceMeters = road?.main ? 52 : 34
+  car.plannedTurnSignalSide = intent === 'left' ? 'left-side-turn' : intent === 'right' ? 'right-side-turn' : null
+}
+
+function nextProceduralTurnIntent(car) {
+  const options = ['straight', 'straight', 'straight', 'right', 'left', 'straight', 'right']
+  const index = hashValue(`${car.id}:${car.turnsCompleted || 0}:${car.road?.id || ''}`) % options.length
+  return options[index]
+}
+
+function vehicleTurnArcPose(car) {
+  const arc = car.turnArc
+  if (!arc) return null
+  const t = clampValue((arc.progress || 0) / Math.max(1, arc.length || 1), 0, 1)
+  const point = cubicPoint(arc.start, arc.control1, arc.control2, arc.end, t)
+  const derivative = cubicDerivative(arc.start, arc.control1, arc.control2, arc.end, t)
+  const heading = Math.hypot(derivative.x, derivative.z) > 0.001
+    ? Math.atan2(derivative.x, derivative.z)
+    : arc.toHeading
+  return {
+    x: point.x,
+    z: point.z,
+    yaw: heading,
+    heading,
+    road: t < 0.55 ? arc.fromRoad : arc.toRoad,
+    direction: t < 0.55 ? arc.fromDirection : arc.toDirection,
+    turnArc: true,
+    turnArcProgress: t,
+    turnArcId: arc.id,
+  }
+}
+
+function beginVehicleTurnArc(car, state, turnContext) {
+  if (!turnContext?.crossRoad || !turnContext.intersectionCenter || car.turnArc) return null
+  const fromVector = vehicleDirectionVector(state.road, state.direction)
+  const toVector = turnVectorForIntent(fromVector, turnContext.direction)
+  const toRoad = turnContext.crossRoad
+  const toDirection = directionForRoadVector(toRoad, toVector)
+  const exitDistance = Math.max(18, Math.min(34, state.road.width * 1.1 + toRoad.width * 0.9))
+  const endAlong = toRoad.axis === 'x'
+    ? turnContext.intersectionCenter.x + toDirection * exitDistance
+    : turnContext.intersectionCenter.z + toDirection * exitDistance
+  const start = { x: state.pose.x, z: state.pose.z }
+  const end = roadLanePoint(toRoad, endAlong, toDirection)
+  const radius = Math.max(12, Math.min(28, exitDistance * 0.78))
+  const control1 = {
+    x: start.x + fromVector.x * radius,
+    z: start.z + fromVector.z * radius,
+  }
+  const control2 = {
+    x: end.x - toVector.x * radius,
+    z: end.z - toVector.z * radius,
+  }
+  const length = estimateCubicLength(start, control1, control2, end)
+  car.turnArc = {
+    id: `${car.id}_${Date.now()}`,
+    intent: turnContext.direction,
+    fromRoad: state.road,
+    fromRoadName: state.road.name,
+    fromDirection: state.direction,
+    toRoad,
+    toRoadName: toRoad.name,
+    toDirection,
+    start,
+    end,
+    control1,
+    control2,
+    length,
+    progress: 0,
+    radius,
+    source: 'lane-level cubic Bezier steering arc from turnIntent and right-hand lane model',
+    toHeading: Math.atan2(toVector.x, toVector.z),
+  }
+  return car.turnArc
+}
+
+function finishVehicleTurnArc(car) {
+  const arc = car.turnArc
+  if (!arc) return
+  car.road = arc.toRoad
+  car.direction = arc.toDirection
+  car.lane = roadLaneOffset(arc.toRoad, arc.toDirection)
+  car.t = tValueForRoadAlong(arc.toRoad, arc.toDirection, roadAlongFromPoint(arc.toRoad, arc.end))
+  car.activeRoad = null
+  car.activeDirection = null
+  car.turnsCompleted = (car.turnsCompleted || 0) + 1
+  car.lastTurnArc = {
+    id: arc.id,
+    intent: arc.intent,
+    fromRoadName: arc.fromRoadName,
+    toRoadName: arc.toRoadName,
+    radius: arc.radius,
+    length: arc.length,
+    source: arc.source,
+    completedAt: Date.now(),
+  }
+  car.turnArc = null
+  applyVehicleTurnIntent(car, nextProceduralTurnIntent(car), car.road)
+}
+
+function advanceVehicleTurnArc(car, distance) {
+  if (!car.turnArc) return false
+  car.turnArc.progress = (car.turnArc.progress || 0) + Math.max(0, distance)
+  if (car.turnArc.progress >= car.turnArc.length) finishVehicleTurnArc(car)
+  return true
+}
+
+function shouldBeginVehicleTurnArc(state, turnContext, signalStop, turnControl) {
+  if (!turnContext?.active || turnContext.direction === 'straight') return false
+  if (state.car.kind === 'taxi' || state.car.turnArc) return false
+  if (signalStop || turnControl?.mustYield) return false
+  const distance = turnContext.distanceToDecision
+  return typeof distance === 'number' && distance <= Math.max(5.5, Math.min(10, state.dim.length + 5.5))
+}
+
 function taxiLoopForCar(car, roads = [], index = 0) {
   const vertical = roads.filter(road => road.axis === 'z' && road.main).sort((a, b) => a.x - b.x)
   const horizontal = roads.filter(road => road.axis === 'x' && road.main).sort((a, b) => a.z - b.z)
@@ -2251,7 +2428,8 @@ class Agent {
         talks: next.talks,
         at: performance.now(),
       }
-      if (conversation.source === 'local-llm-social') {
+      const llmBackedSocial = /^local-llm-social/.test(conversation.source || '')
+      if (llmBackedSocial) {
         this.lastLlmConversation = {
           partnerId: partner.id,
           partnerName: partner.name,
@@ -2264,7 +2442,7 @@ class Agent {
         }
       }
       this.currentIntent = `talking with ${partner.name} about ${conversation.label}`
-      this.remember(conversation.source === 'local-llm-social' ? 'llm-social' : 'social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
+      this.remember(llmBackedSocial ? 'llm-social' : 'social', conversation.memoryFor(this, partner), this.placeName, 0.66 + delta)
       this.refreshCognition({
         trigger: 'conversation',
         timeMinutes,
@@ -3110,6 +3288,8 @@ function socialGestureKind(agent) {
 }
 
 function trafficPose(car, tValue = car.t) {
+  const arcPose = vehicleTurnArcPose(car)
+  if (arcPose) return arcPose
   const t = car.direction > 0 ? tValue : 1 - tValue
   const span = car.road.to - car.road.from
   if (car.road.axis === 'x') {
@@ -3205,8 +3385,8 @@ function trafficStateForCar(car, roads, index, store) {
   const dim = car.dimensions || { width: 2.05, height: 0.72, length: 4.35, cabinLength: 1.82, cabinHeight: 0.58 }
   const assignedPose = assignedTaxiPose(car, store)
   const pose = assignedPose || taxiPoseForCar(car, roads, index)
-  const road = car.activeRoad || car.road
-  const direction = car.activeDirection ?? car.direction
+  const road = pose.road || car.activeRoad || car.road
+  const direction = pose.direction ?? car.activeDirection ?? car.direction
   const laneOffset = road.axis === 'x' ? pose.z - road.z : pose.x - road.x
   const along = road.axis === 'x'
     ? clampValue(pose.x, road.from, road.to)
@@ -3291,6 +3471,26 @@ function pointInVehicleBody(pose, dim, point, padding = 0.72) {
 
 function turnContextForCar(state, roads = []) {
   const intent = state.car.turnIntent || 'straight'
+  if (state.car.turnArc) {
+    const arc = state.car.turnArc
+    return {
+      intent: arc.intent,
+      direction: arc.intent,
+      active: true,
+      arcActive: true,
+      distanceToDecision: Number(Math.max(0, (arc.length || 0) - (arc.progress || 0)).toFixed(2)),
+      intersectionRoadId: arc.toRoad?.id || null,
+      intersectionRoadName: arc.toRoadName || null,
+      intersectionAlong: roadAlongFromPoint(arc.toRoad, arc.end),
+      intersectionCenter: null,
+      crossRoad: arc.toRoad,
+      laneRule: state.car.turnLaneRule || 'lane-level-steering-arc',
+      turnSignalDistanceMeters: state.car.turnSignalDistanceMeters || state.road.laneModel?.turnSignalDistanceMeters || 42,
+      turnPocketLengthMeters: state.road.laneModel?.turnPocketLengthMeters || null,
+      plannedSignalSide: state.car.plannedTurnSignalSide || null,
+      source: arc.source,
+    }
+  }
   const turnSignalDistance = state.car.turnSignalDistanceMeters || state.road.laneModel?.turnSignalDistanceMeters || 42
   const upcoming = upcomingIntersectionForCar(state.trafficCar, state.pose, roads)
   const stopDistance = upcoming?.distance ?? Infinity
@@ -3356,6 +3556,20 @@ function crossingVehicleForTurn(state, turnContext, trafficStates) {
 
 function turnControlForCar(state, turnContext, trafficStates, pedestrians) {
   if (!turnContext?.active || turnContext.direction === 'straight') return null
+  if (turnContext.arcActive) {
+    return {
+      type: 'lane-level-steering-arc',
+      reason: null,
+      intensity: 0.18,
+      mustYield: false,
+      targetId: null,
+      targetName: null,
+      distance: turnContext.distanceToDecision,
+      priorityRule: 'vehicle body follows a curved lane-level steering arc through the intersection',
+      policy: 'turning vehicle has already accepted the conflict gap and is completing the lane-change arc',
+      source: turnContext.source,
+    }
+  }
   const distance = typeof turnContext.distanceToDecision === 'number' ? turnContext.distanceToDecision : turnContext.turnSignalDistanceMeters
   const signalDistance = Math.max(1, turnContext.turnSignalDistanceMeters || 42)
   const approachProgress = clampValue(1 - distance / signalDistance, 0, 1)
@@ -3507,6 +3721,7 @@ function Traffic({ cars, roads, mobilitySystem }) {
       signalActuation: 'actuated TrafficFlowObserved detector pressure changes protected green durations at runtime',
       turnIntentRendering: 'vehicles expose left/right/straight turn intent and blink amber side signals before intersections',
       turnConflictRules: ['left-turn-pocket-slowdown', 'left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'],
+      turnArcRules: ['lane-level-cubic-bezier-arc', 'road-state-transfer-after-turn', 'post-turn-intent-reselection'],
       gbfsStations: mobilitySystem?.gbfs?.stations?.length || 0,
       smartCityCurbZones: mobilitySystem?.smartCity?.curbZones?.length || 0,
       gatsimDisruptions: mobilitySystem?.gatsim?.disruptionEvents?.length || 0,
@@ -3593,14 +3808,24 @@ function Traffic({ cars, roads, mobilitySystem }) {
       const wave = 0.82 + Math.sin(state.clock.elapsedTime * 0.23 + car.phase) * 0.18
       const followFactor = follow ? clampValue(1 - follow.intensity * (car.driverTemperament === 'hurried' ? 0.52 : 0.68), 0.18, 1) : 1
       const speedFactor = Math.max(0, (1 - car.brake * 0.98) * followFactor)
+      const travelDistance = car.speed * wave * speedFactor * dt
       if (!assignedPose) {
-        if (car.kind === 'taxi' && car.cruisePath?.length >= 2 && car.cruiseMeters > 0) {
-          car.cruiseProgress = ((car.cruiseProgress || 0) + car.speed * wave * speedFactor * dt) % car.cruiseMeters
+        if (car.turnArc) {
+          advanceVehicleTurnArc(car, travelDistance)
+        } else if (shouldBeginVehicleTurnArc(trafficState, turnContext, signalStop, turnControl)) {
+          beginVehicleTurnArc(car, trafficState, turnContext)
+          advanceVehicleTurnArc(car, travelDistance)
+        } else if (car.kind === 'taxi' && car.cruisePath?.length >= 2 && car.cruiseMeters > 0) {
+          car.cruiseProgress = ((car.cruiseProgress || 0) + travelDistance) % car.cruiseMeters
         } else {
-          car.t = (car.t + (car.speed * wave * speedFactor * dt) / Math.max(1, car.road.to - car.road.from)) % 1
+          car.t = (car.t + travelDistance / Math.max(1, car.road.to - car.road.from)) % 1
         }
       }
-      const { x, z, yaw } = assignedPose || taxiPoseForCar(car, roads, i)
+      const finalPose = assignedPose || taxiPoseForCar(car, roads, i)
+      const { x, z, yaw } = finalPose
+      const activeArc = car.turnArc || null
+      const recentArc = !activeArc && car.lastTurnArc && Date.now() - car.lastTurnArc.completedAt < 12000 ? car.lastTurnArc : null
+      const arcTelemetry = activeArc || recentArc
 
       vehicleSamples.push({
         id: car.id,
@@ -3641,6 +3866,19 @@ function Traffic({ cars, roads, mobilitySystem }) {
           ? 'SUMO protected through movement when the axis is green; otherwise stop at the bar'
           : 'turning vehicles use laneModel turnLanePolicy, SUMO conflict priority, and GATSim gap acceptance'),
         turnConflictTelemetrySource: turnControl?.source || 'SUMO/GATSim turn conflict policy metadata',
+        turnArcActive: !!activeArc || !!finalPose.turnArc,
+        turnArcRecentlyCompleted: !!recentArc,
+        turnArcProgress: activeArc
+          ? Number(clampValue((activeArc.progress || 0) / Math.max(1, activeArc.length || 1), 0, 1).toFixed(3))
+          : recentArc
+            ? 1
+            : null,
+        turnArcFromRoadName: arcTelemetry?.fromRoadName || null,
+        turnArcToRoadName: arcTelemetry?.toRoadName || null,
+        turnArcRadiusMeters: arcTelemetry?.radius ? Number(arcTelemetry.radius.toFixed(2)) : null,
+        turnArcLengthMeters: arcTelemetry?.length ? Number(arcTelemetry.length.toFixed(2)) : null,
+        turnArcSteering: arcTelemetry ? 'lane-level-cubic-bezier-steering-arc' : null,
+        turnArcTelemetrySource: arcTelemetry?.source || null,
         brakingReason,
         signalPhase: signalStop?.phase || phase.kind,
         signalPhaseId: phase.id,
