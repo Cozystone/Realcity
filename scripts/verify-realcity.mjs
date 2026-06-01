@@ -1691,6 +1691,19 @@ async function inspectCollisionAndMaterials(page) {
       vehicleSignalSideSamples: (state?.vehicleSamples || []).filter(sample => sample.signalIntent && sample.signalSide && typeof sample.signalLampCount === 'number').length,
       vehicleTurnIntentSamples: (state?.vehicleSamples || []).filter(sample => ['straight', 'left', 'right'].includes(sample.turnIntent) && sample.turnLaneRule && sample.laneRule && typeof sample.turnSignalDistanceMeters === 'number').length,
       vehicleActiveTurnSignalSamples: (state?.vehicleSamples || []).filter(sample => sample.turnSignalActive && ['turn-left', 'turn-right'].includes(sample.signalIntent)).length,
+      vehicleTurnConflictPolicySamples: (state?.vehicleSamples || []).filter(sample => sample.turnConflictPolicy && sample.turnPriorityRule && sample.turnConflictTelemetrySource).length,
+      vehicleTurningSlowdownSamples: (state?.vehicleSamples || []).filter(sample =>
+        ['left', 'right'].includes(sample.turnIntent) &&
+        sample.turnSignalActive &&
+        sample.turnCautionIntensity > 0 &&
+        sample.turnConflictKind &&
+        /turn|yield|slow|gap/i.test(`${sample.brakingReason || ''} ${sample.turnPriorityRule || ''}`),
+      ).length,
+      vehicleTurnYieldSamples: (state?.vehicleSamples || []).filter(sample =>
+        sample.turnYieldRequired &&
+        sample.turnConflictTargetName &&
+        /pedestrian|oncoming|receiving|gap|cross/i.test(`${sample.turnPriorityRule || ''} ${sample.turnConflictKind || ''}`),
+      ).length,
       vehicleDriverReactionSamples: (state?.vehicleSamples || []).filter(sample => sample.driverReaction && sample.visualSafetyCue).length,
       vehicleDriverCabinSamples: (state?.vehicleSamples || []).filter(sample => sample.driverCabinCue === 'visible-driver-hands-wheel' && ['hands-on-wheel', 'braking-forward-lean', 'checking-curb-mirror'].includes(sample.driverPose)).length,
       trafficRendering: window.__REALCITY_TRAFFIC_RENDERING__ || null,
@@ -1727,12 +1740,15 @@ async function inspectCollisionAndMaterials(page) {
   assert(result.vehicleSmartCurbSamples === result.vehicleSamples, `Vehicle SmartCity curb/GBFS context is incomplete: ${result.vehicleSmartCurbSamples}/${result.vehicleSamples}`)
   assert(result.vehicleSignalSideSamples >= result.vehicleSignalIntentSamples, `Vehicle signal side/lamp metadata is incomplete: ${result.vehicleSignalSideSamples}/${result.vehicleSignalIntentSamples}`)
   assert(result.vehicleTurnIntentSamples === result.vehicleSamples && result.vehicleActiveTurnSignalSamples >= 1, `Vehicle turn-intent/lane telemetry is incomplete: ${JSON.stringify({ turn: result.vehicleTurnIntentSamples, active: result.vehicleActiveTurnSignalSamples, samples: result.vehicleSamples })}`)
+  assert(result.vehicleTurnConflictPolicySamples === result.vehicleSamples, `Vehicle turn conflict/gap policy telemetry is incomplete: ${result.vehicleTurnConflictPolicySamples}/${result.vehicleSamples}`)
+  assert(result.vehicleTurningSlowdownSamples >= 1, `No active turning vehicles expose distinct turn slowdown/yield behavior: ${result.vehicleTurningSlowdownSamples}`)
   assert(result.vehicleDriverReactionSamples >= result.vehicleBrakeLightSamples, `Driver reaction metadata is missing for visual safety cues: ${result.vehicleDriverReactionSamples}/${result.vehicleBrakeLightSamples}`)
   assert(result.vehicleDriverCabinSamples === result.vehicleSamples, `Visible driver cabin metadata is incomplete: ${result.vehicleDriverCabinSamples}/${result.vehicleSamples}`)
   assert(result.trafficRendering?.vehicleBase === 'procedural-driver-visible-traffic', `Traffic rendering metadata is missing: ${JSON.stringify(result.trafficRendering)}`)
   assert(['driverHead', 'driverTorso', 'driverHands', 'steeringWheel'].every(part => result.trafficRendering?.cabinParts?.includes(part)), `Traffic driver cabin parts are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(['hazard-all', 'right-side-pull-over', 'rear-caution', 'left-side-turn', 'right-side-turn'].every(rule => result.trafficRendering?.signalRules?.includes(rule)), `Traffic signal rendering rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(/actuat/i.test(result.trafficRendering?.signalActuation || '') && /turn/i.test(result.trafficRendering?.turnIntentRendering || ''), `Traffic rendering did not expose actuated signals and turn intents: ${JSON.stringify(result.trafficRendering)}`)
+  assert(['left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'].every(rule => result.trafficRendering?.turnConflictRules?.includes(rule)), `Traffic turn conflict rendering/behavior rules are incomplete: ${JSON.stringify(result.trafficRendering)}`)
   assert(result.vehicleKinds.includes('taxi') && result.vehicleKinds.length >= 2, `Vehicle samples do not distinguish taxis and regular cars: ${result.vehicleKinds.join(', ')}`)
   assert(result.taxiLoopSamples >= 8, `Cruising taxis are not distributed on city ring loops: ${result.taxiLoopSamples}`)
   assert(result.clouds?.system === 'layered-procedural-puffs', 'Cloud renderer did not switch to layered procedural puffs')

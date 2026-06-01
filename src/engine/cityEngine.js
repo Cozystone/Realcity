@@ -2071,7 +2071,7 @@ export function createRealCity(seed = 20260525) {
       intersectionControllers: mobilitySystem.intersectionControllers.length,
       pedestrianCrossingLinks: 'Pedestrian crossings are controlled as separate links after vehicle links and expose crossX/crossZ WALK states.',
       signals: `Main intersections use a SUMO-style actuated tlLogic program with detector-pressure green extensions, protected green, yellow clearance, all-red clearance, and separate pedestrian crossing links. Pedestrians may start only on protected WALK while the crossed vehicle axis is red; all-red/yellow are clearance states, not new-start states.`,
-      yielding: 'Drivers brake for pedestrians in or near a lane and stop at stop bars for red/all-red signal approaches; yellow allows close vehicles to clear but makes far vehicles decelerate.',
+      yielding: 'Drivers brake for pedestrians in or near a lane, stop at stop bars for red/all-red signal approaches, and treat turning as a separate conflict check: left turns slow in the pocket for oncoming gaps, while right turns slow/yield at marked crosswalk corners.',
       followingDistance: 'Drivers track the nearest vehicle in the same lane and reduce speed before the gap falls below a temperament-adjusted safety distance.',
       pedestrianGapAcceptance: 'Priority-zebra and uncontrolled crossings use a SUMO-style conservative gap rule: pedestrians wait if an approaching vehicle would reach the crossing before the configured gap window.',
       detectorPolicy: 'Each main intersection exposes four SUMO induction-loop-style detector records and an active actuated policy keyed to TrafficFlowObserved intensity, occupancy, headway, gap distance, and queue pressure.',

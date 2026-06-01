@@ -76,6 +76,9 @@ audit has a clear finish line.
 - Turn-lane rendering: main intersections render visible left-turn pocket
   paint, hooked turn arrows, right-turn yield triangles, and chevrons tied to
   the same `laneModel`/`turnIntent` telemetry.
+- Turn-lane conflict behavior: active left/right turn samples expose SUMO/GATSim
+  priority rules, distinct turn slowdown intensity, and gap/crosswalk conflict
+  checks instead of behaving exactly like through traffic.
 - Address routing: the city exposes a routable address book, and the harness
   asks an NPC for a taxi ride to a far procedural road-name address.
 - Place meaning: every landmark exposes a gameplay role, address, access plan,

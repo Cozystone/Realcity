@@ -80,6 +80,10 @@ This note tracks the traffic-rule pass for RealCity.
   elongated left-turn pocket blocks, pocket edge lines, hooked turn arrows,
   right-turn yield triangles, and chevrons are generated from each road's
   `laneModel` so vehicle turn intent is visible on the pavement.
+- Vehicle behavior now uses the same lane policy at runtime. Active turning
+  vehicles expose a SUMO/GATSim conflict policy, slow differently from through
+  traffic, make left-turn oncoming-gap checks, and make right-turn receiving
+  lane/crosswalk checks before entering the conflict box.
 - NPC pedestrian samples now expose `crosswalkControl`, priority/gap rule,
   gap-clear status, and nearest approaching vehicle when a conservative gap
   wait is triggered.
@@ -112,5 +116,6 @@ This note tracks the traffic-rule pass for RealCity.
 
 - Add visible dock lock/hand pose animation and conflict handling when another
   NPC takes a reserved return slot.
-- Add per-intersection lane-choice conflict resolution so turning vehicles
-  slow/yield to pedestrians and crossing traffic differently from through cars.
+- Add lane-level visual steering arcs so the car body itself follows a curved
+  turning path at selected intersections instead of only slowing/checking the
+  turn conflict while staying on the loop lane.

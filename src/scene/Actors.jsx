@@ -3141,23 +3141,43 @@ function shouldYieldToPedestrian(car, pose, pedestrians) {
   return null
 }
 
-function distanceToSignalStop(car, pose, roads) {
+function upcomingIntersectionForCar(car, pose, roads) {
   const crossRoads = roads.filter(road => road.axis !== car.road.axis && road.main)
-  let nearest = Infinity
+  let nearest = null
   for (const cross of crossRoads) {
     if (car.road.axis === 'x') {
       if (cross.x < car.road.from || cross.x > car.road.to) continue
       const stopLine = cross.x - car.direction * cross.width * 0.92
       const distance = car.direction > 0 ? stopLine - pose.x : pose.x - stopLine
-      if (distance > 0 && distance < nearest) nearest = distance
+      if (distance > 0 && (!nearest || distance < nearest.distance)) {
+        nearest = {
+          crossRoad: cross,
+          distance,
+          stopLine,
+          intersectionAlong: cross.x,
+          center: { x: cross.x, z: car.road.z },
+        }
+      }
     } else {
       if (cross.z < car.road.from || cross.z > car.road.to) continue
       const stopLine = cross.z - car.direction * cross.width * 0.92
       const distance = car.direction > 0 ? stopLine - pose.z : pose.z - stopLine
-      if (distance > 0 && distance < nearest) nearest = distance
+      if (distance > 0 && (!nearest || distance < nearest.distance)) {
+        nearest = {
+          crossRoad: cross,
+          distance,
+          stopLine,
+          intersectionAlong: cross.z,
+          center: { x: car.road.x, z: cross.z },
+        }
+      }
     }
   }
   return nearest
+}
+
+function distanceToSignalStop(car, pose, roads) {
+  return upcomingIntersectionForCar(car, pose, roads)?.distance ?? Infinity
 }
 
 function shouldStopForSignal(car, pose, roads, timeMinutes, mobilitySystem = null) {
@@ -3253,6 +3273,12 @@ function frontVehicleFor(state, trafficStates) {
   }
 }
 
+function distanceToIntersectionAlong(state, intersectionAlong) {
+  return state.direction > 0
+    ? intersectionAlong - state.along
+    : state.along - intersectionAlong
+}
+
 function pointInVehicleBody(pose, dim, point, padding = 0.72) {
   const dx = point.x - pose.x
   const dz = point.z - pose.z
@@ -3266,18 +3292,141 @@ function pointInVehicleBody(pose, dim, point, padding = 0.72) {
 function turnContextForCar(state, roads = []) {
   const intent = state.car.turnIntent || 'straight'
   const turnSignalDistance = state.car.turnSignalDistanceMeters || state.road.laneModel?.turnSignalDistanceMeters || 42
-  const stopDistance = distanceToSignalStop(state.trafficCar, state.pose, roads)
+  const upcoming = upcomingIntersectionForCar(state.trafficCar, state.pose, roads)
+  const stopDistance = upcoming?.distance ?? Infinity
   const active = intent !== 'straight' && Number.isFinite(stopDistance) && stopDistance > 0 && stopDistance <= turnSignalDistance
   return {
     intent,
     direction: intent,
     active,
     distanceToDecision: Number.isFinite(stopDistance) ? Number(stopDistance.toFixed(2)) : null,
+    intersectionRoadId: upcoming?.crossRoad?.id || null,
+    intersectionRoadName: upcoming?.crossRoad?.name || null,
+    intersectionAlong: upcoming?.intersectionAlong ?? null,
+    intersectionCenter: upcoming?.center || null,
+    crossRoad: upcoming?.crossRoad || null,
     laneRule: state.car.turnLaneRule || state.road.laneModel?.turnLanePolicy || 'through-lane',
     turnSignalDistanceMeters: turnSignalDistance,
     turnPocketLengthMeters: state.road.laneModel?.turnPocketLengthMeters || null,
     plannedSignalSide: state.car.plannedTurnSignalSide || null,
     source: 'procedural turn intention + right-hand lane policy',
+  }
+}
+
+function pedestrianInTurnConflictZone(state, turnContext, pedestrians) {
+  if (!turnContext?.intersectionCenter || !turnContext.crossRoad) return null
+  const roadHalf = state.road.width / 2
+  const crossHalf = turnContext.crossRoad.width / 2
+  const boxX = state.road.axis === 'x' ? crossHalf + 9 : roadHalf + 9
+  const boxZ = state.road.axis === 'x' ? roadHalf + 9 : crossHalf + 9
+  for (const pedestrian of pedestrians) {
+    if (!pedestrian || /taxi|riding|boarding/i.test(pedestrian.state || '')) continue
+    const dx = Math.abs(pedestrian.x - turnContext.intersectionCenter.x)
+    const dz = Math.abs(pedestrian.z - turnContext.intersectionCenter.z)
+    if (dx <= boxX && dz <= boxZ) return pedestrian
+  }
+  return null
+}
+
+function oncomingVehicleForTurn(state, turnContext, trafficStates) {
+  if (turnContext?.direction !== 'left' || typeof turnContext.intersectionAlong !== 'number') return null
+  let nearest = null
+  for (const other of trafficStates) {
+    if (!other || other.index === state.index || other.assignedPose) continue
+    if (other.road.id !== state.road.id || other.direction === state.direction) continue
+    const distance = distanceToIntersectionAlong(other, turnContext.intersectionAlong)
+    if (distance < -6 || distance > 52) continue
+    if (!nearest || distance < nearest.distance) nearest = { state: other, distance }
+  }
+  return nearest
+}
+
+function crossingVehicleForTurn(state, turnContext, trafficStates) {
+  if (!turnContext?.crossRoad || !turnContext.intersectionCenter) return null
+  let nearest = null
+  for (const other of trafficStates) {
+    if (!other || other.index === state.index || other.assignedPose) continue
+    if (other.road.id !== turnContext.crossRoad.id) continue
+    const distance = Math.hypot(other.pose.x - turnContext.intersectionCenter.x, other.pose.z - turnContext.intersectionCenter.z)
+    if (distance > 30) continue
+    if (!nearest || distance < nearest.distance) nearest = { state: other, distance }
+  }
+  return nearest
+}
+
+function turnControlForCar(state, turnContext, trafficStates, pedestrians) {
+  if (!turnContext?.active || turnContext.direction === 'straight') return null
+  const distance = typeof turnContext.distanceToDecision === 'number' ? turnContext.distanceToDecision : turnContext.turnSignalDistanceMeters
+  const signalDistance = Math.max(1, turnContext.turnSignalDistanceMeters || 42)
+  const approachProgress = clampValue(1 - distance / signalDistance, 0, 1)
+  const baseIntensity = turnContext.direction === 'left'
+    ? 0.14 + approachProgress * 0.26
+    : 0.1 + approachProgress * 0.22
+  const policy = turnContext.direction === 'left'
+    ? 'SUMO green-minor style left turn: slow in the marked pocket and accept a safe oncoming gap before crossing'
+    : 'right-turn-yield area: slow before the turn, yield to pedestrians in the corner crosswalk, then merge into the curb lane'
+
+  const pedestrian = pedestrianInTurnConflictZone(state, turnContext, pedestrians)
+  if (pedestrian) {
+    return {
+      type: 'crosswalk-yield',
+      reason: 'turn-pedestrian-yield',
+      intensity: 0.88,
+      mustYield: true,
+      targetId: pedestrian.id || 'player',
+      targetName: pedestrian.name || (pedestrian.player ? 'player' : 'pedestrian'),
+      distance: Number(Math.hypot(pedestrian.x - state.pose.x, pedestrian.z - state.pose.z).toFixed(2)),
+      priorityRule: 'pedestrian has priority in marked crossing / turn conflict box',
+      policy,
+      source: 'SUMO pedestrian crossing + GATSim gap acceptance',
+    }
+  }
+
+  const oncoming = oncomingVehicleForTurn(state, turnContext, trafficStates)
+  if (oncoming) {
+    return {
+      type: 'left-turn-oncoming-gap',
+      reason: 'left-turn-gap-yield',
+      intensity: clampValue(0.46 + (52 - oncoming.distance) / 90, 0.46, 0.82),
+      mustYield: true,
+      targetId: oncoming.state.car.id,
+      targetName: oncoming.state.car.driverName,
+      distance: Number(oncoming.distance.toFixed(2)),
+      priorityRule: 'left-turning vehicle yields to oncoming through traffic before crossing its path',
+      policy,
+      source: 'SUMO green-minor left-turn conflict + GATSim gap acceptance',
+    }
+  }
+
+  const crossing = crossingVehicleForTurn(state, turnContext, trafficStates)
+  if (crossing && turnContext.direction === 'right') {
+    return {
+      type: 'right-turn-cross-traffic-check',
+      reason: 'right-turn-gap-yield',
+      intensity: clampValue(0.34 + (30 - crossing.distance) / 80, 0.34, 0.68),
+      mustYield: true,
+      targetId: crossing.state.car.id,
+      targetName: crossing.state.car.driverName,
+      distance: Number(crossing.distance.toFixed(2)),
+      priorityRule: 'right-turning vehicle checks the receiving lane and yields before merging',
+      policy,
+      source: 'GATSim receiving-lane conflict check',
+    }
+  }
+
+  return {
+    type: turnContext.direction === 'left' ? 'left-turn-pocket-slowdown' : 'right-turn-yield-slowdown',
+    reason: turnContext.direction === 'left' ? 'left-turn-pocket-slowdown' : 'right-turn-yield-slowdown',
+    intensity: Number(baseIntensity.toFixed(3)),
+    mustYield: false,
+    targetId: null,
+    targetName: null,
+    distance: Number(distance.toFixed(2)),
+    priorityRule: turnContext.direction === 'left'
+      ? 'left-turning vehicle slows differently from through traffic before gap acceptance'
+      : 'right-turning vehicle slows differently from through traffic before crosswalk/merge check',
+    policy,
+    source: 'laneModel turnLanePolicy + vehicle turnIntent',
   }
 }
 
@@ -3357,6 +3506,7 @@ function Traffic({ cars, roads, mobilitySystem }) {
       sumoProgram: mobilitySystem?.standards?.sumo?.reference || 'Eclipse SUMO actuated tlLogic',
       signalActuation: 'actuated TrafficFlowObserved detector pressure changes protected green durations at runtime',
       turnIntentRendering: 'vehicles expose left/right/straight turn intent and blink amber side signals before intersections',
+      turnConflictRules: ['left-turn-pocket-slowdown', 'left-turn-gap-yield', 'right-turn-yield-slowdown', 'turn-pedestrian-yield'],
       gbfsStations: mobilitySystem?.gbfs?.stations?.length || 0,
       smartCityCurbZones: mobilitySystem?.smartCity?.curbZones?.length || 0,
       gatsimDisruptions: mobilitySystem?.gatsim?.disruptionEvents?.length || 0,
@@ -3396,21 +3546,25 @@ function Traffic({ cars, roads, mobilitySystem }) {
       const phase = trafficPhaseAt(store.timeMinutes, mobilitySystem)
       const follow = assignedPose ? null : frontVehicleFor(trafficState, trafficStates)
       const turnContext = assignedPose ? null : turnContextForCar(trafficState, roads)
+      const turnControl = assignedPose ? null : turnControlForCar(trafficState, turnContext, trafficStates, pedestrians)
       const brakingReason = playerContact
         ? 'player-contact'
         : signalStop
           ? `${signalStop.signal}-signal`
-          : hazard
-            ? hazard.player ? 'player-yield' : 'pedestrian-yield'
-            : follow?.intensity > 0.15
-              ? 'following-vehicle'
-              : null
-      const shouldBrake = !assignedPose && !!brakingReason
+          : turnControl?.reason
+            ? turnControl.reason
+            : hazard
+              ? hazard.player ? 'player-yield' : 'pedestrian-yield'
+              : follow?.intensity > 0.15
+                ? 'following-vehicle'
+                : null
+      const turnBrakeTarget = turnControl?.intensity || 0
+      const shouldBrake = !assignedPose && (!!brakingReason || turnBrakeTarget > 0)
       const signalIntent = vehicleSignalIntent(brakingReason, car, assignedPose, turnContext)
       const signalSide = vehicleSignalSide(signalIntent)
       const signalBlink = !!signalIntent && Math.sin(state.clock.elapsedTime * 8.4 + car.phase) > -0.25
       car.brake = shouldBrake
-        ? Math.min(1, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2))
+        ? Math.min(1, Math.max(turnBrakeTarget, (car.brake || 0) + dt * (playerContact || signalStop ? 5.2 : turnControl ? 2.2 + turnControl.intensity * 3.4 : follow ? 2.6 + follow.intensity * 2.8 : car.driverTemperament === 'hurried' ? 2.8 : 4.2)))
         : Math.max(0, (car.brake || 0) - dt * 1.45)
       if (signalStop?.signal === 'red' || signalStop?.signal === 'all-red') {
         const stopHold = clampValue((8 - signalStop.stopDistance) / 6, 0, 1)
@@ -3427,6 +3581,10 @@ function Traffic({ cars, roads, mobilitySystem }) {
       if (signalStop && yieldPulse.current <= 0) {
         yieldPulse.current = 4
         store.setPulse(`${car.kind === 'taxi' ? 'A taxi' : 'Traffic'} stops at the bar for ${signalStop.signal} on ${car.road.name}.`)
+      }
+      if (turnControl?.mustYield && yieldPulse.current <= 0) {
+        yieldPulse.current = 4.5
+        store.setPulse(`${car.driverName} yields before a ${turnContext.direction} turn for ${turnControl.targetName || 'the conflict gap'}.`)
       }
       if (follow && follow.distance < follow.desiredGap * 0.62 && yieldPulse.current <= 0) {
         yieldPulse.current = 4.5
@@ -3469,6 +3627,20 @@ function Traffic({ cars, roads, mobilitySystem }) {
         turnPocketLengthMeters: turnContext?.turnPocketLengthMeters || trafficState.road.laneModel?.turnPocketLengthMeters || null,
         plannedTurnSignalSide: turnContext?.plannedSignalSide || car.plannedTurnSignalSide || null,
         turnTelemetrySource: turnContext?.source || 'procedural turn intention',
+        turnIntersectionRoadName: turnContext?.intersectionRoadName || null,
+        turnConflictKind: turnControl?.type || (turnContext?.active ? 'turn-approach-clear' : null),
+        turnCautionIntensity: Number((turnControl?.intensity || 0).toFixed(3)),
+        turnYieldRequired: !!turnControl?.mustYield,
+        turnConflictTargetId: turnControl?.targetId || null,
+        turnConflictTargetName: turnControl?.targetName || null,
+        turnConflictDistance: turnControl?.distance ?? null,
+        turnPriorityRule: turnControl?.priorityRule || (turnContext?.intent === 'straight'
+          ? 'through vehicles follow the protected signal link and same-lane gap rule'
+          : 'turning vehicle checks marked pocket/yield area before entering the conflict box'),
+        turnConflictPolicy: turnControl?.policy || (turnContext?.intent === 'straight'
+          ? 'SUMO protected through movement when the axis is green; otherwise stop at the bar'
+          : 'turning vehicles use laneModel turnLanePolicy, SUMO conflict priority, and GATSim gap acceptance'),
+        turnConflictTelemetrySource: turnControl?.source || 'SUMO/GATSim turn conflict policy metadata',
         brakingReason,
         signalPhase: signalStop?.phase || phase.kind,
         signalPhaseId: phase.id,
